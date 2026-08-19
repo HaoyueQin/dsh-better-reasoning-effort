@@ -178,6 +178,49 @@ describe('reconcile', () => {
     expect(deps.mount).not.toHaveBeenCalled()
   })
 
+  it('resolves the route from the editorRoute tag first, then the title', async () => {
+    // The official edit card prints the route key as `.editorRoute` beside the
+    // display-name title; the create card prints a fixed heading with no key.
+    const dom = document.createElement('div')
+    dom.className = 'section'
+    dom.innerHTML = `
+      <div class="editor">
+        <div class="editorHeader">
+          <span class="editorTitle">Aliyun</span>
+          <span class="editorRoute">aliyun</span>
+        </div>
+        <div class="modelEntry">
+          <div class="modelRow">
+            <input aria-label="Model ID" value="qwen-max" />
+            <button aria-label="Capacities 1"></button>
+          </div>
+          <div class="modelAdvanced"><label><span>Context window</span><input /></label></div>
+        </div>
+      </div>
+      <div class="editor">
+        <div class="editorHeader">
+          <span class="editorTitle">Custom provider</span>
+        </div>
+        <div class="modelEntry">
+          <div class="modelRow">
+            <input aria-label="Model ID" value="mystery" />
+            <button aria-label="Capacities 2"></button>
+          </div>
+          <div class="modelAdvanced"><label><span>Context window</span><input /></label></div>
+        </div>
+      </div>`
+    document.body.appendChild(dom)
+    const root = document.querySelector('.section') as HTMLElement
+    const deps = makeDeps()
+    const state = createScanState()
+    await settle(() => reconcile(root, deps, state), state)
+    // The edit card resolves to 'aliyun'; the create card (fixed heading, no
+    // key) cannot resolve a route and stays unmounted.
+    const props = vi.mocked(deps.mount).mock.calls.map(call => call[1] as EditorMountProps)
+    expect(props).toHaveLength(1)
+    expect(props[0].route).toBe('aliyun')
+  })
+
   it('scans a document.body root, matching the plugin\'s real panel root', async () => {
     const deps = makeDeps()
     const state = createScanState()

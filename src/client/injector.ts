@@ -133,16 +133,20 @@ function hasEditor(container: HTMLElement): boolean {
   return container.querySelector('[data-plugin="dsh-better-reasoning-effort"]') !== null
 }
 
-/** The route token of a card, resolved against the joined providers. */
+/**
+ * The route token of a card, resolved against the joined providers. The
+ * official edit card prints the route key as the `.editorRoute` tag next to
+ * the display-name title; the create card prints a fixed heading with no key,
+ * so nothing can resolve its route until it is saved and re-rendered as an
+ * edit card. Match the key first (exact, unambiguous), then the display name.
+ */
 function routeOfCard(card: HTMLElement, providers: Record<string, Record<string, unknown>>): string | undefined {
+  const key = card.querySelector<HTMLElement>('[class*="editorRoute"]')?.textContent?.trim()
+  if (key !== undefined && key.length > 0 && key in providers) return key
   const title = card.querySelector<HTMLElement>('[class*="editorTitle"], [class*="rowName"]')?.textContent?.trim()
   if (title === undefined || title.length === 0) return undefined
-  // Match by display name first (the official card shows the display name),
-  // then by the route key itself.
   const byName = Object.entries(providers).find(([, profile]) => profile['displayName'] === title)
-  if (byName !== undefined) return byName[0]
-  if (title in providers) return title
-  return undefined
+  return byName?.[0]
 }
 
 /**
