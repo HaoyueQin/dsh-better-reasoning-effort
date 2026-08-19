@@ -5,7 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/your-name/dsh-better-reasoning-effort.git"
+    "url": "git+https://github.com/HaoyueQin/dsh-better-reasoning-effort.git"
+  },
+  "homepage": "https://github.com/HaoyueQin/dsh-better-reasoning-effort",
+  "bugs": {
+    "url": "https://github.com/HaoyueQin/dsh-better-reasoning-effort/issues"
   },
   "keywords": [
     "deepseek-harness",
@@ -27,12 +31,14 @@
       "types": "./lib/client/index.d.ts",
       "default": "./lib/client.js"
     },
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/",
     "cordis.patch.yml",
     "README.md",
+    "README.zh.md",
     "LICENSE"
   ],
   "dsh": {
