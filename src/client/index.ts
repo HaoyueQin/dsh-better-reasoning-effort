@@ -26,9 +26,9 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { createRoot } from 'react-dom/client'
+import { Component, createElement } from 'react'
+import type { ErrorInfo, ReactNode } from 'react'
 import { EffortEditor } from './EffortEditor.tsx'
-import { FallbackSection, type FallbackSectionProps } from './FallbackSection.tsx'
-import { createFlagStore } from './flag.ts'
 import { createScanState, reconcile, type SettingsJoin } from './injector.ts'
 import { en, zh, type BreKey } from './locales.ts'
 import { STYLES } from './styles.ts'
@@ -60,12 +60,35 @@ function isModelsTitle(node: Element): boolean {
   return text === 'Models' || text === '模型'
 }
 
-/** The settings panel root this plugin watches (the models page section). */
-function panelRoot(): HTMLElement | undefined {
-  const title = Array.from(document.querySelectorAll<HTMLElement>('h2')).find(isModelsTitle)
-  // The section that owns the title is the models page's content column.
-  const section = title?.closest<HTMLElement>('[class*="section"]')
-  return section ?? title?.parentElement ?? undefined
+/** Render-failure boundary: surfaces the cause instead of an empty root. */
+class EffortBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state: { error: string | null } = { error: null }
+  static getDerivedStateFromError(error: unknown): { error: string } {
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
+  override componentDidCatch(error: unknown, info: ErrorInfo): void {
+    console.error('[bre] editor render failed:', error, info.componentStack)
+  }
+  override render(): ReactNode {
+    if (this.state.error !== null) {
+      return createElement(
+        'div',
+        { style: { color: '#c00', fontSize: '11px', whiteSpace: 'pre-wrap', padding: '6px' } },
+        `思考强度渲染失败: ${this.state.error}`,
+      )
+    }
+    return this.props.children
+  }
+}
+
+/**
+ * The root this plugin scans. The official models page can live anywhere in
+ * the settings surface (a hash-classed panel, a dialog, a portal), so guessing
+ * a container is fragile — and the injector is idempotent and cheap, so
+ * scanning the whole document is both safe and correct.
+ */
+function panelRoot(): HTMLElement {
+  return document.body
 }
 
 /**
@@ -76,7 +99,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-better-reasoning-effort: dictionaries')
 
   const style = document.createElement('style')
-  style.dataset['plugin'] = 'dsh-better-reasoning-effort'
+  style.dataset['pluginStyles'] = 'dsh-better-reasoning-effort'
   style.textContent = STYLES
   document.head.appendChild(style)
   ctx.effect(() => () => style.remove(), 'dsh-better-reasoning-effort: stylesheet')
@@ -95,9 +118,6 @@ export function apply(ctx: ClientContext): void {
     return { namespace, writable: response.result.value.writable }
   }
 
-  /** Whether the injector currently has any editor mounted. */
-  const injectionFlag = createFlagStore(false)
-
   // ---- DOM bypass injection ----
   const scanState = createScanState()
   let scanTimer: number | undefined
@@ -110,27 +130,29 @@ export function apply(ctx: ClientContext): void {
     scanTimer = window.setTimeout(() => {
       scanTimer = undefined
       const root = panelRoot()
-      if (root === undefined) return
-      const before = scanState.mounted.size
       reconcile(root, {
         api,
         describeNamespace,
         t,
         mount(container, props) {
           const rootEl = document.createElement('div')
+          // Mark the container synchronously — before React renders — so the
+          // idempotency guard (hasEditor) holds from the very first scan.
+          // Without this, the appendChild-triggered MutationObserver scan can
+          // run while React's async render has not produced the editor div
+          // yet, misjudge the row as unmounted, and mount again — an infinite
+          // loop that grows the container without bound.
+          rootEl.dataset['plugin'] = 'dsh-better-reasoning-effort'
           container.appendChild(rootEl)
           const reactRoot = createRoot(rootEl)
-          reactRoot.render(EffortEditor({ ...props, index: 0 }))
+          reactRoot.render(createElement(
+            EffortBoundary,
+            null,
+            createElement(EffortEditor, { ...props, index: 0 }),
+          ))
           return () => { reactRoot.unmount() }
         },
       }, scanState)
-      injectionFlag.set(scanState.mounted.size > 0)
-      if (scanState.mounted.size !== before) {
-        // A scan changed the mounted set; the fallback page's status must
-        // re-render (the shell re-renders sections on the ledger bump only,
-        // so publish through the shared flag the page subscribes to).
-        injectionFlag.set(scanState.mounted.size > 0)
-      }
     }, 120)
   }
 
@@ -148,20 +170,6 @@ export function apply(ctx: ClientContext): void {
     observer?.disconnect()
     observer = undefined
   }
-
-  // ---- Fallback section ----
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'reasoning-effort',
-    order: 12,
-    label: () => t('nav'),
-    inject: () => ({
-      api,
-      describeNamespace,
-      t: t as FallbackSectionProps['t'],
-      injectionActive: injectionFlag,
-    }),
-  }, FallbackSection as never))
 
   ctx.effect(() => {
     startObserver()
@@ -183,10 +191,8 @@ export function apply(ctx: ClientContext): void {
 }
 
 export type { BreKey }
-export { FallbackSection }
 export { EffortEditor }
 export type { EffortEditorProps, EffortModel } from './EffortEditor.tsx'
-export type { FallbackSectionProps } from './FallbackSection.tsx'
 export type { InjectorDeps, EditorMountProps, ScanState } from './injector.ts'
 export * from './ops.ts'
 export * from './types.ts'

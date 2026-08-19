@@ -215,5 +215,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       state.mounted.set(target.container, { unmount })
     }
   }
-  void state.describePromise.then(run)
+  // A rejected describe must not permanently disable the injector: clear the
+  // folded promise so the next scan retries the read.
+  void state.describePromise.then(run, () => {
+    state.describePromise = undefined
+  })
 }
