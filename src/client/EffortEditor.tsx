@@ -2,18 +2,24 @@
  * The thinking-effort editor injected into the official Models page's model
  * rows. Rendered with `ReactDOM.createRoot` into a DOM container the injector
  * creates, it needs no harness services of its own: everything arrives through
- * a plain props face, so it stays testable in isolation.
+ * a plain props face, so it stays testable in isolation. The draft/intent
+ * rules live in {@link module:dsh-better-reasoning-effort/client/effort}.
  *
  * @module dsh-better-reasoning-effort/EffortEditor
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  THINKING_LEVELS,
-  type ReasoningEfforts,
-  type ThinkingLevel,
+import type {
+  ReasoningEfforts,
 } from '../knowledge.js'
+import {
+  buildIntent,
+  draftFrom,
+  LEVEL_ORDER,
+  sameEfforts,
+  type DraftLevels,
+} from './effort.js'
 import type { EffortEditorApi } from './types.js'
 
 /** A route's profile facts (as the editor's suggestion inference reads them). */
@@ -64,63 +70,6 @@ export interface EffortEditorProps {
   t: (key: string, params?: Record<string, string | number>) => string
 }
 
-const LEVEL_ORDER: readonly ThinkingLevel[] = [...THINKING_LEVELS]
-
-/** Current declaration as a set of enabled levels. */
-function enabledLevels(efforts: false | ReasoningEfforts | undefined): Set<ThinkingLevel> {
-  if (efforts === false) return new Set()
-  if (efforts === undefined) return new Set()
-  return new Set(LEVEL_ORDER.filter(level => Object.prototype.hasOwnProperty.call(efforts, level)))
-}
-
-/** Draft state of one level's wire value. */
-type DraftLevels = Record<ThinkingLevel, { on: boolean; wire: string }>
-
-function draftFrom(efforts: false | ReasoningEfforts | undefined): DraftLevels {
-  const draft = {} as DraftLevels
-  for (const level of LEVEL_ORDER) {
-    if (efforts === undefined || efforts === false) {
-      draft[level] = { on: false, wire: '' }
-      continue
-    }
-    const wire = efforts[level]
-    draft[level] = {
-      on: wire !== undefined,
-      wire: wire === null ? '' : typeof wire === 'string' ? wire : '',
-    }
-  }
-  return draft
-}
-
-/** Build a reasoningEfforts value from the draft; `false` disables reasoning. */
-function buildEfforts(draft: DraftLevels): ReasoningEfforts | false {
-  const out: ReasoningEfforts = {}
-  let thinking = false
-  for (const level of LEVEL_ORDER) {
-    const cell = draft[level]
-    if (!cell.on) continue
-    if (level === 'off') {
-      out.off = null
-      continue
-    }
-    const wire = cell.wire.trim()
-    if (wire.length === 0) {
-      // A level switched on without a spelling defaults to its own name —
-      // the convention every OpenAI-compatible endpoint follows.
-      out[level] = level
-    } else {
-      out[level] = wire
-    }
-    thinking = true
-  }
-  return thinking ? out : false
-}
-
-/** The one error the settings schema rejects: a dict that names no thinking level. */
-function hasThinking(draft: DraftLevels): boolean {
-  return LEVEL_ORDER.some(level => level !== 'off' && draft[level].on)
-}
-
 /**
  * Render one model's thinking-effort editor: the level checkboxes, the wire
  * spellings, the auto-adapt action, and the apply/reset actions.
@@ -131,10 +80,30 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   const [message, setMessage] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | undefined>(undefined)
   const [suggested, setSuggested] = useState<ReasoningEfforts | undefined>(undefined)
   const [suggestedSource, setSuggestedSource] = useState('')
+  // Once the user edits, the draft owns the row: a re-render that changes
+  // `initialEfforts` (the official page re-renders on its own edits and on
+  // apply) must not overwrite in-flight input. Before any edit the draft
+  // simply follows the props.
+  const dirtyRef = useRef(false)
+  const previousEfforts = useRef<false | ReasoningEfforts | undefined>(initialEfforts)
 
-  const changed = JSON.stringify(buildEfforts(draft)) !== JSON.stringify(initialEfforts ?? false)
+  useEffect(() => {
+    if (sameEfforts(previousEfforts.current, initialEfforts)) return
+    previousEfforts.current = initialEfforts
+    if (dirtyRef.current) return
+    setDraft(draftFrom(initialEfforts))
+  }, [initialEfforts])
 
-  const patchLevel = (level: ThinkingLevel, on: boolean): void => {
+  const changed = !sameEfforts(buildIntent(draft), initialEfforts)
+
+  const markDirty = (): void => {
+    dirtyRef.current = true
+    setSuggested(undefined)
+    setSuggestedSource('')
+  }
+
+  const patchLevel = (level: (typeof LEVEL_ORDER)[number], on: boolean): void => {
+    markDirty()
     setDraft(current => {
       const next = { ...current, [level]: { ...current[level], on } }
       // Enabling a thinking level pre-fills the conventional spelling.
@@ -146,12 +115,14 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setMessage(undefined)
   }
 
-  const patchWire = (level: ThinkingLevel, wire: string): void => {
+  const patchWire = (level: (typeof LEVEL_ORDER)[number], wire: string): void => {
+    markDirty()
     setDraft(current => ({ ...current, [level]: { ...current[level], wire } }))
     setMessage(undefined)
   }
 
   const applySuggestion = (efforts: ReasoningEfforts, source: string): void => {
+    markDirty()
     setDraft(draftFrom(efforts))
     setSuggested(efforts)
     setSuggestedSource(source)
@@ -176,11 +147,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   }
 
   const save = async (): Promise<void> => {
-    if (!hasThinking(draft)) {
-      setMessage({ kind: 'error', text: t('needThinking') })
-      return
-    }
-    const next = buildEfforts(draft)
+    const next = buildIntent(draft)
     setBusy(true)
     setMessage(undefined)
     try {
@@ -189,6 +156,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         setMessage({ kind: 'error', text: reply.error })
         return
       }
+      dirtyRef.current = false
       setMessage({ kind: 'success', text: t('saved') })
     } catch (error) {
       setMessage({ kind: 'error', text: t('writeError', { message: String(error) }) })
@@ -198,6 +166,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   }
 
   const reset = (): void => {
+    dirtyRef.current = false
     setDraft(draftFrom(undefined))
     setSuggested(undefined)
     setSuggestedSource('')
@@ -261,7 +230,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         <button
           type="button"
           className="bre-primary-button"
-          disabled={disabled || !changed || !hasThinking(draft)}
+          disabled={disabled || !changed}
           onClick={() => { void save() }}
         >
           {busy ? t('saving') : t('apply')}

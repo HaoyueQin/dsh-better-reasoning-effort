@@ -106,7 +106,10 @@ export function createEditorApi(
           const nextModels = models.map((model, at) => {
             if (at !== index) return model
             const copy = { ...model }
-            if (efforts === false) {
+            if (efforts === undefined) {
+              // Unset the declaration: the model goes back to inheriting.
+              delete copy['reasoningEfforts']
+            } else if (efforts === false) {
               copy['reasoningEfforts'] = false
             } else {
               copy['reasoningEfforts'] = { ...efforts }

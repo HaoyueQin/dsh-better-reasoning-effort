@@ -43,8 +43,8 @@ export type SuggestReply =
 export interface EffortEditorApi {
   /** Ask for a knowledge-base / protocol suggestion for one model. */
   suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
-  /** Write one model's reasoningEfforts through `settings.mutate`. */
-  writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false): Promise<WriteEffortsReply>
+  /** Write one model's reasoningEfforts (unset, disabled, or a dict). */
+  writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): Promise<WriteEffortsReply>
 }
 
 /** Unwrap one Remote envelope: business failures throw the typed wire error. */
