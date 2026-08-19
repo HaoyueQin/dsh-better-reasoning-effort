@@ -16,6 +16,12 @@ export const STYLES = `
   border: 1px solid var(--dsh-border, rgba(128,128,128,0.25));
   border-radius: 8px;
   background: var(--dsh-surface, rgba(128,128,128,0.06));
+  /* The editor mounts inside the official row disclosure, which is a
+     `repeat(auto-fit, minmax(160px, 1fr))` grid (context window and max
+     tokens take two cells). Spanning the whole row keeps the block from
+     being squeezed into one third of the line. */
+  grid-column: 1 / -1;
+  box-sizing: border-box;
 }
 .bre-effort-head {
   display: flex;
@@ -40,9 +46,11 @@ export const STYLES = `
 .bre-link-button:hover { text-decoration: underline; }
 .bre-link-button:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
 .bre-effort-grid {
+  /* Two columns, the same density as the official capacity fields, so the
+     level rows sit beside rather than under each other at full width. */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 4px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 4px 16px;
 }
 .bre-effort-row {
   display: grid;
