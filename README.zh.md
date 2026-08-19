@@ -1,4 +1,4 @@
-# dsh-better-reasoning-effort
+# DSH Better Reasoning Effort
 
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4d6bfe)
