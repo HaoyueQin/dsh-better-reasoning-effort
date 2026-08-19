@@ -21,6 +21,7 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { createRoot } from 'react-dom/client'
 import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import { PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
 import { createScanState, reconcile, type SettingsJoin } from './injector.ts'
 import { en, zh, type BreKey } from './locales.ts'
@@ -28,13 +29,7 @@ import { STYLES } from './styles.ts'
 import type { RemoteApi, SettingsNamespaceView } from './types.ts'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
-export const name = 'dsh-better-reasoning-effort'
-
-/** Dictionary namespace owned by this plugin. */
-const NS = 'dsh-better-reasoning-effort'
-
-/** The settings namespace this plugin edits. */
-const PI_AI_NS = 'llm-pi-ai'
+export const name = PLUGIN_ID
 
 /** Cordis fiber dependencies of the browser half. */
 export const inject = ['slots', 'locale', 'connection', 'remote']
@@ -42,7 +37,7 @@ export const inject = ['slots', 'locale', 'connection', 'remote']
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     /** This plugin's copy dictionaries. */
-    'dsh-better-reasoning-effort': BreKey
+    [STORE_NS]: BreKey
   }
 }
 
@@ -82,10 +77,10 @@ function panelRoot(): HTMLElement {
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-better-reasoning-effort: dictionaries')
+  ctx.effect(() => ctx.locale.register(STORE_NS, { zh, en }), 'dsh-better-reasoning-effort: dictionaries')
 
   const style = document.createElement('style')
-  style.dataset['pluginStyles'] = 'dsh-better-reasoning-effort'
+  style.dataset['pluginStyles'] = PLUGIN_ID
   style.textContent = STYLES
   document.head.appendChild(style)
   ctx.effect(() => () => style.remove(), 'dsh-better-reasoning-effort: stylesheet')
@@ -94,7 +89,7 @@ export function apply(ctx: ClientContext): void {
   const api: RemoteApi = { settings: connection.api.settings }
   // The shell's Translate is `(key: string, params?: Record<string, unknown>)`;
   // our components take a string-keyed face, so the bound translator narrows.
-  const t = ctx.locale.bind(NS) as Translate
+  const t = ctx.locale.bind(STORE_NS) as Translate
 
   /** Read the pi-ai namespace plus writability through the settings Remote. */
   const describeNamespace = async (): Promise<SettingsJoin> => {
@@ -128,7 +123,7 @@ export function apply(ctx: ClientContext): void {
           // run while React's async render has not produced the editor div
           // yet, misjudge the row as unmounted, and mount again — an infinite
           // loop that grows the container without bound.
-          rootEl.dataset['plugin'] = 'dsh-better-reasoning-effort'
+          rootEl.dataset['plugin'] = PLUGIN_ID
           container.appendChild(rootEl)
           const reactRoot = createRoot(rootEl)
           reactRoot.render(createElement(

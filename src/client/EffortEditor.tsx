@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { PLUGIN_MARKER } from '../constants.js'
 import type {
   ReasoningEfforts,
 } from '../knowledge.js'
@@ -176,7 +177,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   const disabled = readOnly || busy
 
   return (
-    <div className="bre-effort-editor" data-plugin="dsh-better-reasoning-effort">
+    <div className="bre-effort-editor" data-plugin={PLUGIN_MARKER}>
       <div className="bre-effort-head">
         <span className="bre-effort-title">{t('reasoningEffort')}</span>
         <button

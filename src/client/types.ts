@@ -21,16 +21,6 @@ export interface RemoteApi {
   settings: SettingsRemoteApi
 }
 
-/** The connection client service carrying the Remote faces. */
-export interface ConnectionFace {
-  api: RemoteApi
-}
-
-/** The `remote` client service: subscribe to forwarded host events. */
-export interface RemoteFace {
-  $on(event: string, handler: (payload: unknown) => void): () => void
-}
-
 /** One result of writing a model's reasoningEfforts. */
 export type WriteEffortsReply = { ok: true } | { ok: false; error: string }
 
@@ -45,10 +35,4 @@ export interface EffortEditorApi {
   suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
   /** Write one model's reasoningEfforts (unset, disabled, or a dict). */
   writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): Promise<WriteEffortsReply>
-}
-
-/** Unwrap one Remote envelope: business failures throw the typed wire error. */
-export function unwrap<T>(response: { result: { ok: true; value: T } | { ok: false; error: { message: string } } }): T {
-  if (!response.result.ok) throw new Error(response.result.error.message)
-  return response.result.value
 }

@@ -11,15 +11,13 @@ import {
   type ReasoningEfforts,
   type RouteFacts,
 } from '../knowledge.js'
+import { PI_AI_NS } from '../constants.js'
 import type {
   RemoteApi,
   SettingsNamespaceView,
   SuggestReply,
   WriteEffortsReply,
 } from './types.js'
-
-/** The settings namespace this plugin edits. */
-export const PI_AI_NS = 'llm-pi-ai'
 
 /** The user-layer providers dict of the pi-ai namespace, as records. */
 export function providersOf(namespace: SettingsNamespaceView | undefined): Record<string, Record<string, unknown>> {

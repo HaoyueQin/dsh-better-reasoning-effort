@@ -15,16 +15,11 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
+import { PI_AI_NS, PLUGIN_ID, STORE_NS } from './constants.js'
 import { suggestEfforts, type RouteFacts } from './knowledge.js'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
-export const name = 'dsh-better-reasoning-effort'
-
-/** The settings namespace this plugin edits: pi-ai custom provider routes. */
-export const PI_AI_NS = 'llm-pi-ai'
-
-/** Plugin-owned settings namespace: reserved for future user knowledge rows. */
-const STORE_NS = 'dsh-better-reasoning-effort'
+export const name = PLUGIN_ID
 
 /** Hard dependencies: the loader waits for these before calling apply. */
 export const inject = ['settings']

@@ -23,6 +23,7 @@
  * @module dsh-better-reasoning-effort/injector
  */
 
+import { PLUGIN_MARKER } from '../constants.js'
 import type { ReasoningEfforts } from '../knowledge.js'
 import { createEditorApi, effortsOf, modelsOf, nameOf, providersOf } from './ops.js'
 import type { EffortEditorApi, RemoteApi, SettingsNamespaceView } from './types.js'
@@ -130,7 +131,7 @@ function disclosureOf(trigger: HTMLButtonElement): HTMLElement | undefined {
 
 /** Whether an editor is already mounted in a container (idempotency guard). */
 function hasEditor(container: HTMLElement): boolean {
-  return container.querySelector('[data-plugin="dsh-better-reasoning-effort"]') !== null
+  return container.querySelector(`[data-plugin="${PLUGIN_MARKER}"]`) !== null
 }
 
 /**

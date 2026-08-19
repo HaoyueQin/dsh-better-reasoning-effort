@@ -14,9 +14,10 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 特性
 
-- **官方页内注入**：官方「模型 → 编辑 → 自定义设置 → 模型行展开区」里出现「思考强度」编辑块，和上下文窗口 / 最大输出并列——不是另起炉灶的单列页面，而是融进官方编辑流程（同一个 `settings.mutate` 契约、同一种保存方式）。
+- **官方页内注入**：官方「模型 → 编辑 → 自定义设置 → 模型行展开区」里出现「思考强度」编辑块，和上下文窗口 / 最大输出并列——不是另起炉灶的单列页面，而是融进官方编辑流程（同一个 `settings.mutate` 契约、同一种保存方式）。编辑器占满展开区整行，与官方容量字段同密度。
 - **自动适配**：内置模型知识库（DeepSeek V3/R1、OpenAI o 系列、Qwen、GLM、Kimi、MiniMax、豆包等）+ 协议推断（按 `api` / `baseURL` 判断 openai / deepseek / anthropic / gemini 方言），一键填入推荐档位与线上取值。
-- **Host 自动填充**：settings 更新时，为没有 `reasoningEfforts` 声明的模型自动补一份推荐声明（不覆盖已声明或显式 `false` 的模型）。
+- **Host 自动填充**：settings 更新时，为没有 `reasoningEfforts` 声明的模型自动补一份推荐声明（不覆盖已声明或显式 `false` 的模型）。写入采用乐观锁：若你的编辑已把设置顶高，自动填充会放弃并等下一次更新，绝不与你抢写。
+- **三种意图**：全不勾 = 取消声明（回到继承）；只勾 off = 禁用推理（`false`）；勾选档位 = 写入声明。编辑器随官方页重新渲染保持同步，你编辑到一半不会被打断。
 - **防御式注入**：注入依赖官方页 DOM 结构（aria-label / class），一旦官方升级改变结构，注入器自动停用、官方页不受影响；结构恢复后下次扫描自动重新注入。
 - 双语文案（中文 / English）。
 
@@ -64,7 +65,8 @@ dsh plugin --profile web add link:D:/Project/dsh-better-reasoning-effort
 
 - **知识库 + 协议推断**：`src/knowledge.ts` 的 `suggestEfforts()`，纯函数，host 与浏览器共用。
 - **DOM 注入**：`src/client/injector.ts` 的 `reconcile()`，按官方按钮 aria-label（`Capacities`/`容量`）定位模型行，把编辑器挂进容量折叠区。
-- **写入**：`src/client/ops.ts` 的 `createEditorApi()`，`settings.mutate` 按路径改写 `providers.<route>.models[i].reasoningEfforts`，保留行内其他字段。
+- **写入**：`src/client/ops.ts` 的 `createEditorApi()`，`settings.mutate` 按路径改写 `providers.<route>.models[i].reasoningEfforts`，保留行内其他字段；冲突时自动重读重试一次（与官方设置表单相同的恢复策略）。
+- **共享常量**：`src/constants.ts` 承载插件 id、设置命名空间、DOM 标记，host 与浏览器共用。
 
 ## 与同类插件的区别
 
