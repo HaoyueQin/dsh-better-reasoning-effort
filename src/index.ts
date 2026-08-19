@@ -110,6 +110,7 @@ export function buildAutofillPatch(
 interface HostSettingsService {
   get(ns: string): unknown
   register<T>(ns: string, schema: z<T>, options?: { validate?: boolean }): unknown
+  describe(options?: { redactSecrets?: boolean }): { namespaces: Array<{ ns: string; revision: number }> }
   update(ns: string, patch: object, expectedRevision?: number): Promise<void>
 }
 
@@ -132,9 +133,17 @@ export function apply(ctx: Context): void {
       if (!isRecord(value)) return
       const patch = buildAutofillPatch(value['providers'])
       if (patch === undefined) return
-      await settingsService.update(PI_AI_NS, patch)
+      // Optimistic lock: only write while the namespace has not moved past
+      // this read. The fill is a background suggestion — losing the race to a
+      // user edit is fine, the next `settings/updated` retries it. Without the
+      // lock, every fill bumps the revision and invalidates the revision the
+      // settings page read, surfacing as a SettingsConflictError on the next
+      // user save.
+      const revision = settingsService.describe().namespaces.find(ns => ns.ns === PI_AI_NS)?.revision
+      await settingsService.update(PI_AI_NS, patch, revision)
     } catch (error) {
       // Auto-fill must never break the settings pipeline; log and move on.
+      // A SettingsConflictError lands here (the user edited while we filled).
       console.error(`[dsh-better-reasoning-effort] autofill failed: ${error instanceof Error ? error.message : String(error)}`)
     }
   }

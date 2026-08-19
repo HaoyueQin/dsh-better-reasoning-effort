@@ -90,33 +90,45 @@ export function createEditorApi(
       return { ok: true, suggestion: { efforts: suggestion.efforts, matched: suggestion.matched, source: suggestion.source } }
     },
     async writeEfforts(route, modelId, efforts) {
-      try {
-        const namespace = await describe()
-        if (namespace === undefined) return { ok: false, error: 'no-namespace' }
-        const providers = providersOf(namespace)
-        const models = modelsOf(providers, route)
-        const index = models.findIndex(model => model['id'] === modelId)
-        if (index < 0) return { ok: false, error: 'model-not-found' }
-        const nextModels = models.map((model, at) => {
-          if (at !== index) return model
-          const copy = { ...model }
-          if (efforts === false) {
-            copy['reasoningEfforts'] = false
-          } else {
-            copy['reasoningEfforts'] = { ...efforts }
+      // Retry once on a revision conflict: a concurrent writer (this plugin's
+      // own autofill, or the official page) moved the namespace between our
+      // describe and mutate. Re-reading and retrying with the fresh revision
+      // is the same recovery the official settings form uses; anything else
+      // surfaces as-is.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const namespace = await describe()
+          if (namespace === undefined) return { ok: false, error: 'no-namespace' }
+          const providers = providersOf(namespace)
+          const models = modelsOf(providers, route)
+          const index = models.findIndex(model => model['id'] === modelId)
+          if (index < 0) return { ok: false, error: 'model-not-found' }
+          const nextModels = models.map((model, at) => {
+            if (at !== index) return model
+            const copy = { ...model }
+            if (efforts === false) {
+              copy['reasoningEfforts'] = false
+            } else {
+              copy['reasoningEfforts'] = { ...efforts }
+            }
+            return copy
+          })
+          const response = await api.settings.mutate({
+            ns: PI_AI_NS,
+            ops: [{ op: 'set', path: ['providers', route, 'models'], value: nextModels }],
+            expectedRevision: namespace.revision,
+          })
+          if (!response.result.ok) {
+            const message = response.result.error.message
+            if (attempt === 0 && message.includes('changed since it was read')) continue
+            return { ok: false, error: message }
           }
-          return copy
-        })
-        const response = await api.settings.mutate({
-          ns: PI_AI_NS,
-          ops: [{ op: 'set', path: ['providers', route, 'models'], value: nextModels }],
-          expectedRevision: namespace.revision,
-        })
-        if (!response.result.ok) return { ok: false, error: response.result.error.message }
-        return { ok: true }
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+          return { ok: true }
+        } catch (error) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        }
       }
+      return { ok: false, error: 'conflict' }
     },
   }
 }
