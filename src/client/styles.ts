@@ -17,7 +17,7 @@ export const STYLES = `
   border-radius: 8px;
   background: var(--dsh-surface, rgba(128,128,128,0.06));
   /* The editor mounts inside the official row disclosure, which is a
-     `repeat(auto-fit, minmax(160px, 1fr))` grid (context window and max
+     repeat(auto-fit, minmax(160px, 1fr)) grid (context window and max
      tokens take two cells). Spanning the whole row keeps the block from
      being squeezed into one third of the line. */
   grid-column: 1 / -1;
