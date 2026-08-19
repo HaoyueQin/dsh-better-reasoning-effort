@@ -1,7 +1,8 @@
 /**
- * DOM bypass injector tests: anchor discovery, idempotent mounting, and
- * unmount on row removal. Runs against jsdom with a hand-built approximation
- * of the official Models page DOM.
+ * DOM bypass injector tests: anchor discovery, idempotent mounting, unmount
+ * on row removal, full-document scanning (the plugin scans document.body),
+ * remounts, and describe-failure recovery. Runs against jsdom with a
+ * hand-built approximation of the official Models page DOM.
  */
 
 // @vitest-environment jsdom
@@ -175,5 +176,57 @@ describe('reconcile', () => {
     const root = buildModelsDom()
     await settle(() => reconcile(root, deps, state), state)
     expect(deps.mount).not.toHaveBeenCalled()
+  })
+
+  it('scans a document.body root, matching the plugin\'s real panel root', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    buildModelsDom() // appends the section to document.body
+    await settle(() => reconcile(document.body, deps, state), state)
+    expect(deps.mount).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries the describe read after a rejection instead of staying disabled', async () => {
+    let healthy = false
+    const describe = vi.fn(async () => {
+      if (!healthy) throw new Error('wire down')
+      return join
+    })
+    const deps = makeDeps({ describeNamespace: describe })
+    const state = createScanState()
+    const root = buildModelsDom()
+    reconcile(root, deps, state)
+    // reconcile's own rejection handler clears the folded promise.
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(state.describePromise).toBeUndefined()
+    expect(deps.mount).not.toHaveBeenCalled()
+    // The next scan retries and succeeds.
+    healthy = true
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).toHaveBeenCalledTimes(2)
+  })
+
+  it('mounts again when a removed row reappears with a fresh container', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    await settle(() => reconcile(root, deps, state), state)
+    expect(state.mounted.size).toBe(2)
+    root.querySelectorAll('.modelEntry')[0]?.remove()
+    await settle(() => reconcile(root, deps, state), state)
+    expect(state.mounted.size).toBe(1)
+    // A fresh row with the same model id appears.
+    const replacement = document.createElement('div')
+    replacement.className = 'modelEntry'
+    replacement.innerHTML = `
+      <div class="modelRow">
+        <input aria-label="Model ID" value="qwen-max" />
+        <button aria-label="Capacities 1"></button>
+      </div>
+      <div class="modelAdvanced"><label><span>Context window</span><input /></label></div>`
+    root.querySelector('.modelCatalog')?.appendChild(replacement)
+    await settle(() => reconcile(root, deps, state), state)
+    expect(state.mounted.size).toBe(2)
   })
 })

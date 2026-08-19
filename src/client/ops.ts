@@ -1,19 +1,17 @@
 /**
  * Client-side reasoning-effort write seam over `settings.mutate`, plus the
- * knowledge-base / protocol suggestions and preset application. Pure logic —
+ * knowledge-base / protocol suggestions. Pure logic —
  * no React, no DOM — so it stays unit-testable in isolation.
  *
  * @module dsh-better-reasoning-effort/client/ops
  */
 
 import {
-  PRESETS,
   suggestEfforts,
   type ReasoningEfforts,
   type RouteFacts,
 } from '../knowledge.js'
 import type {
-  PresetReply,
   RemoteApi,
   SettingsNamespaceView,
   SuggestReply,
@@ -82,7 +80,6 @@ export function createEditorApi(
 ): {
   suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
   writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false): Promise<WriteEffortsReply>
-  applyPreset(route: string, preset: ReasoningEfforts): Promise<PresetReply>
 } {
   return {
     async suggest(route, modelId, name) {
@@ -121,25 +118,6 @@ export function createEditorApi(
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
       }
     },
-    async applyPreset(route, preset) {
-      try {
-        const namespace = await describe()
-        if (namespace === undefined) return { ok: false, error: 'no-namespace' }
-        const providers = providersOf(namespace)
-        const models = modelsOf(providers, route)
-        if (models.length === 0) return { ok: false, error: 'no-models' }
-        const nextModels = models.map(model => ({ ...model, reasoningEfforts: { ...preset } }))
-        const response = await api.settings.mutate({
-          ns: PI_AI_NS,
-          ops: [{ op: 'set', path: ['providers', route, 'models'], value: nextModels }],
-          expectedRevision: namespace.revision,
-        })
-        if (!response.result.ok) return { ok: false, error: response.result.error.message }
-        return { ok: true, count: nextModels.length }
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    },
   }
 }
 
@@ -149,5 +127,3 @@ async function describeNamespace(api: RemoteApi): Promise<SettingsNamespaceView 
   if (!response.result.ok) return undefined
   return response.result.value.namespaces.find(ns => ns.ns === PI_AI_NS)
 }
-
-export { PRESETS }

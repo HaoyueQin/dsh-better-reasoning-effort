@@ -53,13 +53,6 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Whether a node is the models section title heading. */
-function isModelsTitle(node: Element): boolean {
-  if (node.tagName !== 'H2') return false
-  const text = node.textContent?.trim() ?? ''
-  return text === 'Models' || text === '模型'
-}
-
 /** Render-failure boundary: surfaces the cause instead of an empty root. */
 class EffortBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state: { error: string | null } = { error: null }

@@ -34,9 +34,6 @@ export interface RemoteFace {
 /** One result of writing a model's reasoningEfforts. */
 export type WriteEffortsReply = { ok: true } | { ok: false; error: string }
 
-/** One result of applying a preset to every model of a route. */
-export type PresetReply = { ok: true; count: number } | { ok: false; error: string }
-
 /** One result of asking for a suggestion for one model. */
 export type SuggestReply =
   | { ok: true; suggestion: { efforts: ReasoningEfforts; matched: boolean; source: string } }
@@ -48,8 +45,6 @@ export interface EffortEditorApi {
   suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
   /** Write one model's reasoningEfforts through `settings.mutate`. */
   writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false): Promise<WriteEffortsReply>
-  /** Apply a preset to every model of one route (one atomic mutate). */
-  applyPreset(route: string, preset: ReasoningEfforts): Promise<PresetReply>
 }
 
 /** Unwrap one Remote envelope: business failures throw the typed wire error. */

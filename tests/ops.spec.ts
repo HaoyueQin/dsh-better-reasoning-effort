@@ -1,6 +1,6 @@
 /**
- * Client write-seam (ops) tests: suggestion resolution, per-model writes, and
- * preset application over a fake settings Remote.
+ * Client write-seam (ops) tests: suggestion resolution and per-model writes
+ * over a fake settings Remote.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -125,16 +125,6 @@ describe('createEditorApi', () => {
     expect(reply).toEqual({ ok: true })
     const models = mutates[0].ops[0].value as Record<string, unknown>[]
     expect(models[1].reasoningEfforts).toBe(false)
-  })
-
-  it('applies a preset to every model in one atomic write', async () => {
-    const { api, mutates } = fakeApi(initialValue)
-    const editor = createEditorApi(api)
-    const reply = await editor.applyPreset('aliyun', { off: null, high: 'high', max: 'max' })
-    expect(reply).toEqual({ ok: true, count: 2 })
-    const models = mutates[0].ops[0].value as Record<string, unknown>[]
-    expect(models[0].reasoningEfforts).toEqual({ off: null, high: 'high', max: 'max' })
-    expect(models[1].reasoningEfforts).toEqual({ off: null, high: 'high', max: 'max' })
   })
 
   it('fails cleanly when the model does not exist', async () => {

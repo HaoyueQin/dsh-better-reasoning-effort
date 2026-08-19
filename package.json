@@ -77,7 +77,6 @@
     "@types/react-dom": "^18.3.1",
     "esbuild": "^0.28.0",
     "jsdom": "^27.0.0",
-    "puppeteer-core": "^25.8.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "typescript": "^5.9.0",
