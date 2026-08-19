@@ -18,8 +18,7 @@
  *   - a model row that carries no disclosure yet is left alone and picked up
  *     on the next mutation;
  *   - if the official structure it depends on ever stops appearing, it simply
- *     stops injecting — the settings page remains untouched and the plugin's
- *     own settings section still works.
+ *     stops injecting — the settings page remains untouched.
  *
  * @module dsh-better-reasoning-effort/injector
  */

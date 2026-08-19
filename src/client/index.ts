@@ -1,26 +1,19 @@
 /**
  * Browser half of dsh-better-reasoning-effort.
  *
- * Three contributions, all of which dispose with the plugin fiber:
- *   1. The DOM bypass injector: a MutationObserver over the settings panel
+ * Two contributions, all of which dispose with the plugin fiber:
+ *   1. The DOM bypass injector: a MutationObserver over the whole document
  *      keeps the official Models page's model rows equipped with the
- *      thinking-effort editor.
- *   2. A `settings.section` page ("Reasoning effort" / 思考强度) offering the
- *      same editing plus one-click presets — the safety net if the official
- *      page's DOM ever stops exposing the injection anchors.
- *   3. The stylesheet and copy dictionaries.
- *
- * The official Models page registers `settings.section` id `models`; this
- * plugin's section registers a sibling id (`reasoning-effort`), so both pages
- * coexist in the settings sidebar.
+ *      thinking-effort editor, wherever the page lives in the settings
+ *      surface (a panel, a dialog, a portal).
+ *   2. The stylesheet and copy dictionaries.
  *
  * @module dsh-better-reasoning-effort/client
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
-// Type-only: pulls the shell's SlotMap merge ('settings.section' entry) and
-// the locale/remote context merges into this program.
+// Type-only: pulls the shell's locale/remote context merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-api-remotes/client'

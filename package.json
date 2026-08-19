@@ -1,7 +1,7 @@
 {
   "name": "dsh-better-reasoning-effort",
   "version": "0.1.0",
-  "description": "Third-party provider reasoning-effort for DeepSeek Harness: thinking levels declared per model, auto-adapted from a model knowledge base + wire-protocol inference, preset effort sets, edited right inside the official Models page card.",
+  "description": "Third-party provider reasoning-effort for DeepSeek Harness: thinking levels declared per model, auto-adapted from a model knowledge base + wire-protocol inference, edited right inside the official Models page card.",
   "license": "MIT",
   "repository": {
     "type": "git",

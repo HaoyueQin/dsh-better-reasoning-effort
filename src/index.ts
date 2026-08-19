@@ -6,9 +6,9 @@
  * knowledge base + protocol inference (see {@link suggestEfforts}). The fill
  * is a *suggestion* written to the user layer — the user can still edit it on
  * the Models page — and a model that already declares efforts, or an explicit
- * `false`, is never touched. All interactive editing (per-model editors, the
- * preset one-click apply, per-model auto-adapt) lives in the browser half,
- * which reuses the same knowledge base as a pure module.
+ * `false`, is never touched. All interactive editing (per-model editors and
+ * per-model auto-adapt) lives in the browser half, which reuses the same
+ * knowledge base as a pure module.
  *
  * @module dsh-better-reasoning-effort
  */

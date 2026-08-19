@@ -262,35 +262,6 @@ export function suggestEfforts(modelId: string, route: RouteFacts): EffortSugges
   }
 }
 
-/** The four preset level sets offered by the UI's one-click apply. */
-export const PRESETS: ReadonlyArray<{ key: string; labelKey: string; efforts: ReasoningEfforts }> = [
-  {
-    key: 'deepseek',
-    labelKey: 'presetDeepseek',
-    efforts: { off: null, high: 'high', max: 'max' },
-  },
-  {
-    key: 'openai',
-    labelKey: 'presetOpenai',
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
-  },
-  {
-    key: 'compact',
-    labelKey: 'presetCompact',
-    efforts: { off: null, high: 'high' },
-  },
-  {
-    key: 'minimal',
-    labelKey: 'presetMinimal',
-    efforts: { off: null, low: 'low', high: 'high' },
-  },
-]
-
-/** Look up one preset by key. */
-export function presetOf(key: string): ReasoningEfforts | undefined {
-  return PRESETS.find(preset => preset.key === key)?.efforts
-}
-
 /** Whether a value looks like a valid reasoningEfforts dict (schema-tolerant). */
 export function isValidEfforts(value: unknown): value is ReasoningEfforts {
   if (value === undefined) return true

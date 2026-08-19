@@ -5,11 +5,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   GENERIC_OPENAI_EFFORTS,
-  PRESETS,
   inferProtocol,
   isValidEfforts,
   matchKnowledgeBase,
-  presetOf,
   suggestEfforts,
   THINKING_LEVELS,
 } from '../src/knowledge.js'
@@ -103,25 +101,5 @@ describe('isValidEfforts', () => {
   it('accepts false and undefined as inherit/disabled markers', () => {
     expect(isValidEfforts(false)).toBe(true)
     expect(isValidEfforts(undefined)).toBe(true)
-  })
-})
-
-describe('PRESETS', () => {
-  it('offers the four documented presets', () => {
-    expect(PRESETS.map(preset => preset.key)).toEqual(['deepseek', 'openai', 'compact', 'minimal'])
-  })
-
-  it('every preset level is a valid thinking level', () => {
-    for (const preset of PRESETS) {
-      for (const level of Object.keys(preset.efforts)) {
-        expect(THINKING_LEVELS).toContain(level)
-      }
-      expect(isValidEfforts(preset.efforts)).toBe(true)
-    }
-  })
-
-  it('presetOf resolves by key', () => {
-    expect(presetOf('openai')).toEqual(GENERIC_OPENAI_EFFORTS)
-    expect(presetOf('nope')).toBeUndefined()
   })
 })
