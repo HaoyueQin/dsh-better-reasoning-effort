@@ -1,0 +1,7 @@
+# Applied by the profile composer (dsh.bundle.patch) when this package is
+# added to a profile. Mounts the host half (settings auto-adaptation plus a
+# keepalive row) so the browser scanner discovers `dsh.client` and serves
+# `lib/client.js` as `/plugins/dsh-better-reasoning-effort/client.js`.
+- insert:
+    - id: dsh-better-reasoning-effort
+      name: dsh-better-reasoning-effort
