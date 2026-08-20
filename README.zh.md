@@ -93,7 +93,7 @@ npm test            # vitest：知识库 / 推断 / autofill / DOM 注入 / 写�
 npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 ```
 
-契约版本：`@deepseek-ai/dsh-api-remotes@0.1.0-rc.7`（client 契约类型），dsh CLI `0.1.0-rc.6` 实测。
+契约版本：`@deepseek-ai/dsh-api-remotes@0.1.0-rc.8`（client 契约类型），已通过针对 `0.1.0-rc.8` 各包的 typecheck、测试套件与完整构建验证。
 
 ## 已知限制
 

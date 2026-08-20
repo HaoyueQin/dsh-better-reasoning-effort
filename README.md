@@ -95,7 +95,7 @@ npm test            # vitest: knowledge / inference / autofill / DOM injection /
 npm run build       # lib/*.js + lib/client.js (module-loader bundle)
 ```
 
-Contract version: `@deepseek-ai/dsh-api-remotes@0.1.0-rc.7` (client contract types), tested with the dsh CLI `0.1.0-rc.6`.
+Contract version: `@deepseek-ai/dsh-api-remotes@0.1.0-rc.8` (client contract types), verified by typecheck, the test suite, and a full build against the `0.1.0-rc.8` packages.
 
 ## Known limitations
 
