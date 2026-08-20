@@ -31,6 +31,15 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 安装
 
+需要 DeepSeek Harness `0.1.0-rc.8` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.0-rc.8`）。
+
+### 从 npm
+
+```bash
+# 在 dsh 的 web profile 下
+dsh plugin --profile web add dsh-better-reasoning-effort
+```
+
 ### 从 GitHub
 
 ```bash

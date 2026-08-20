@@ -31,6 +31,15 @@ This plugin brings that configuration back into the UI: **edit right inside the 
 
 ## Install
 
+Requires DeepSeek Harness `0.1.0-rc.8` or newer (`@deepseek-ai/dsh-api-remotes@^0.1.0-rc.8`).
+
+### From npm
+
+```bash
+# under the dsh web profile
+dsh plugin --profile web add dsh-better-reasoning-effort
+```
+
 ### From GitHub
 
 ```bash
