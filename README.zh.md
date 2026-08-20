@@ -1,6 +1,8 @@
 # DSH Better Reasoning Effort
 
-![License](https://img.shields.io/badge/License-MIT-yellow.svg)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/dsh-better-reasoning-effort)](https://www.npmjs.com/package/dsh-better-reasoning-effort)
+[![npm downloads](https://img.shields.io/npm/dw/dsh-better-reasoning-effort)](https://www.npmjs.com/package/dsh-better-reasoning-effort)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4d6bfe)
 ![dsh-plugin](https://img.shields.io/badge/dsh--plugin-ecosystem-4d6bfe)
 ![Version](https://img.shields.io/badge/version-0.1.0-4d6bfe)
