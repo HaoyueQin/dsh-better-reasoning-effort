@@ -79,8 +79,9 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | undefined>(undefined)
-  const [suggested, setSuggested] = useState<ReasoningEfforts | undefined>(undefined)
+  const [suggested, setSuggested] = useState<ReasoningEfforts | false | undefined>(undefined)
   const [suggestedSource, setSuggestedSource] = useState('')
+  const [suggestedConfidence, setSuggestedConfidence] = useState<'high' | 'medium' | 'low'>('low')
   // Once the user edits, the draft owns the row: a re-render that changes
   // `initialEfforts` (the official page re-renders on its own edits and on
   // apply) must not overwrite in-flight input. Before any edit the draft
@@ -101,6 +102,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     dirtyRef.current = true
     setSuggested(undefined)
     setSuggestedSource('')
+    setSuggestedConfidence('low')
   }
 
   const patchLevel = (level: (typeof LEVEL_ORDER)[number], on: boolean): void => {
@@ -122,11 +124,12 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setMessage(undefined)
   }
 
-  const applySuggestion = (efforts: ReasoningEfforts, source: string): void => {
+  const applySuggestion = (efforts: ReasoningEfforts | false, source: string, confidence: 'high' | 'medium' | 'low'): void => {
     markDirty()
     setDraft(draftFrom(efforts))
     setSuggested(efforts)
     setSuggestedSource(source)
+    setSuggestedConfidence(confidence)
     setMessage({ kind: 'info', text: t('suggestionApplied') })
   }
 
@@ -139,7 +142,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         setMessage({ kind: 'error', text: reply.error === 'no-suggestion' ? t('noSuggestion') : reply.error })
         return
       }
-      applySuggestion(reply.suggestion.efforts, reply.suggestion.source)
+      applySuggestion(reply.suggestion.efforts, reply.suggestion.source, reply.suggestion.confidence)
     } catch (error) {
       setMessage({ kind: 'error', text: t('writeError', { message: String(error) }) })
     } finally {
@@ -174,6 +177,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setDraft(draftFrom(initialEfforts))
     setSuggested(undefined)
     setSuggestedSource('')
+    setSuggestedConfidence('low')
     setMessage(undefined)
   }
 
@@ -227,7 +231,11 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         })}
       </div>
       {initialEfforts === false ? <p className="bre-effort-note">{t('reasoningDisabled')}</p> : null}
-      {suggested !== undefined ? <p className="bre-effort-note">{t('suggestedHint', { source: suggestedSource })}</p> : null}
+      {suggested !== undefined ? (
+        <p className="bre-effort-note">
+          {t('suggestedHint', { source: suggestedSource, confidence: t(`confidence_${suggestedConfidence}`) })}
+        </p>
+      ) : null}
       {message === undefined ? null : (
         <p className={`bre-effort-message bre-${message.kind}`} role={message.kind === 'error' ? 'alert' : 'status'}>
           {message.text}

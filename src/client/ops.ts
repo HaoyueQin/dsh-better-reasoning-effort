@@ -11,7 +11,8 @@ import {
   type ReasoningEfforts,
   type RouteFacts,
 } from '../knowledge.js'
-import { PI_AI_NS } from '../constants.js'
+import { PI_AI_NS, PROBE_PATH } from '../constants.js'
+import { analyzeListingEntry, findListingEntry, type EndpointSignal } from '../detection.js'
 import type {
   RemoteApi,
   SettingsNamespaceView,
@@ -68,6 +69,25 @@ export function nameOf(models: Record<string, unknown>[], modelId: string): stri
 }
 
 /**
+ * Ask the host's same-origin probe route for this model's raw-listing
+ * reasoning signal. Any failure — route absent, endpoint unreachable, listing
+ * shape unexpected — degrades to an explicit 'unknown' signal ("asked, no
+ * answer"), never to a thrown error: suggestions must not break because the
+ * endpoint would not talk.
+ */
+async function probeEndpoint(route: string, modelId: string): Promise<EndpointSignal> {
+  try {
+    const response = await fetch(`${PROBE_PATH}?route=${encodeURIComponent(route)}`, { method: 'GET' })
+    if (!response.ok) return { reasoning: 'unknown', source: null }
+    const body = (await response.json()) as { ok?: boolean; data?: unknown }
+    if (!body?.ok) return { reasoning: 'unknown', source: null }
+    return analyzeListingEntry(findListingEntry(body.data, modelId))
+  } catch {
+    return { reasoning: 'unknown', source: null }
+  }
+}
+
+/**
  * Build the write seam over a settings Remote face.
  * @param api - the settings Remote methods.
  * @param describe - how to obtain the pi-ai namespace view (injectable for tests).
@@ -83,9 +103,21 @@ export function createEditorApi(
     async suggest(route, modelId, name) {
       const providers = providersOf(await describe())
       const facts = routeFactsOf(providers, route)
-      const suggestion = suggestEfforts(modelId, { ...facts, displayName: name ?? facts.displayName })
+      // L1 first: the endpoint's own word about this model. The fusion in
+      // suggestEfforts keeps wire values knowledge-base-only.
+      const endpoint = await probeEndpoint(route, modelId)
+      const suggestion = suggestEfforts(modelId, { ...facts, displayName: name ?? facts.displayName }, endpoint)
       if (suggestion.efforts === undefined) return { ok: false, error: 'no-suggestion' }
-      return { ok: true, suggestion: { efforts: suggestion.efforts, matched: suggestion.matched, source: suggestion.source } }
+      return {
+        ok: true,
+        suggestion: {
+          efforts: suggestion.efforts,
+          matched: suggestion.matched,
+          source: suggestion.source,
+          confidence: suggestion.confidence,
+          ...(suggestion.endpoint === undefined ? {} : { endpoint: suggestion.endpoint }),
+        },
+      }
     },
     async writeEfforts(route, modelId, efforts) {
       // Retry once on a revision conflict: a concurrent writer (this plugin's

@@ -3,7 +3,7 @@
  * over a fake settings Remote.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createEditorApi, effortsOf, modelsOf, providersOf } from '../src/client/ops.js'
 import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
 
@@ -202,5 +202,45 @@ describe('createEditorApi', () => {
     const editor = createEditorApi(api)
     const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
     expect(reply).toEqual({ ok: false, error: 'model "qwen-max" sets compat "thinkingFormat", but its api is "openai-responses"' })
+  })
+
+  it('upgrades confidence to medium when the endpoint probe confirms reasoning', async () => {
+    const { api } = fakeApi(initialValue)
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, data: [{ id: 'mystery', supported_features: ['reasoning'] }] }),
+    })))
+    try {
+      const editor = createEditorApi(api)
+      const reply = await editor.suggest('aliyun', 'mystery')
+      expect(reply.ok).toBe(true)
+      if (reply.ok) {
+        expect(reply.suggestion.confidence).toBe('medium')
+        expect(reply.suggestion.endpoint).toEqual({ reasoning: true, source: 'supported_features' })
+        // The endpoint confirms support but names no spellings — the ladder
+        // stays the conservative confirmed set.
+        expect(reply.suggestion.efforts).toEqual({ off: null, low: 'low', medium: 'medium', high: 'high' })
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('degrades to a low-confidence protocol suggestion when the probe fails', async () => {
+    const { api } = fakeApi(initialValue)
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('probe route absent')
+    }))
+    try {
+      const editor = createEditorApi(api)
+      const reply = await editor.suggest('aliyun', 'mystery')
+      expect(reply.ok).toBe(true)
+      if (reply.ok) {
+        expect(reply.suggestion.confidence).toBe('low')
+        expect(reply.suggestion.endpoint).toEqual({ reasoning: 'unknown', source: null })
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

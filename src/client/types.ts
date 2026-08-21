@@ -26,7 +26,19 @@ export type WriteEffortsReply = { ok: true } | { ok: false; error: string }
 
 /** One result of asking for a suggestion for one model. */
 export type SuggestReply =
-  | { ok: true; suggestion: { efforts: ReasoningEfforts; matched: boolean; source: string } }
+  | {
+      ok: true
+      suggestion: {
+        /** The declaration to apply; `false` = the endpoint says it does not reason. */
+        efforts: ReasoningEfforts | false
+        matched: boolean
+        source: string
+        /** Evidence strength: high (knowledge base / endpoint), medium, low. */
+        confidence: 'high' | 'medium' | 'low'
+        /** Raw endpoint signal behind the suggestion, when probed. */
+        endpoint?: { reasoning: boolean | 'unknown'; source: string | null }
+      }
+    }
   | { ok: false; error: string }
 
 /** The write seam the effort editor needs. */
