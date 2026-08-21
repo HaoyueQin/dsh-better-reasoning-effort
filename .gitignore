@@ -11,3 +11,6 @@ npm-debug.log*
 # Editor / OS
 .DS_Store
 Thumbs.db
+
+# Local tooling state
+.reasonix/
