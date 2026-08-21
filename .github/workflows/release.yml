@@ -1,0 +1,22 @@
+# A pushed v* tag IS the release decision; this workflow only turns it into
+# the GitHub release page with generated notes, so a tag can never again land
+# without its release.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the GitHub release for the pushed tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
