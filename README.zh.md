@@ -12,6 +12,8 @@
 
 给 DeepSeek Harness 的**第三方模型**（pi-ai 手工声明路由）提供思考强度（reasoning effort）设置的插件——直接在官方「模型」页的模型行里编辑，带知识库 + 协议推断的自动适配。
 
+![官方「模型」页模型行内的思考强度编辑器](assets/models-page-effort-editor.png)
+
 ## 为什么需要它
 
 DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reasoningEfforts`（接受哪些思考档位 + 每个档位发往端点的确切取值），但官方「模型」页的编辑卡**刻意不暴露这个字段**——官方注释明说它是 per-model 能力、provider 级旋钮会弄坏部分模型。于是：

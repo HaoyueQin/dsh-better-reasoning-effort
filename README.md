@@ -12,6 +12,8 @@
 
 Reasoning-effort editing for **third-party models** in DeepSeek Harness — thinking levels declared per model, auto-adapted from a model knowledge base + wire-protocol inference, edited right inside the official Models page card.
 
+![The thinking-effort editor injected into a model row on the official Models page](assets/models-page-effort-editor.png)
+
 ## Why
 
 The `llm-pi-ai` adapter of DeepSeek Harness natively supports per-model `reasoningEfforts` declarations (which thinking levels a model accepts, and the exact string to send on the wire for each). But the official Models page editor **deliberately keeps this field out of reach** — the official notes say it is a per-model capability and a provider-level knob would break some models. As a result:
