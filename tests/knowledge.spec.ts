@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   GENERIC_OPENAI_EFFORTS,
+  KNOWLEDGE_BASE,
   inferProtocol,
   isValidEfforts,
   matchKnowledgeBase,
@@ -41,18 +42,19 @@ describe('matchKnowledgeBase', () => {
 
 describe('inferProtocol', () => {
   it('prefers the configured api over the url', () => {
-    expect(inferProtocol({ api: 'deepseek', baseURL: 'https://api.openai.com' })).toBe('deepseek')
+    expect(inferProtocol({ api: 'openai-responses', baseURL: 'https://api.openai.com' })).toBe('openai-responses')
   })
 
   it('falls back to the base URL', () => {
     expect(inferProtocol({ baseURL: 'https://api.deepseek.com' })).toBe('deepseek')
-    expect(inferProtocol({ baseURL: 'https://generativelanguage.googleapis.com' })).toBe('gemini')
-    expect(inferProtocol({ baseURL: 'https://api.anthropic.com' })).toBe('anthropic')
+    expect(inferProtocol({ baseURL: 'https://api.anthropic.com' })).toBe('anthropic-messages')
   })
 
-  it('defaults to openai for unknown endpoints', () => {
-    expect(inferProtocol({ baseURL: 'https://gateway.example.com' })).toBe('openai')
-    expect(inferProtocol({})).toBe('openai')
+  it('defaults unknown endpoints to the OpenAI-compatible protocol', () => {
+    expect(inferProtocol({ baseURL: 'https://gateway.example.com' })).toBe('openai-completions')
+    // pi-ai has no gemini protocol; Gemini gateways speak openai-completions.
+    expect(inferProtocol({ baseURL: 'https://generativelanguage.googleapis.com' })).toBe('openai-completions')
+    expect(inferProtocol({})).toBe('openai-completions')
   })
 })
 
@@ -62,11 +64,42 @@ describe('suggestEfforts', () => {
     expect(suggestion.matched).toBe(true)
     expect(suggestion.entryId).toBe('deepseek-v3')
     expect(suggestion.efforts).toEqual({ off: null, high: 'high', max: 'max' })
-    expect(suggestion.compat?.thinkingFormat).toBe('deepseek')
+    // No compat without a route protocol: compat is gated per protocol.
+    expect(suggestion.compat).toBeUndefined()
   })
 
-  it('infers OpenAI levels for an unknown model on an OpenAI route', () => {
-    const suggestion = suggestEfforts('mystery-model', { api: 'openai' })
+  it('gates knowledge-entry compat to the openai-completions protocol', () => {
+    const completions = suggestEfforts('deepseek-chat', { api: 'openai-completions' })
+    expect(completions.compat).toEqual({ thinkingFormat: 'deepseek', supportsReasoningEffort: true })
+    // pi-ai's responses gate offers neither field — a model-level compat
+    // there would be refused by assertServiceable at the write.
+    const responses = suggestEfforts('deepseek-chat', { api: 'openai-responses' })
+    expect(responses.compat).toBeUndefined()
+    const anthropic = suggestEfforts('claude-3-5-sonnet', { api: 'anthropic-messages' })
+    expect(anthropic.matched).toBe(true)
+    expect(anthropic.compat).toBeUndefined()
+  })
+
+  it('never suggests a thinkingFormat outside pi-ai vocabulary', () => {
+    for (const entry of KNOWLEDGE_BASE) {
+      expect(entry.compat?.thinkingFormat).not.toBe('anthropic')
+    }
+  })
+
+  it('matches by display name as well as id', () => {
+    expect(matchKnowledgeBase('gateway-custom', 'DeepSeek V3')?.id).toBe('deepseek-v3')
+  })
+
+  it('matches short family tokens only on word boundaries', () => {
+    expect(matchKnowledgeBase('o1-mini')?.id).toBe('openai-o')
+    expect(matchKnowledgeBase('gpt-o1')?.id).toBe('openai-o')
+    expect(matchKnowledgeBase('ko1-pro')).toBeUndefined()
+    expect(matchKnowledgeBase('doubao-seed-1-6')?.id).toBe('doubao')
+    expect(matchKnowledgeBase('seedling')).toBeUndefined()
+  })
+
+  it('infers OpenAI levels for an unknown model on an openai-completions route', () => {
+    const suggestion = suggestEfforts('mystery-model', { api: 'openai-completions' })
     expect(suggestion.matched).toBe(false)
     expect(suggestion.efforts).toEqual(GENERIC_OPENAI_EFFORTS)
     expect(suggestion.compat?.thinkingFormat).toBe('openai')

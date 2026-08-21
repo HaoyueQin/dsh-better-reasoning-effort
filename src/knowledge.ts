@@ -111,7 +111,10 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
   },
   {
     id: 'openai-o',
-    patterns: ['o1', 'o3', 'o4', 'gpt-5', 'gpt-5.1', 'gpt-5.2'],
+    // 'gpt-5.1'/'gpt-5.2' are covered by the 'gpt-5' substring; the o-series
+    // tokens only match on word boundaries (see matchKnowledgeBase), so
+    // 'o1' hits 'o1-mini' but not 'ko1'.
+    patterns: ['o1', 'o3', 'o4', 'gpt-5'],
     // OpenAI's reasoning models accept the standard effort ladder.
     efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
@@ -166,12 +169,20 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     id: 'anthropic-claude',
     patterns: ['claude'],
     efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
-    compat: { thinkingFormat: 'anthropic', supportsReasoningEffort: true },
+    // No thinkingFormat here: pi-ai's nameable formats have no 'anthropic'
+    // member (SUPPORTED_THINKING_FORMATS), and the anthropic-messages compat
+    // gate offers neither field. suggestEfforts gates this block against the
+    // route's real protocol anyway, so a Claude served through an
+    // openai-completions gateway gets `supportsReasoningEffort` only.
+    compat: { supportsReasoningEffort: true },
     note: 'Anthropic 档位（经 OpenAI 兼容网关时）。',
   },
 ]
 
-/** The generic OpenAI-compatible fallback, used when nothing matches. */
+/**
+ * The generic OpenAI-compatible ladder — the single source for every
+ * OpenAI-shaped protocol row below and the fallback when nothing matches.
+ */
 export const GENERIC_OPENAI_EFFORTS: ReasoningEfforts = {
   off: null,
   low: 'low',
@@ -180,16 +191,21 @@ export const GENERIC_OPENAI_EFFORTS: ReasoningEfforts = {
 }
 
 /**
- * Level sets inferred per wire protocol for families the knowledge base does
- * not name. `off: null` is only offered when the family is known to admit a
- * no-thinking mode; the conservative choice is to omit it so the picker never
- * promises an Off the endpoint would reject.
+ * Level sets keyed by pi-ai's REAL wire protocols — the only values a route's
+ * `api` may take are 'openai-completions' | 'openai-responses' |
+ * 'anthropic-messages' (llm-pi-ai provider.ts PROTOCOLS) — plus the
+ * 'deepseek' URL dialect for routes that name no api but point at DeepSeek's
+ * own endpoint, which takes its native off/high/max ladder.
+ *
+ * `off: null` is only offered where a no-thinking mode is plausible; the
+ * conservative choice elsewhere is to omit it so the picker never promises an
+ * Off the endpoint would reject.
  */
 const PROTOCOL_INFERENCE: Readonly<Record<string, ReasoningEfforts>> = {
-  openai: { off: null, low: 'low', medium: 'medium', high: 'high' },
+  'openai-completions': GENERIC_OPENAI_EFFORTS,
+  'openai-responses': GENERIC_OPENAI_EFFORTS,
+  'anthropic-messages': GENERIC_OPENAI_EFFORTS,
   deepseek: { off: null, high: 'high', max: 'max' },
-  anthropic: { off: null, low: 'low', medium: 'medium', high: 'high' },
-  gemini: { low: 'low', medium: 'medium', high: 'high' },
 }
 
 /** A best-effort generic declaration when even the protocol is unknown. */
@@ -200,45 +216,101 @@ function normalize(value: string | undefined): string {
   return (value ?? '').toLowerCase().trim()
 }
 
-/** Match the knowledge base: first match wins, longest pattern wins. */
+/** Whether a character is a lowercase letter or digit (word-boundary test). */
+function isAlnum(ch: string | undefined): boolean {
+  return ch !== undefined && /[a-z0-9]/.test(ch)
+}
+
+/**
+ * Lowercase and collapse every non-alphanumeric run to one space, so id /
+ * display-name / pattern separators (`-`, `_`, `.`, spaces) compare equal:
+ * pattern 'deepseek-v3' matches display name "DeepSeek V3".
+ */
+function normalizeLoose(value: string): string {
+  return value.toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ')
+}
+
+/**
+ * Whether the occurrence of a pattern at index `at` sits on a word boundary
+ * in `haystack`: neither neighbor may be a letter/digit. Keeps short family
+ * tokens from false-hitting ('o1' must hit 'o1 mini' but not 'ko1 pro';
+ * 'seed' hits 'doubao seed 1 6' but not 'seedling').
+ */
+function onBoundary(haystack: string, at: number, length: number): boolean {
+  const before = at === 0 ? undefined : haystack[at - 1]
+  const after = haystack[at + length]
+  return !isAlnum(before) && !isAlnum(after)
+}
+
+/** Match the knowledge base: first match wins, longest boundary hit wins. */
 export function matchKnowledgeBase(modelId: string, displayName?: string): KnowledgeEntry | undefined {
-  const haystack = `${normalize(modelId)} ${normalize(displayName)}`
+  const haystack = `${normalizeLoose(modelId)} ${normalizeLoose(displayName ?? '')}`
   let best: { entry: KnowledgeEntry; length: number } | undefined
   for (const entry of KNOWLEDGE_BASE) {
     for (const pattern of entry.patterns) {
-      if (haystack.includes(pattern) && (best === undefined || pattern.length > best.length)) {
-        best = { entry, length: pattern.length }
+      const needle = normalizeLoose(pattern)
+      let at = haystack.indexOf(needle)
+      while (at >= 0) {
+        if (onBoundary(haystack, at, needle.length)) {
+          if (best === undefined || needle.length > best.length) {
+            best = { entry, length: needle.length }
+          }
+          break
+        }
+        at = haystack.indexOf(needle, at + 1)
       }
     }
   }
   return best?.entry
 }
 
-/** Infer a protocol's level set from the route facts. */
+/**
+ * Infer which PROTOCOL_INFERENCE key applies to a route. A configured `api`
+ * is already a pi-ai protocol name and wins as-is; otherwise the endpoint URL
+ * names the dialect, and anything unrecognized resolves to the
+ * OpenAI-compatible ladder (the overwhelming majority of gateways).
+ */
 export function inferProtocol(route: RouteFacts): string {
   const api = normalize(route.api)
   if (api.length > 0) return api
   const url = normalize(route.baseURL)
   if (url.includes('deepseek')) return 'deepseek'
-  if (url.includes('anthropic')) return 'anthropic'
-  if (url.includes('gemini') || url.includes('generativelanguage')) return 'gemini'
-  // Anything OpenAI-shaped (the overwhelming majority of gateways) is safest.
-  return 'openai'
+  if (url.includes('anthropic')) return 'anthropic-messages'
+  // Former 'gemini' guessing removed: pi-ai has no gemini protocol, and
+  // Gemini gateways speak the OpenAI-compatible dialect.
+  return 'openai-completions'
+}
+
+/**
+ * The one wire protocol whose compat gate offers thinkingFormat /
+ * supportsReasoningEffort (llm-pi-ai COMPLETIONS_COMPAT_GATE). pi-ai refuses
+ * a model-level compat field its resolved protocol does not take
+ * (assertServiceable throws at the write), so compat suggestions are gated to
+ * this protocol only.
+ */
+const COMPAT_CAPABLE_PROTOCOL = 'openai-completions'
+
+/** Gate a compat block against the route's real protocol. */
+function compatForRoute(compat: CompatSuggestion | undefined, route: RouteFacts): CompatSuggestion | undefined {
+  if (compat === undefined) return undefined
+  return normalize(route.api) === COMPAT_CAPABLE_PROTOCOL ? compat : undefined
 }
 
 /**
  * Resolve the suggestion for one model on one route.
  * @param modelId - the model id (or display name) to match.
- * @param route - route facts used when the knowledge base misses.
+ * @param route - route facts used when the knowledge base misses; its
+ *   displayName participates in knowledge-base matching.
  * @returns a suggestion, or undefined when nothing derivable (never happens —
  *   protocol inference always has a fallback).
  */
 export function suggestEfforts(modelId: string, route: RouteFacts): EffortSuggestion {
-  const entry = matchKnowledgeBase(modelId)
+  const entry = matchKnowledgeBase(modelId, route.displayName)
   if (entry !== undefined) {
+    const compat = compatForRoute(entry.compat, route)
     return {
       efforts: entry.efforts,
-      ...entry.compat === undefined ? {} : { compat: entry.compat },
+      ...compat === undefined ? {} : { compat },
       matched: true,
       entryId: entry.id,
       source: entry.id,
@@ -246,17 +318,16 @@ export function suggestEfforts(modelId: string, route: RouteFacts): EffortSugges
   }
   const protocol = inferProtocol(route)
   const efforts = PROTOCOL_INFERENCE[protocol] ?? GENERIC_FALLBACK
-  // A compat block is only written when the route *names* an OpenAI-compatible
-  // protocol: it tells pi-ai to speak the OpenAI dialect to this endpoint, and
-  // guessing that for an endpoint with no clues could send requests the
-  // gateway rejects. `inferProtocol`'s openai default is a fallback for the
-  // level set alone.
-  const api = normalize(route.api)
-  const url = normalize(route.baseURL)
-  const explicitOpenai = api === 'openai' || (url.length > 0 && url.includes('openai'))
+  // A compat block is only written when the route *names* the one protocol
+  // that takes it: it tells pi-ai to speak the OpenAI dialect to this
+  // endpoint, and guessing that for an endpoint with no clues could send
+  // requests the gateway rejects.
+  const compat = normalize(route.api) === COMPAT_CAPABLE_PROTOCOL
+    ? { thinkingFormat: 'openai', supportsReasoningEffort: true }
+    : undefined
   return {
     efforts,
-    ...(explicitOpenai ? { compat: { thinkingFormat: 'openai', supportsReasoningEffort: true } } : {}),
+    ...compat === undefined ? {} : { compat },
     matched: false,
     source: `protocol:${protocol}`,
   }

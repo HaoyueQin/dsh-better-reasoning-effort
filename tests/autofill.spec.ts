@@ -9,7 +9,7 @@ describe('buildAutofillPatch', () => {
   const providers = {
     aliyun: {
       displayName: 'Aliyun',
-      api: 'openai',
+      api: 'openai-completions',
       models: [
         { id: 'qwen-max', name: 'Qwen Max' },
         { id: 'qwen-turbo', name: 'Qwen Turbo', reasoningEfforts: false },
@@ -44,12 +44,23 @@ describe('buildAutofillPatch', () => {
     expect(models[0]['name']).toBe('Qwen Max')
   })
 
-  it('adds a compat block for openai-protocol suggestions', () => {
+  it('adds a compat block for openai-completions suggestions', () => {
     const patch = buildAutofillPatch({
-      route: { api: 'openai', models: [{ id: 'mystery' }] },
+      route: { api: 'openai-completions', models: [{ id: 'mystery' }] },
     })
     const models = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).route.models
     expect(models[0]['compat']).toEqual({ thinkingFormat: 'openai', supportsReasoningEffort: true })
+  })
+
+  it('withholds compat on protocols whose gate does not take it', () => {
+    for (const api of ['openai-responses', 'anthropic-messages']) {
+      const patch = buildAutofillPatch({
+        route: { api, models: [{ id: 'mystery' }, { id: 'claude-3-5-sonnet' }] },
+      })
+      const models = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).route.models
+      expect(models[0]['compat']).toBeUndefined()
+      expect(models[1]['compat']).toBeUndefined()
+    }
   })
 
   it('returns undefined when nothing needs filling', () => {
