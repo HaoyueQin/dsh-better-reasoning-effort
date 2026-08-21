@@ -129,7 +129,7 @@ export function apply(ctx: ClientContext): void {
           reactRoot.render(createElement(
             EffortBoundary,
             null,
-            createElement(EffortEditor, { ...props, index: 0 }),
+            createElement(EffortEditor, props),
           ))
           return () => { reactRoot.unmount() }
         },
@@ -158,9 +158,16 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-better-reasoning-effort: DOM injector')
 
   // Refresh the injection when the settings document changes (an apply from
-  // either the official page or this plugin re-renders the rows).
+  // either the official page or this plugin re-renders the rows). The folded
+  // describe snapshot is invalidated first: without that, every later scan —
+  // and every editor mounted from it — would keep reading the revision and
+  // providers as of the very first scan, making Apply conflict forever until
+  // a full page reload.
   ctx.effect(() => {
-    const refresh = (): void => { scheduleScan() }
+    const refresh = (): void => {
+      scanState.describePromise = undefined
+      scheduleScan()
+    }
     const disposers = [
       ctx.remote.$on('settings/document-updated', (ns: unknown) => {
         if (ns === PI_AI_NS) refresh()

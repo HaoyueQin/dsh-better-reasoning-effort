@@ -77,7 +77,7 @@ export function createEditorApi(
   describe: () => Promise<SettingsNamespaceView | undefined> = () => describeNamespace(api),
 ): {
   suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
-  writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false): Promise<WriteEffortsReply>
+  writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): Promise<WriteEffortsReply>
 } {
   return {
     async suggest(route, modelId, name) {
@@ -120,9 +120,13 @@ export function createEditorApi(
             expectedRevision: namespace.revision,
           })
           if (!response.result.ok) {
-            const message = response.result.error.message
-            if (attempt === 0 && message.includes('changed since it was read')) continue
-            return { ok: false, error: message }
+            // The stable wire code, not the message prose: 'settings-conflict'
+            // means a concurrent writer moved the namespace between our describe
+            // and mutate. Re-reading and retrying with the fresh revision is the
+            // same recovery the official settings form uses; anything else
+            // surfaces as-is.
+            if (attempt === 0 && response.result.error.code === 'settings-conflict') continue
+            return { ok: false, error: response.result.error.message }
           }
           return { ok: true }
         } catch (error) {

@@ -80,6 +80,8 @@ export interface EditorMountProps {
   modelName?: string
   /** The model's current reasoningEfforts declaration. */
   efforts?: false | ReasoningEfforts
+  /** Row ordinal among the models found in this scan (for aria labels). */
+  index: number
   api: EffortEditorApi
   readOnly: boolean
   t: (key: string, params?: Record<string, string | number>) => string
@@ -159,9 +161,13 @@ function routeOfCard(card: HTMLElement, providers: Record<string, Record<string,
  * @param state - mutable scan state shared across invocations.
  */
 export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanState): void {
-  // Fold the describe request across scans (one wire read per wave), but run
-  // the scan on EVERY call — a promise that already resolved still executes
-  // the .then synchronously with the held join.
+  // Fold the describe request across scans (one wire read per wave). A
+  // promise's .then ALWAYS runs asynchronously (microtask), even when already
+  // resolved — the fold just keeps concurrent scans from stacking wire reads.
+  // The holder clears this field on rejection (retry the read next scan) and
+  // on pushed invalidations (settings/document-updated, connection/reset —
+  // see apply()), so a stale snapshot never outlives the change that made it
+  // stale.
   state.describePromise ??= deps.describeNamespace()
   const run = (join: SettingsJoin): void => {
     if (!root.isConnected) return
@@ -196,14 +202,17 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       }
     }
 
-    for (const target of found) {
-      if (hasEditor(target.container)) continue
+    found.forEach((target, index) => {
+      if (hasEditor(target.container)) return
       const route = routeOfCard(target.card, providers)
-      if (route === undefined) continue
+      if (route === undefined) return
       const profile = providers[route] ?? {}
       const models = modelsOf(providers, route)
       const efforts = effortsOf(models, target.modelId)
       const modelName = nameOf(models, target.modelId)
+      // The editor's write seam reads the namespace LIVE through its own
+      // describe (not this scan's snapshot): a conflict retry must re-read a
+      // fresh revision to have any chance of succeeding.
       const unmount = deps.mount(target.container, {
         route,
         routeDisplayName: typeof profile['displayName'] === 'string' ? profile['displayName'] as string : route,
@@ -212,12 +221,13 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         modelId: target.modelId,
         ...modelName === undefined ? {} : { modelName },
         ...efforts === undefined ? {} : { efforts },
-        api: createEditorApi(deps.api, async () => namespace),
+        index,
+        api: createEditorApi(deps.api),
         readOnly: join.writable !== true,
         t: deps.t,
       })
       state.mounted.set(target.container, { unmount })
-    }
+    })
   }
   // A rejected describe must not permanently disable the injector: clear the
   // folded promise so the next scan retries the read.

@@ -122,8 +122,11 @@ describe('reconcile', () => {
     expect(firstProps.route).toBe('aliyun')
     expect(firstProps.efforts).toBeUndefined()
     expect(firstProps.readOnly).toBe(false)
+    // Row ordinals are real indexes, not a hardcoded 0.
+    expect(firstProps.index).toBe(0)
     const secondProps = calls[1][1] as EditorMountProps
     expect(secondProps.modelId).toBe('qwen-turbo')
+    expect(secondProps.index).toBe(1)
   })
 
   it('is idempotent: a second scan does not double-mount', async () => {
@@ -248,6 +251,20 @@ describe('reconcile', () => {
     healthy = true
     await settle(() => reconcile(root, deps, state), state)
     expect(deps.mount).toHaveBeenCalledTimes(2)
+  })
+
+  it('re-describes after a pushed invalidation clears the folded snapshot', async () => {
+    const describe = vi.fn(async () => join)
+    const deps = makeDeps({ describeNamespace: describe })
+    const state = createScanState()
+    const root = buildModelsDom()
+    await settle(() => reconcile(root, deps, state), state)
+    expect(describe).toHaveBeenCalledTimes(1)
+    // The apply()-level refresh (settings/document-updated, connection/reset)
+    // clears the fold; the next scan must re-read, not reuse the stale join.
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    expect(describe).toHaveBeenCalledTimes(2)
   })
 
   it('mounts again when a removed row reappears with a fresh container', async () => {

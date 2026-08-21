@@ -48,7 +48,7 @@ const initialValue = {
   providers: {
     aliyun: {
       displayName: 'Aliyun',
-      api: 'openai',
+      api: 'openai-completions',
       models: [
         { id: 'qwen-max', name: 'Qwen Max' },
         { id: 'qwen-turbo' },
@@ -132,5 +132,75 @@ describe('createEditorApi', () => {
     const editor = createEditorApi(api)
     const reply = await editor.writeEfforts('aliyun', 'ghost', { high: 'high' })
     expect(reply).toEqual({ ok: false, error: 'model-not-found' })
+  })
+
+  it('retries once on a settings-conflict using the fresh revision', async () => {
+    let revision = 7
+    let conflictsLeft = 1
+    const mutates: Array<{ expectedRevision?: number }> = []
+    const api: RemoteApi = {
+      settings: {
+        async describe() {
+          return {
+            rpcId: 'fake',
+            result: { ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision, applies: 'live' as const, secrets: [] }] } },
+          }
+        },
+        async mutate(request) {
+          mutates.push(request)
+          if (conflictsLeft > 0) {
+            conflictsLeft -= 1
+            revision += 1 // a concurrent writer moved the namespace
+            return {
+              rpcId: 'fake',
+              result: {
+                ok: false,
+                error: {
+                  code: 'settings-conflict',
+                  message: 'settings namespace "llm-pi-ai" changed since it was read',
+                  details: { ns: 'llm-pi-ai', expected: revision - 1, actual: revision },
+                },
+              },
+            }
+          }
+          return { rpcId: 'fake', result: { ok: true, value: undefined } }
+        },
+      },
+    }
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: true })
+    expect(mutates).toHaveLength(2)
+    // The retry carried the FRESH revision, not the stale one.
+    expect(mutates[1]!.expectedRevision).toBe(8)
+  })
+
+  it('surfaces non-conflict write errors without retrying', async () => {
+    const api: RemoteApi = {
+      settings: {
+        async describe() {
+          return {
+            rpcId: 'fake',
+            result: { ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 7, applies: 'live' as const, secrets: [] }] } },
+          }
+        },
+        async mutate() {
+          return {
+            rpcId: 'fake',
+            result: {
+              ok: false,
+              error: {
+                code: 'settings-rejected',
+                message: 'model "qwen-max" sets compat "thinkingFormat", but its api is "openai-responses"',
+                details: { ns: 'llm-pi-ai' },
+              },
+            },
+          }
+        },
+      },
+    }
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: false, error: 'model "qwen-max" sets compat "thinkingFormat", but its api is "openai-responses"' })
   })
 })

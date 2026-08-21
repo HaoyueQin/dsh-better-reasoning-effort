@@ -167,8 +167,11 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   }
 
   const reset = (): void => {
+    // Back to the SAVED declaration, not to "everything off": Reset means
+    // "discard my edits". Clearing the declaration is still one flow away —
+    // uncheck every level and Apply (the unset intent).
     dirtyRef.current = false
-    setDraft(draftFrom(undefined))
+    setDraft(draftFrom(initialEfforts))
     setSuggested(undefined)
     setSuggestedSource('')
     setMessage(undefined)
@@ -203,14 +206,17 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
                 onChange={(event) => { patchLevel(level, event.target.checked) }}
               />
               <span className="bre-effort-level">{t(`level_${level}`)}</span>
-              {cell.on
+              {/* The off level always writes `off: null` (buildIntent), so it
+                  takes no wire input — rendering one would silently drop what
+                  the user typed. */}
+              {cell.on && !isOff
                 ? (
                   <input
                     type="text"
                     className="bre-effort-wire"
                     value={cell.wire}
                     disabled={disabled}
-                    placeholder={isOff ? t('offPlaceholder') : t('wirePlaceholder')}
+                    placeholder={t('wirePlaceholder')}
                     aria-label={`${t(`level_${level}`)} ${t('wireValue')}`}
                     onChange={(event) => { patchWire(level, event.target.value) }}
                   />
