@@ -34,7 +34,7 @@ This plugin brings that configuration back into the UI: **edit right inside the 
 
 ## Install
 
-Requires DeepSeek Harness `0.1.0-rc.8` or newer (`@deepseek-ai/dsh-api-remotes@^0.1.0-rc.8`).
+Requires DeepSeek Harness `0.1.1-rc.1` or newer (`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`).
 
 ### From npm
 
@@ -107,7 +107,7 @@ npm test            # vitest: knowledge / inference / autofill / DOM injection /
 npm run build       # lib/*.js + lib/client.js (module-loader bundle)
 ```
 
-Contract version: `@deepseek-ai/dsh-api-remotes@0.1.0-rc.8` (client contract types), verified by typecheck, the test suite, and a full build against the `0.1.0-rc.8` packages.
+Contract version: `@deepseek-ai/dsh-api-remotes@0.1.1-rc.1` (client contract types), verified by typecheck, the test suite, and a full build against the `0.1.1-rc.1` packages.
 
 ## Known limitations
 

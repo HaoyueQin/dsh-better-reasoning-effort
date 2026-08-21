@@ -2,7 +2,8 @@
  * Vocabulary grid tests: every knowledge-base entry must survive pi-ai's
  * schema AND its resolution gates for EVERY real wire protocol.
  *
- * These constants are pinned from @deepseek-ai/dsh-llm-pi-ai@0.1.0-rc.8:
+ * These constants are pinned from @deepseek-ai/dsh-llm-pi-ai@0.1.0-rc.8
+ * (re-verified unchanged at 0.1.1-rc.1):
  *   - THINKING_FORMAT_GATE  (llm-pi-ai/src/catalog.ts)  — nameable formats
  *   - COMPLETIONS_COMPAT_GATE / RESPONSES_COMPAT_GATE / ANTHROPIC_COMPAT_GATE
  *     (llm-pi-ai/src/catalog.ts)                          — per-protocol offers

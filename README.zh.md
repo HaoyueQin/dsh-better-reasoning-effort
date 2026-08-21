@@ -34,7 +34,7 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 安装
 
-需要 DeepSeek Harness `0.1.0-rc.8` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.0-rc.8`）。
+需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`）。
 
 ### 从 npm
 
@@ -105,7 +105,7 @@ npm test            # vitest：知识库 / 推断 / autofill / DOM 注入 / 写�
 npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 ```
 
-契约版本：`@deepseek-ai/dsh-api-remotes@0.1.0-rc.8`（client 契约类型），已通过针对 `0.1.0-rc.8` 各包的 typecheck、测试套件与完整构建验证。
+契约版本：`@deepseek-ai/dsh-api-remotes@0.1.1-rc.1`（client 契约类型），已通过针对 `0.1.1-rc.1` 各包的 typecheck、测试套件与完整构建验证。
 
 ## 已知限制
 
