@@ -86,6 +86,43 @@ describe('suggestEfforts', () => {
     }
   })
 
+  it('fuses the endpoint signal by confidence (L1 over L2 over L4)', () => {
+    // L1 explicit "does not reason" outranks even a knowledge-base hit.
+    const disabled = suggestEfforts('deepseek-chat', { api: 'openai-completions' }, {
+      reasoning: false,
+      source: 'supports_reasoning',
+    })
+    expect(disabled.efforts).toBe(false)
+    expect(disabled.confidence).toBe('high')
+    expect(disabled.source).toBe('endpoint:supports_reasoning')
+
+    // L2 knowledge base keeps its wire values; the endpoint only reinforces.
+    const confirmed = suggestEfforts('qwen-max', {}, { reasoning: true, source: 'can_reason' })
+    expect(confirmed.efforts).toEqual({ off: null, low: 'low', medium: 'medium', high: 'high' })
+    expect(confirmed.matched).toBe(true)
+    expect(confirmed.confidence).toBe('high')
+    expect(confirmed.endpoint).toEqual({ reasoning: true, source: 'can_reason' })
+
+    // Endpoint confirms reasoning but nothing names the levels: medium.
+    const inferred = suggestEfforts('mystery-model', {}, { reasoning: true, source: 'reasoning' })
+    expect(inferred.matched).toBe(false)
+    expect(inferred.confidence).toBe('medium')
+    expect(inferred.efforts).toEqual({ off: null, low: 'low', medium: 'medium', high: 'high' })
+
+    // Unknown signal changes nothing and stays low without the knowledge base.
+    const unknown = suggestEfforts('mystery-model', { api: 'openai-completions' }, {
+      reasoning: 'unknown',
+      source: null,
+    })
+    expect(unknown.confidence).toBe('low')
+    expect(unknown.endpoint).toEqual({ reasoning: 'unknown', source: null })
+
+    // Omitting the probe entirely keeps the pre-probe behavior and shape.
+    const unprobed = suggestEfforts('qwen-max', {})
+    expect(unprobed.confidence).toBe('high')
+    expect(unprobed.endpoint).toBeUndefined()
+  })
+
   it('matches by display name as well as id', () => {
     expect(matchKnowledgeBase('gateway-custom', 'DeepSeek V3')?.id).toBe('deepseek-v3')
   })

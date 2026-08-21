@@ -67,8 +67,11 @@ export interface RouteFacts {
 
 /** A resolved suggestion for one model on one route. */
 export interface EffortSuggestion {
-  /** The reasoning-effort declaration to write, if one is derivable. */
-  efforts?: ReasoningEfforts
+  /**
+   * The reasoning-effort declaration to write, if one is derivable. `false`
+   * arrives when the endpoint explicitly reports the model does not reason.
+   */
+  efforts?: ReasoningEfforts | false
   /** The compat block to write alongside, if any. */
   compat?: CompatSuggestion
   /** Whether a knowledge-base entry matched (vs protocol inference). */
@@ -77,6 +80,14 @@ export interface EffortSuggestion {
   entryId?: string
   /** Human-readable source of the suggestion. */
   source: string
+  /**
+   * Overall confidence for the UI: high = knowledge base (wire values) and/or
+   * an explicit endpoint signal; medium = endpoint confirmed reasoning but the
+   * level ladder is inferred; low = protocol inference alone.
+   */
+  confidence: 'high' | 'medium' | 'low'
+  /** The endpoint signal behind this suggestion, when one was supplied. */
+  endpoint?: { reasoning: boolean | 'unknown'; source: string | null }
 }
 
 const record = (value: unknown): value is Record<string, unknown> =>
@@ -199,9 +210,10 @@ export const GENERIC_OPENAI_EFFORTS: ReasoningEfforts = {
  *
  * `off: null` is only offered where a no-thinking mode is plausible; the
  * conservative choice elsewhere is to omit it so the picker never promises an
- * Off the endpoint would reject.
+ * Off the endpoint would reject. Exported for the vocabulary grid tests that
+ * pin these ladders against pi-ai's resolution rules.
  */
-const PROTOCOL_INFERENCE: Readonly<Record<string, ReasoningEfforts>> = {
+export const PROTOCOL_INFERENCE: Readonly<Record<string, ReasoningEfforts>> = {
   'openai-completions': GENERIC_OPENAI_EFFORTS,
   'openai-responses': GENERIC_OPENAI_EFFORTS,
   'anthropic-messages': GENERIC_OPENAI_EFFORTS,
@@ -296,15 +308,41 @@ function compatForRoute(compat: CompatSuggestion | undefined, route: RouteFacts)
   return normalize(route.api) === COMPAT_CAPABLE_PROTOCOL ? compat : undefined
 }
 
+/** Conservative ladder offered when the endpoint confirms reasoning but nothing names the levels. */
+const ENDPOINT_CONFIRMED_LADDER: ReasoningEfforts = { off: null, low: 'low', medium: 'medium', high: 'high' }
+
 /**
- * Resolve the suggestion for one model on one route.
+ * Resolve the suggestion for one model on one route, fusing the available
+ * signals by confidence:
+ *
+ *   L1  endpoint listing signal (when supplied) — answers "does it reason at
+ *       all"; an explicit `false` wins outright (suggest `false`, high);
+ *   L2  knowledge base — the ONLY source of wire spellings and compat;
+ *   L4  protocol inference — level-ladder skeleton when nothing better exists.
+ *
  * @param modelId - the model id (or display name) to match.
  * @param route - route facts used when the knowledge base misses; its
  *   displayName participates in knowledge-base matching.
- * @returns a suggestion, or undefined when nothing derivable (never happens —
- *   protocol inference always has a fallback).
+ * @param endpoint - optional raw-listing signal for this model (from the
+ *   host's same-origin probe route); omit when the endpoint was not asked.
+ * @returns a suggestion (always derivable — protocol inference has a fallback).
  */
-export function suggestEfforts(modelId: string, route: RouteFacts): EffortSuggestion {
+export function suggestEfforts(
+  modelId: string,
+  route: RouteFacts,
+  endpoint?: { reasoning: boolean | 'unknown'; source: string | null },
+): EffortSuggestion {
+  // L1: an explicit "does not reason" from the endpoint outranks everything.
+  if (endpoint?.reasoning === false) {
+    return {
+      efforts: false,
+      matched: false,
+      source: `endpoint:${endpoint.source ?? 'listing'}`,
+      confidence: 'high',
+      endpoint,
+    }
+  }
+
   const entry = matchKnowledgeBase(modelId, route.displayName)
   if (entry !== undefined) {
     const compat = compatForRoute(entry.compat, route)
@@ -314,22 +352,39 @@ export function suggestEfforts(modelId: string, route: RouteFacts): EffortSugges
       matched: true,
       entryId: entry.id,
       source: entry.id,
+      // Knowledge base carries the wire values; an agreeing endpoint signal
+      // only reinforces it. A DISAGREEING signal (endpoint says no reasoning)
+      // was handled above; unknown changes nothing.
+      confidence: 'high',
+      ...(endpoint === undefined ? {} : { endpoint }),
     }
   }
+
+  // L2 missed: the ladder comes from protocol inference. An explicit endpoint
+  // "reasons" upgrades confidence to medium — support is confirmed, but the
+  // level set and spellings are inferred, so the user should double-check.
   const protocol = inferProtocol(route)
   const efforts = PROTOCOL_INFERENCE[protocol] ?? GENERIC_FALLBACK
-  // A compat block is only written when the route *names* the one protocol
-  // that takes it: it tells pi-ai to speak the OpenAI dialect to this
-  // endpoint, and guessing that for an endpoint with no clues could send
-  // requests the gateway rejects.
   const compat = normalize(route.api) === COMPAT_CAPABLE_PROTOCOL
     ? { thinkingFormat: 'openai', supportsReasoningEffort: true }
     : undefined
+  if (endpoint?.reasoning === true) {
+    return {
+      efforts: { ...ENDPOINT_CONFIRMED_LADDER },
+      ...compatForRoute(compat, route) === undefined ? {} : { compat },
+      matched: false,
+      source: `endpoint:${endpoint.source ?? 'listing'}`,
+      confidence: 'medium',
+      endpoint,
+    }
+  }
   return {
     efforts,
     ...compat === undefined ? {} : { compat },
     matched: false,
     source: `protocol:${protocol}`,
+    confidence: 'low',
+    ...(endpoint === undefined ? {} : { endpoint }),
   }
 }
 
