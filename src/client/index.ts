@@ -110,6 +110,10 @@ export function apply(ctx: ClientContext): void {
         t,
         mount(container, props) {
           const rootEl = document.createElement('div')
+          // The slot class carries the grid-column span: this wrapper — not
+          // the React editor inside it — is the item the official disclosure
+          // grid places (see STYLES).
+          rootEl.className = 'bre-effort-slot'
           // Mark the container synchronously — before React renders — so the
           // idempotency guard (hasEditor) holds from the very first scan.
           // Without this, the appendChild-triggered MutationObserver scan can

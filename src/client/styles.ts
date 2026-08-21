@@ -7,6 +7,14 @@
 
 /** The stylesheet text, inserted once into <head> by the client apply(). */
 export const STYLES = `
+/* The injector's mount wrapper. It — not the editor inside it — is the item
+   placed into the official row disclosure's repeat(auto-fit, minmax(160px,1fr))
+   grid (context window and max tokens take two cells), so the span belongs
+   here: on the editor itself it would target the wrapper's block box and be
+   ignored, squeezing the block into one cell. */
+.bre-effort-slot {
+  grid-column: 1 / -1;
+}
 .bre-effort-editor {
   display: flex;
   flex-direction: column;
@@ -16,11 +24,6 @@ export const STYLES = `
   border: 1px solid var(--dsh-border, rgba(128,128,128,0.25));
   border-radius: 8px;
   background: var(--dsh-surface, rgba(128,128,128,0.06));
-  /* The editor mounts inside the official row disclosure, which is a
-     repeat(auto-fit, minmax(160px, 1fr)) grid (context window and max
-     tokens take two cells). Spanning the whole row keeps the block from
-     being squeezed into one third of the line. */
-  grid-column: 1 / -1;
   box-sizing: border-box;
 }
 .bre-effort-head {
@@ -46,18 +49,28 @@ export const STYLES = `
 .bre-link-button:hover { text-decoration: underline; }
 .bre-link-button:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
 .bre-effort-grid {
-  /* Two columns, the same density as the official capacity fields, so the
-     level rows sit beside rather than under each other at full width. */
+  /* Exactly two equal columns mirroring the official capacity pair the editor
+     sits under; an odd row count leaves the last cell in the left column,
+     so the left side carries the extra level. */
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 4px 16px;
 }
 .bre-effort-row {
   display: grid;
-  grid-template-columns: 16px 72px minmax(0, 1fr);
+  grid-template-columns: 20px 76px minmax(0, 1fr);
   align-items: center;
   gap: 6px;
   font-size: 12px;
+}
+.bre-effort-row input[type='checkbox'] {
+  /* Bigger than the browser default (~13px): a tap/point target that does
+     not require precision, in the theme accent when checked. */
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--dsh-accent, #4a90d9);
+  cursor: pointer;
 }
 .bre-effort-level { color: var(--dsh-text-secondary, inherit); }
 .bre-effort-wire {

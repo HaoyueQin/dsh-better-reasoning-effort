@@ -93,20 +93,46 @@ export interface EffortSuggestion {
 /**
  * The curated knowledge base. Patterns are lowercase substring matches against
  * the model id (and display name). First match wins, longest pattern wins.
+ *
+ * Sources of truth (per family, checked 2026-08): official API docs —
+ * api-docs.deepseek.com, platform.openai.com, platform.claude.com,
+ * ai.google.dev, docs.x.ai, docs.mistral.ai, platform.stepfun.com,
+ * cloud.tencent.com (TokenHub), platform.kimi.ai, docs.bigmodel.cn,
+ * help.aliyun.com. The wire spellings below are what each vendor's
+ * OpenAI-compatible `reasoning_effort` (or thinking switch) actually accepts;
+ * families whose official endpoints take no effort ladder at all (MiniMax,
+ * Llama, Nova, Phi, Cohere, Perplexity sonar) deliberately carry no entry —
+ * the generic protocol suggestion (low confidence) is more honest than a
+ * made-up ladder.
  */
 export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
   {
+    id: 'deepseek-v4',
+    // One pattern covers the family: every serving suffixes the base id
+    // (deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-flash-free, the
+    // vision experiment), so the shared stem keys them all — including
+    // free/aggregator spellings the official catalog never lists.
+    patterns: ['deepseek-v4'],
+    // V4 widened the official ladder with a Low step: llm-deepseek's
+    // REASONING_EFFORTS offers Off / Low / High / Max (medium/xhigh are
+    // accepted but fold to high/high — not offered here). Closing thinking
+    // is the `thinking: disabled` object, so the off spelling is a non-null
+    // placeholder that arms the deepseek format's disabled branch.
+    efforts: { off: 'off', low: 'low', high: 'high', max: 'max' },
+    compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
+    note: 'DeepSeek V4 官方档位：Off / Low / High / Max。',
+  },
+  {
     id: 'deepseek-v3',
     // deepseek-reasoner belongs to the R1 entry: it is the reasoning model's
-    // API name and must not match here.
+    // API name and must not match here. The old alias pair
+    // (deepseek-chat / deepseek-reasoner) was retired upstream in 2026-07;
+    // the id patterns stay for third-party gateways still serving V3.x.
     patterns: ['deepseek-v3', 'deepseek-chat'],
-    // DeepSeek's own API spells the levels the way the harness catalog does:
-    // high and max are the thinking intensities; off is the no-thinking
-    // spelling. The `deepseek` thinking format is what the official adapter
-    // sends for reasoning-capable models.
-    efforts: { off: null, high: 'high', max: 'max' },
+    // V3's official ladder had no low step; same disabled-object close as V4.
+    efforts: { off: 'off', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
-    note: 'DeepSeek 官方档位：Off / High / Max。',
+    note: 'DeepSeek V3 档位：Off / High / Max。',
   },
   {
     id: 'deepseek-r1',
@@ -118,72 +144,204 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     note: 'DeepSeek-R1 为推理模型，仅提供 High。',
   },
   {
-    id: 'openai-o',
-    // 'gpt-5.1'/'gpt-5.2' are covered by the 'gpt-5' substring; the o-series
-    // tokens only match on word boundaries (see matchKnowledgeBase), so
-    // 'o1' hits 'o1-mini' but not 'ko1'.
-    patterns: ['o1', 'o3', 'o4', 'gpt-5'],
-    // OpenAI's reasoning models accept the standard effort ladder.
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
+    id: 'openai-gpt-5-2',
+    patterns: ['gpt-5.2'],
+    // gpt-5.2 (2025-12) took `none` as the explicit no-thinking value
+    // (replacing gpt-5's `minimal`) and added `xhigh`; its default is none.
+    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'OpenAI 档位：Off / Low / Medium / High。',
+    note: 'GPT-5.2 档位：None / Low / Medium / High / XHigh（默认 None）。',
+  },
+  {
+    id: 'openai-gpt-5-1',
+    patterns: ['gpt-5.1'],
+    // gpt-5.1 (2025-11): none replaces minimal; no xhigh until 5.2.
+    // Codex variants take no `none` — drop that level by hand there.
+    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: 'GPT-5.1 档位：None / Low / Medium / High（默认 None）。',
+  },
+  {
+    id: 'openai-gpt-5',
+    patterns: ['gpt-5'],
+    // The 2025-08 first generation: minimal is the floor, there is no none,
+    // and the default (medium) thinks — so no off level is offered.
+    efforts: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: 'GPT-5 初代档位：Minimal / Low / Medium / High，无关闭档。',
+  },
+  {
+    id: 'openai-o',
+    // The o-series endpoints were retired upstream (2026-07); the tokens
+    // stay for gateways and local deployments still serving them, and match
+    // only on word boundaries (see matchKnowledgeBase), so 'o1' hits
+    // 'o1-mini' but not 'ko1'.
+    patterns: ['o1', 'o3', 'o4'],
+    // o-series had no none: not sending the parameter meant medium (think
+    // on), so no off level is offered.
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: 'OpenAI o 系档位：Low / Medium / High（官方端点已停服，网关存量）。',
   },
   {
     id: 'openai-gpt',
     patterns: ['gpt-4', 'gpt-3.5'],
     efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'OpenAI 通用档位。',
+    note: 'OpenAI 通用档位（gpt-4 系不思考，发档位可能被忽略）。',
+  },
+  {
+    id: 'anthropic-claude-5',
+    // Claude 5th generation (fable/mythos/opus/sonnet-5, 2026): adaptive
+    // thinking with an effort ladder that adds xhigh and max; the fable and
+    // mythos entries think always-on, so no off level.
+    patterns: ['claude-fable', 'claude-mythos', 'claude-opus-5', 'claude-sonnet-5'],
+    // Anthropic's OpenAI-compat layer maps reasoning_effort to effort
+    // (platform.claude.com/docs effort matrix: low/medium/high/xhigh/max).
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    // No thinkingFormat: pi-ai has no 'anthropic' member, and the
+    // anthropic-messages compat gate offers neither field.
+    compat: { supportsReasoningEffort: true },
+    note: 'Claude 5 代档位（经 OpenAI 兼容层）：Low / Medium / High / XHigh / Max。',
+  },
+  {
+    id: 'anthropic-claude',
+    // 4.x generation through OpenAI-compatible gateways. Every current
+    // model takes low/medium/high; xhigh/max arrive with 4.6+/5 (see the
+    // claude-5 entry) and off is not part of the effort vocabulary.
+    patterns: ['claude'],
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { supportsReasoningEffort: true },
+    note: 'Claude 4.x 档位（经 OpenAI 兼容层）：Low / Medium / High。',
+  },
+  {
+    id: 'google-gemini',
+    patterns: ['gemini'],
+    // Gemini 3.x over the OpenAI-compat layer maps reasoning_effort to
+    // thinking_level; the ladder is minimal/low/medium/high with no off
+    // (`none` is rejected — minimal is the floor, and the 3.x default is
+    // high thinking).
+    efforts: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: 'Gemini 3.x 档位：Minimal / Low / Medium / High，无关闭档。',
+  },
+  {
+    id: 'xai-grok-high',
+    patterns: ['grok-4.7', 'grok-4.6'],
+    // grok 4.6/4.7 add xhigh on top of low/medium/high and cannot fully
+    // close thinking (docs.x.ai reasoning page).
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: 'Grok 4.6/4.7 档位：Low / Medium / High / XHigh，无关闭档。',
+  },
+  {
+    id: 'xai-grok',
+    // grok-4.5 (and 4.1-fast etc.) take the standard three-step ladder;
+    // grok-4 and older reject reasoning_effort outright — gateways serving
+    // them will refuse the value and the user can clear it by hand.
+    patterns: ['grok'],
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: 'Grok 通用档位：Low / Medium / High（grok-4 不支持该参数）。',
+  },
+  {
+    id: 'mistral-reasoning',
+    // Only magistral-1.2 and mistral-medium-3.5 take reasoning_effort
+    // (docs.mistral.ai); unsupported models 422 on it.
+    patterns: ['magistral', 'mistral-medium-3'],
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: 'Magistral / Mistral Medium 3.x 档位：Low / Medium / High。',
   },
   {
     id: 'qwen',
-    patterns: ['qwen', 'qwq'],
-    // Qwen (DashScope / Model Studio) OpenAI-compatible mode accepts the
-    // standard ladder; QwQ is a reasoning model and takes no off level.
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
-    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: '通义千问 OpenAI 兼容档位：Off / Low / Medium / High。',
+    patterns: ['qwen', 'qwq', 'qvq'],
+    // DashScope takes NO reasoning_effort: thinking is the enable_thinking
+    // boolean (plus thinking_budget) — pi-ai's 'qwen' format dispatches
+    // exactly that switch, so the ladder is honestly open/close with one
+    // nominal thinking level. QwQ/QvQ are think-always models; clearing the
+    // off level there is one click.
+    efforts: { off: null, high: 'high' },
+    compat: { thinkingFormat: 'qwen' },
+    note: '通义千问：enable_thinking 开关（无 effort 档），开=High。',
+  },
+  {
+    id: 'glm-5-3',
+    patterns: ['glm-5.3'],
+    // glm-5.3 accepts exactly max/high/low; anything else (including the
+    // 5.2 ladder's minimal/none) errors, and thinking cannot be disabled.
+    efforts: { low: 'low', high: 'high', max: 'max' },
+    compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
+    note: 'GLM-5.3 档位：Low / High / Max（强制思考）。',
+  },
+  {
+    id: 'glm-5-2',
+    patterns: ['glm-5.2'],
+    // glm-5.2 takes the widest ladder in the wild: none/minimal/low/medium/
+    // high/xhigh/max (default max). The zai format arms
+    // thinking:disabled for off and sends the effort for the rest.
+    efforts: { off: 'none', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
+    note: 'GLM-5.2 档位：None / Minimal / Low / Medium / High / XHigh / Max。',
   },
   {
     id: 'glm',
     patterns: ['glm', 'zhipu', 'chatglm'],
-    // Zhipu's OpenAI-compatible endpoint understands the standard ladder.
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
+    // GLM 4.x: thinking.type enabled/disabled only, no effort ladder —
+    // the zai format sends exactly that switch (and no effort value,
+    // because supportsReasoningEffort is not declared).
+    efforts: { off: null, high: 'high' },
+    compat: { thinkingFormat: 'zai' },
+    note: 'GLM 4.x：thinking 开关（无 effort 档），开=High。',
+  },
+  {
+    id: 'kimi-k3',
+    patterns: ['kimi-k3'],
+    // kimi-k3: top-level reasoning_effort low/high/max (default max),
+    // always thinking — the thinking object must not be sent at all.
+    efforts: { low: 'low', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: '智谱 GLM OpenAI 兼容档位。',
+    note: 'Kimi K3 档位：Low / High / Max（始终思考）。',
   },
   {
     id: 'kimi',
+    // k2.5/2.6 use the DeepSeek-shaped thinking.type enabled/disabled
+    // switch, which the 'deepseek' format dispatches; the old k2 preview
+    // ids and moonshot-v1 names are retired upstream (2026-05/08) but live
+    // on gateways. Effort ladders are not part of their contract.
     patterns: ['kimi', 'moonshot'],
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
-    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: '月之暗面 Kimi OpenAI 兼容档位。',
+    efforts: { off: null, high: 'high' },
+    compat: { thinkingFormat: 'deepseek' },
+    note: 'Kimi K2.x：thinking 开关（无 effort 档），开=High。',
   },
   {
-    id: 'minimax',
-    patterns: ['minimax', 'abab'],
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
+    id: 'hunyuan-hy3',
+    // Tencent's TokenHub hy3: reasoning_effort low/high (default low; a low
+    // request with tools is lifted to high automatically).
+    patterns: ['hy3'],
+    efforts: { low: 'low', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'MiniMax OpenAI 兼容档位。',
+    note: '混元 hy3 档位：Low / High（默认 Low）。',
+  },
+  {
+    id: 'step',
+    // StepFun step-3.x: reasoning_effort low/medium/high (default medium);
+    // thinking cannot be turned off, only tuned.
+    patterns: ['step-3', 'step-2'],
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    note: '阶跃 Step 档位：Low / Medium / High（默认 Medium，不可关闭）。',
   },
   {
     id: 'doubao',
+    // Volcengine Ark: officially documented is the thinking.type
+    // enabled/disabled/auto switch; the reasoning_effort ladder on
+    // seed-2.x has community evidence (chatbox/compshare) but no first-
+    // party doc yet — kept as the conventional ladder, verify per gateway.
     patterns: ['doubao', 'doubao-seed', 'seed'],
     efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: '豆包 OpenAI 兼容档位。',
-  },
-  {
-    id: 'anthropic-claude',
-    patterns: ['claude'],
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
-    // No thinkingFormat here: pi-ai's nameable formats have no 'anthropic'
-    // member (SUPPORTED_THINKING_FORMATS), and the anthropic-messages compat
-    // gate offers neither field. suggestEfforts gates this block against the
-    // route's real protocol anyway, so a Claude served through an
-    // openai-completions gateway gets `supportsReasoningEffort` only.
-    compat: { supportsReasoningEffort: true },
-    note: 'Anthropic 档位（经 OpenAI 兼容网关时）。',
+    note: '豆包档位（待官方确认）：Off / Low / Medium / High。',
   },
 ]
 

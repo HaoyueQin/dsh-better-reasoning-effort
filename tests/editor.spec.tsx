@@ -27,10 +27,15 @@ const t = (key: string, params?: Record<string, string | number>): string => {
   return text
 }
 
-function baseApi(): EffortEditorApi & { suggest: ReturnType<typeof vi.fn>; writeEfforts: ReturnType<typeof vi.fn> } {
+function baseApi(): EffortEditorApi & {
+  suggest: ReturnType<typeof vi.fn>
+  writeEfforts: ReturnType<typeof vi.fn>
+  stageEfforts: ReturnType<typeof vi.fn>
+} {
   return {
     suggest: vi.fn(async (): Promise<SuggestReply> => ({ ok: false, error: 'no-suggestion' })),
     writeEfforts: vi.fn(async (): Promise<WriteEffortsReply> => ({ ok: true })),
+    stageEfforts: vi.fn(),
   }
 }
 
@@ -77,6 +82,11 @@ function buttonByText(container: HTMLElement, text: string): HTMLButtonElement {
   return hit
 }
 
+/** Whether a button with exactly this text exists (absence is expected sometimes). */
+function hasButton(container: HTMLElement, text: string): boolean {
+  return Array.from(container.querySelectorAll('button')).some(candidate => candidate.textContent === text)
+}
+
 beforeEach(() => {
   document.body.innerHTML = ''
   vi.restoreAllMocks()
@@ -97,10 +107,12 @@ describe('EffortEditor', () => {
     expect(boxes[0]!.checked).toBe(true)
     expect(boxes[4]!.checked).toBe(true)
     expect(boxes.slice(1, 4).every(box => !box.checked)).toBe(true)
-    // The armed thinking level exposes its wire spelling; off takes none.
+    // The armed thinking level exposes its wire spelling; off takes one too
+    // (its spelling is what some formats send to close thinking).
     const wires = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="text"]'))
-    expect(wires).toHaveLength(1)
-    expect(wires[0]!.value).toBe('high')
+    expect(wires).toHaveLength(2)
+    expect(wires[0]!.value).toBe('') // off: null spells as "send nothing"
+    expect(wires[1]!.value).toBe('high')
   })
 
   it('applies an auto-adapt suggestion and labels its source and confidence', async () => {
@@ -170,5 +182,48 @@ describe('EffortEditor', () => {
 
     // Still dirty: the user's edit survived the refresh.
     expect(checkboxes(container)[4]!.checked).toBe(false)
+  })
+
+  it('staged: Apply stages instead of writing settings and shows the staged copy', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({ api, staged: true, route: 'acme-gateway' }))
+    // The staged banner is present from the start.
+    expect(container.textContent).toContain(t('stagedHint'))
+
+    await act(async () => { checkboxes(container)[4]!.click() })
+    const stageButton = buttonByText(container, t('stage'))
+    expect(hasButton(container, t('apply'))).toBe(false)
+    await act(async () => { stageButton.click() })
+
+    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' })
+    expect(api.writeEfforts).not.toHaveBeenCalled()
+    expect(container.querySelector('.bre-effort-message')?.textContent).toContain(t('staged'))
+  })
+
+  it('staged: auto-adapt feeds the card-typed protocol and endpoint as inference facts', async () => {
+    const api = baseApi()
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { off: null, low: 'low', high: 'high', max: 'max' },
+        matched: true,
+        source: 'deepseek-v4',
+        confidence: 'high',
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({
+      api,
+      staged: true,
+      route: 'acme-gateway',
+      routeApi: 'openai-completions',
+      routeBaseURL: 'https://api.deepseek.com/v1',
+    }))
+
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+
+    expect(api.suggest).toHaveBeenCalledWith('acme-gateway', 'qwen-max', undefined, {
+      api: 'openai-completions',
+      baseURL: 'https://api.deepseek.com/v1',
+    })
   })
 })

@@ -100,7 +100,7 @@ describe('apply() autofill', () => {
     apply(ctx)
     await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
     const routes = (settings.updates[0]!.patch as { providers: Record<string, { models: Array<Record<string, unknown>> }> }).providers
-    expect(routes.aliyun.models[0]!['reasoningEfforts']).toEqual({ off: null, low: 'low', medium: 'medium', high: 'high' })
+    expect(routes.aliyun.models[0]!['reasoningEfforts']).toEqual({ off: null, high: 'high' })
     // The lock carried the revision read at describe() time.
     expect(settings.updates[0]!.expectedRevision).toBe(3)
   })

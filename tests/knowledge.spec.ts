@@ -17,13 +17,30 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('deepseek-v3.2')?.id).toBe('deepseek-v3')
   })
 
-  it('matches R1 by its API name (deepseek-reasoner)', () => {
-    expect(matchKnowledgeBase('deepseek-reasoner')?.id).toBe('deepseek-r1')
+  it('matches the V4 family, including spellings the catalog never lists', () => {
+    // The official catalog ships v4-flash / v4-pro / v4-flash-vision-exp;
+    // third-party gateways also serve free/discount spellings off the same
+    // stem, which the shared pattern keys.
+    expect(matchKnowledgeBase('deepseek-v4-flash')?.id).toBe('deepseek-v4')
+    expect(matchKnowledgeBase('deepseek-v4-flash-free')?.id).toBe('deepseek-v4')
+    expect(matchKnowledgeBase('deepseek-v4-pro')?.id).toBe('deepseek-v4')
+    expect(matchKnowledgeBase('deepseek-v4-flash-vision-exp')?.id).toBe('deepseek-v4')
+    const entry = KNOWLEDGE_BASE.find(candidate => candidate.id === 'deepseek-v4')
+    // The off spelling is a non-null placeholder: it arms the deepseek
+    // format's `thinking: disabled` branch (pi-ai sends nothing when null,
+    // which would leave DeepSeek's default thinking on).
+    expect(entry?.efforts).toEqual({ off: 'off', low: 'low', high: 'high', max: 'max' })
   })
 
-  it('matches OpenAI reasoning models', () => {
+  it('matches OpenAI reasoning models by generation', () => {
     expect(matchKnowledgeBase('o3-mini')?.id).toBe('openai-o')
-    expect(matchKnowledgeBase('gpt-5.2')?.id).toBe('openai-o')
+    expect(matchKnowledgeBase('gpt-5.2')?.id).toBe('openai-gpt-5-2')
+    expect(matchKnowledgeBase('gpt-5.1-codex')?.id).toBe('openai-gpt-5-1')
+    expect(matchKnowledgeBase('gpt-5-mini')?.id).toBe('openai-gpt-5')
+  })
+
+  it('matches R1 by its API name (deepseek-reasoner)', () => {
+    expect(matchKnowledgeBase('deepseek-reasoner')?.id).toBe('deepseek-r1')
   })
 
   it('matches Chinese families by substring', () => {
@@ -35,6 +52,29 @@ describe('matchKnowledgeBase', () => {
 
   it('returns undefined for unknown models', () => {
     expect(matchKnowledgeBase('some-random-model')).toBeUndefined()
+  })
+
+  it('matches the 2026 families this update added', () => {
+    expect(matchKnowledgeBase('gemini-3.7-flash')?.id).toBe('google-gemini')
+    expect(matchKnowledgeBase('gemini-2.5-pro')?.id).toBe('google-gemini')
+    expect(matchKnowledgeBase('grok-4.7')?.id).toBe('xai-grok-high')
+    expect(matchKnowledgeBase('grok-4.6')?.id).toBe('xai-grok-high')
+    expect(matchKnowledgeBase('grok-4.5')?.id).toBe('xai-grok')
+    expect(matchKnowledgeBase('claude-fable-5')?.id).toBe('anthropic-claude-5')
+    expect(matchKnowledgeBase('claude-opus-5')?.id).toBe('anthropic-claude-5')
+    expect(matchKnowledgeBase('claude-sonnet-4.5')?.id).toBe('anthropic-claude')
+    expect(matchKnowledgeBase('glm-5.3')?.id).toBe('glm-5-3')
+    expect(matchKnowledgeBase('glm-5.2')?.id).toBe('glm-5-2')
+    expect(matchKnowledgeBase('kimi-k3')?.id).toBe('kimi-k3')
+    expect(matchKnowledgeBase('kimi-k2.6')?.id).toBe('kimi')
+    expect(matchKnowledgeBase('hy3-preview')?.id).toBe('hunyuan-hy3')
+    expect(matchKnowledgeBase('step-3.7-flash')?.id).toBe('step')
+    expect(matchKnowledgeBase('magistral-medium-1.2')?.id).toBe('mistral-reasoning')
+    expect(matchKnowledgeBase('mistral-medium-3.5')?.id).toBe('mistral-reasoning')
+    // MiniMax deliberately carries no entry: its official API takes no
+    // reasoning_effort, and a made-up ladder would be worse than the honest
+    // low-confidence generic suggestion.
+    expect(matchKnowledgeBase('MiniMax-M3')).toBeUndefined()
   })
 })
 
@@ -71,7 +111,7 @@ describe('suggestEfforts', () => {
     const suggestion = suggestEfforts('deepseek-chat', {})
     expect(suggestion.matched).toBe(true)
     expect(suggestion.entryId).toBe('deepseek-v3')
-    expect(suggestion.efforts).toEqual({ off: null, high: 'high', max: 'max' })
+    expect(suggestion.efforts).toEqual({ off: 'off', high: 'high', max: 'max' })
     // No compat without a route protocol: compat is gated per protocol.
     expect(suggestion.compat).toBeUndefined()
   })
@@ -106,7 +146,7 @@ describe('suggestEfforts', () => {
 
     // L2 knowledge base keeps its wire values; the endpoint only reinforces.
     const confirmed = suggestEfforts('qwen-max', {}, { reasoning: true, source: 'can_reason' })
-    expect(confirmed.efforts).toEqual({ off: null, low: 'low', medium: 'medium', high: 'high' })
+    expect(confirmed.efforts).toEqual({ off: null, high: 'high' })
     expect(confirmed.matched).toBe(true)
     expect(confirmed.confidence).toBe('high')
     expect(confirmed.endpoint).toEqual({ reasoning: true, source: 'can_reason' })

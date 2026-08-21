@@ -51,10 +51,29 @@ export type SuggestReply =
     }
   | { ok: false; error: string }
 
+/** Route facts a not-yet-saved (create card) route can supply for inference. */
+export interface StagedRouteFacts {
+  /** Wire protocol as typed into the create card. */
+  api?: string
+  /** Endpoint URL as typed into the create card. */
+  baseURL?: string
+}
+
 /** The write seam the effort editor needs. */
 export interface EffortEditorApi {
   /** Ask for a knowledge-base / protocol suggestion for one model. */
-  suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
+  suggest(
+    route: string,
+    modelId: string,
+    name?: string,
+    stagedFacts?: StagedRouteFacts,
+  ): Promise<SuggestReply>
   /** Write one model's reasoningEfforts (unset, disabled, or a dict). */
   writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): Promise<WriteEffortsReply>
+  /**
+   * Stage one model's declaration for a route that does not exist in the
+   * settings document yet (the create card). Synchronous, memory-only; the
+   * injector flushes staged declarations once the route appears.
+   */
+  stageEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): void
 }

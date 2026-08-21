@@ -63,6 +63,12 @@ export interface EffortEditorProps {
   efforts?: false | ReasoningEfforts
   /** Model row index (for aria labels). */
   index: number
+  /**
+   * The route is a create card's draft: not saved yet. Apply then stages the
+   * declaration instead of writing settings; the injector applies staged
+   * declarations automatically once the route is created.
+   */
+  staged?: boolean
   /** The write seam (settings.mutate plus the suggestion engine). */
   api: EffortEditorApi
   /** Read-only (settings document not writable). */
@@ -75,7 +81,7 @@ export interface EffortEditorProps {
  * Render one model's thinking-effort editor: the level checkboxes, the wire
  * spellings, the auto-adapt action, and the apply/reset actions.
  */
-export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, index, api, readOnly, t }: EffortEditorProps): ReactNode {
+export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | undefined>(undefined)
@@ -137,7 +143,11 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setBusy(true)
     setMessage(undefined)
     try {
-      const reply = await api.suggest(route, modelId, modelName)
+      // A staged route has no stored profile yet; the card's own typed
+      // protocol/endpoint are the facts inference has to work with.
+      const reply = staged
+        ? await api.suggest(route, modelId, modelName, { ...routeApi === undefined ? {} : { api: routeApi }, ...routeBaseURL === undefined ? {} : { baseURL: routeBaseURL } })
+        : await api.suggest(route, modelId, modelName)
       if (!reply.ok) {
         setMessage({ kind: 'error', text: reply.error === 'no-suggestion' ? t('noSuggestion') : reply.error })
         return
@@ -155,6 +165,15 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setBusy(true)
     setMessage(undefined)
     try {
+      // Staged: keep the declaration in memory against the create card's
+      // route id; the settings write happens when the injector sees the
+      // saved route appear.
+      if (staged) {
+        api.stageEfforts(route, modelId, next)
+        dirtyRef.current = false
+        setMessage({ kind: 'success', text: t('staged') })
+        return
+      }
       const reply = await api.writeEfforts(route, modelId, next)
       if (!reply.ok) {
         setMessage({ kind: 'error', text: reply.error })
@@ -199,7 +218,6 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       <div className="bre-effort-grid">
         {LEVEL_ORDER.map(level => {
           const cell = draft[level]
-          const isOff = level === 'off'
           return (
             <label key={level} className={`bre-effort-row${cell.on ? ' bre-on' : ''}`}>
               <input
@@ -210,10 +228,11 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
                 onChange={(event) => { patchLevel(level, event.target.checked) }}
               />
               <span className="bre-effort-level">{t(`level_${level}`)}</span>
-              {/* The off level always writes `off: null` (buildIntent), so it
-                  takes no wire input — rendering one would silently drop what
-                  the user typed. */}
-              {cell.on && !isOff
+              {/* Every armed level takes a wire input, off included: a
+                  non-null off spelling is what some formats send to close
+                  thinking (OpenAI's `none`, the deepseek/zai formats'
+                  `thinking: disabled`); an empty one sends nothing. */}
+              {cell.on
                 ? (
                   <input
                     type="text"
@@ -230,6 +249,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
           )
         })}
       </div>
+      {staged ? <p className="bre-effort-note">{t('stagedHint')}</p> : null}
       {initialEfforts === false ? <p className="bre-effort-note">{t('reasoningDisabled')}</p> : null}
       {suggested !== undefined ? (
         <p className="bre-effort-note">
@@ -248,7 +268,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
           disabled={disabled || !changed}
           onClick={() => { void save() }}
         >
-          {busy ? t('saving') : t('apply')}
+          {busy ? t('saving') : staged ? t('stage') : t('apply')}
         </button>
         <button
           type="button"

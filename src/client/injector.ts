@@ -23,7 +23,7 @@
  * @module dsh-better-reasoning-effort/injector
  */
 
-import { PLUGIN_MARKER } from '../constants.js'
+import { PLUGIN_MARKER, UNSET_MARKER } from '../constants.js'
 import type { ReasoningEfforts } from '../knowledge.js'
 import { modelsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
@@ -37,6 +37,13 @@ const CAPACITY_ARIA = ['Capacities', '容量']
 
 /** Official aria-labels of the model-id input, in both locales. */
 const MODEL_ID_ARIA = ['Model ID', '模型 ID']
+
+/** Official aria-label of the create card's route-id input (same in both locales). */
+const ROUTE_ID_ARIA = ['Provider ID']
+
+/** Official aria-labels of the create card's endpoint and protocol fields. */
+const BASE_URL_ARIA = ['Base URL', 'API 地址']
+const API_PROTOCOL_ARIA = ['API protocol', 'API 协议']
 
 /** A row's identity as found on the page, resolved from the settings join. */
 interface FoundModel {
@@ -84,6 +91,8 @@ export interface EditorMountProps {
   efforts?: false | ReasoningEfforts
   /** Row ordinal among the models found in this scan (for aria labels). */
   index: number
+  /** True on a create card: Apply stages the declaration instead of writing. */
+  staged?: boolean
   api: EffortEditorApi
   readOnly: boolean
   t: (key: string, params?: Record<string, string | number>) => string
@@ -95,16 +104,75 @@ export interface ScanState {
   mounted: Map<HTMLElement, { editor: MountedEditor; props: EditorMountProps }>
   /** The last describe promise, folded so scans never stack reads. */
   describePromise: Promise<SettingsJoin> | undefined
+  /**
+   * Declarations staged against routes that do not exist in the settings
+   * document yet (the create card's typed route id), keyed route → model id.
+   * Flushed automatically once a route appears; lives only in memory, so it
+   * dies with the plugin fiber.
+   */
+  pending: Map<string, Map<string, ReasoningEfforts | false>>
 }
 
 export function createScanState(): ScanState {
-  return { mounted: new Map(), describePromise: undefined }
+  return { mounted: new Map(), describePromise: undefined, pending: new Map() }
 }
 
-/** Find the first input whose aria-label starts with one of the labels. */
+/**
+ * Record (or, for `undefined`, withdraw) one staged declaration. A route with
+ * no staged models left leaves the store entirely.
+ */
+export function stageEffortsInto(
+  state: ScanState,
+  route: string,
+  modelId: string,
+  efforts: ReasoningEfforts | false | undefined,
+): void {
+  const models = state.pending.get(route)
+  if (efforts === undefined) {
+    if (models === undefined) return
+    models.delete(modelId)
+    if (models.size === 0) state.pending.delete(route)
+    return
+  }
+  state.pending.set(route, (models ?? new Map()).set(modelId, efforts))
+}
+
+/**
+ * Flush staged declarations for routes that now exist, writing each model's
+ * declaration through the live write seam. A model the saved profile does not
+ * carry is dropped (the create card's final rows are the truth); a model with
+ * a declaration already present — or an unset marker — is skipped: staging
+ * never overwrites what the document already says. A write that still fails
+ * (conflict retry exhausted) stays staged; the write's own document-updated
+ * invalidation re-scans and re-flushes it.
+ */
+async function flushRoute(
+  deps: InjectorDeps,
+  state: ScanState,
+  route: string,
+  models: ReadonlyMap<string, ReasoningEfforts | false>,
+): Promise<void> {
+  const api = createEditorApi(deps.api)
+  // Snapshot: stageEffortsInto below mutates the stored map as writes land.
+  for (const [modelId, efforts] of [...models]) {
+    const join = await deps.describeNamespace()
+    const providers = providersOf(join.namespace)
+    const current = modelsOf(providers, route).find(model => model['id'] === modelId)
+    if (current === undefined || current['reasoningEfforts'] !== undefined || current[UNSET_MARKER] === true) {
+      stageEffortsInto(state, route, modelId, undefined)
+      continue
+    }
+    const reply = await api.writeEfforts(route, modelId, efforts)
+    if (reply.ok || reply.error === 'model-not-found') {
+      stageEffortsInto(state, route, modelId, undefined)
+    }
+  }
+}
+
+/** Find the first input/select whose aria-label starts with one of the labels. */
 function inputValueByLabel(card: HTMLElement, labels: readonly string[]): string {
   for (const label of labels) {
-    const input = Array.from(card.querySelectorAll<HTMLInputElement>('input[aria-label]'))
+    const input = Array.from(card.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[aria-label], select[aria-label]'))
       .find(candidate => (candidate.getAttribute('aria-label') ?? '').startsWith(label))
     if (input !== undefined && input.value.trim().length > 0) return input.value.trim()
   }
@@ -156,20 +224,36 @@ function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
     && sameEfforts(a.efforts, b.efforts)
 }
 
+/** Whether the card carries any input/select labeled with one of the labels. */
+function hasLabeledInput(card: HTMLElement, labels: readonly string[]): boolean {
+  return Array.from(card.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input[aria-label], select[aria-label]'))
+    .some(candidate => labels.some(label => (candidate.getAttribute('aria-label') ?? '').startsWith(label)))
+}
+
 /**
  * The route token of a card, resolved against the joined providers. The
  * official edit card prints the route key as the `.editorRoute` tag next to
  * the display-name title; the create card prints a fixed heading with no key,
- * so nothing can resolve its route until it is saved and re-rendered as an
- * edit card. Match the key first (exact, unambiguous), then the display name.
+ * but its "Provider ID" input carries the route id being chosen — a route not
+ * in the settings document yet. Match the key first (exact, unambiguous),
+ * then the create card's typed id, then the display name (a create card never
+ * reaches the name arm: its Provider ID input marks it, and its fixed heading
+ * could otherwise collide with a provider's display name).
  */
-function routeOfCard(card: HTMLElement, providers: Record<string, Record<string, unknown>>): string | undefined {
+function routeOfCard(
+  card: HTMLElement,
+  providers: Record<string, Record<string, unknown>>,
+): { route: string; staged: boolean } | undefined {
   const key = card.querySelector<HTMLElement>('[class*="editorRoute"]')?.textContent?.trim()
-  if (key !== undefined && key.length > 0 && key in providers) return key
+  if (key !== undefined && key.length > 0 && key in providers) return { route: key, staged: false }
+  if (hasLabeledInput(card, ROUTE_ID_ARIA)) {
+    const typed = inputValueByLabel(card, ROUTE_ID_ARIA)
+    return typed.length > 0 && !(typed in providers) ? { route: typed, staged: true } : undefined
+  }
   const title = card.querySelector<HTMLElement>('[class*="editorTitle"], [class*="rowName"]')?.textContent?.trim()
   if (title === undefined || title.length === 0) return undefined
   const byName = Object.entries(providers).find(([, profile]) => profile['displayName'] === title)
-  return byName?.[0]
+  return byName === undefined ? undefined : { route: byName[0], staged: false }
 }
 
 /**
@@ -193,6 +277,20 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     if (!root.isConnected) return
     const namespace = join.namespace
     const providers = providersOf(namespace)
+
+    // Staged declarations whose route has appeared (the create card's save
+    // landed) are written before the editors render, so the edit card's
+    // editor mounts over the declaration the user staged, not over a gap.
+    // flushRoute drops each model as it lands and keeps failed ones staged;
+    // a concurrent re-scan re-flushing the same route self-heals — the
+    // second pass sees the first pass's declaration and skips.
+    if (join.writable === true) {
+      for (const [route, models] of state.pending) {
+        if (models.size === 0 || !(route in providers)) continue
+        void flushRoute(deps, state, route, models)
+      }
+    }
+
     const found: FoundModel[] = []
     for (const aria of CAPACITY_ARIA) {
       // The official disclosure buttons carry a numbered aria-label
@@ -223,25 +321,42 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     }
 
     found.forEach((target, index) => {
-      const route = routeOfCard(target.card, providers)
-      if (route === undefined) return
+      const resolved = routeOfCard(target.card, providers)
+      if (resolved === undefined) return
+      const { route, staged } = resolved
       const profile = providers[route] ?? {}
       const models = modelsOf(providers, route)
-      const efforts = effortsOf(models, target.modelId)
-      const modelName = nameOf(models, target.modelId)
+      // A staged row's baseline is the pending store (the settings document
+      // holds nothing for the route yet); the create card's typed protocol
+      // and endpoint stand in for the stored profile facts, both for the
+      // editor's display and for suggestion inference.
+      const efforts = staged
+        ? state.pending.get(route)?.get(target.modelId)
+        : effortsOf(models, target.modelId)
+      const modelName = staged ? undefined : nameOf(models, target.modelId)
+      const typedApi = staged ? inputValueByLabel(target.card, API_PROTOCOL_ARIA) : ''
+      const typedBaseURL = staged ? inputValueByLabel(target.card, BASE_URL_ARIA) : ''
+      const routeApi = staged && typedApi.length > 0
+        ? typedApi
+        : typeof profile['api'] === 'string' ? profile['api'] as string : undefined
+      const routeBaseURL = staged && typedBaseURL.length > 0
+        ? typedBaseURL
+        : typeof profile['baseURL'] === 'string' ? profile['baseURL'] as string : undefined
       // The editor's write seam reads the namespace LIVE through its own
       // describe (not this scan's snapshot): a conflict retry must re-read a
-      // fresh revision to have any chance of succeeding.
+      // fresh revision to have any chance of succeeding. Staged rows stage
+      // into this scan state's pending store instead of writing settings.
       const next: EditorMountProps = {
         route,
-        routeDisplayName: typeof profile['displayName'] === 'string' ? profile['displayName'] as string : route,
-        ...typeof profile['api'] === 'string' ? { routeApi: profile['api'] as string } : {},
-        ...typeof profile['baseURL'] === 'string' ? { routeBaseURL: profile['baseURL'] as string } : {},
+        routeDisplayName: staged ? route : typeof profile['displayName'] === 'string' ? profile['displayName'] as string : route,
+        ...routeApi === undefined ? {} : { routeApi },
+        ...routeBaseURL === undefined ? {} : { routeBaseURL },
         modelId: target.modelId,
         ...modelName === undefined ? {} : { modelName },
         ...efforts === undefined ? {} : { efforts },
         index,
-        api: createEditorApi(deps.api),
+        staged,
+        api: createEditorApi(deps.api, undefined, (r, m, e) => { stageEffortsInto(state, r, m, e) }),
         readOnly: join.writable !== true,
         t: deps.t,
       }

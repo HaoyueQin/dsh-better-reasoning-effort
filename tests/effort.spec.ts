@@ -47,6 +47,18 @@ describe('buildIntent', () => {
     expect(buildIntent(draft)).toEqual({ off: null, high: 'ultra' })
   })
 
+  it('carries a spelled off wire: a non-null off is what some formats send to close thinking', () => {
+    const draft = draftFrom(undefined)
+    draft.off.on = true
+    draft.off.wire = 'none'
+    draft.high.on = true
+    expect(buildIntent(draft)).toEqual({ off: 'none', high: 'high' })
+    // And it round-trips: a saved non-null off comes back armed with its wire.
+    const reread = draftFrom({ off: 'none', high: 'high' })
+    expect(reread.off).toEqual({ on: true, wire: 'none' })
+    expect(buildIntent(reread)).toEqual({ off: 'none', high: 'high' })
+  })
+
   it('defaults an armed thinking level without a spelling to its own name', () => {
     const draft = draftFrom(undefined)
     draft.medium.on = true

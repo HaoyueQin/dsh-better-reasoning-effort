@@ -7,7 +7,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, reconcile, type EditorMountProps, type InjectorDeps, type SettingsJoin } from '../src/client/injector.js'
+import { createScanState, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type SettingsJoin } from '../src/client/injector.js'
 import type { RemoteApi } from '../src/client/types.js'
 
 /** Build an approximation of the official models page section. */
@@ -82,7 +82,10 @@ interface FakeEditor {
   render: ReturnType<typeof vi.fn>
 }
 
-function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & { editors: FakeEditor[] } {
+function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
+  editors: FakeEditor[]
+  mutate: ReturnType<typeof vi.fn>
+} {
   const editors: FakeEditor[] = []
   const mount = vi.fn((container: HTMLElement, _props: EditorMountProps): FakeEditor => {
     // Mirror the real mount: the editor DOM carries the plugin marker, which
@@ -97,12 +100,26 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & { editors: 
     editors.push(editor)
     return editor
   })
+  const mutate = vi.fn(async () => ({ result: { ok: true } }))
+  // The write seam describes through api.settings.describe, not through the
+  // injector's describeNamespace — wire both to the same (overridable) read
+  // so a test's dynamic document is what a flush sees too.
+  const describeNamespace = overrides?.describeNamespace ?? (async () => join)
   return {
-    api: { settings: { describe: async () => ({ result: { ok: true, value: { writable: true, hasDocument: true, namespaces: [join.namespace] } } }) } } as unknown as RemoteApi,
-    describeNamespace: async () => join,
+    api: {
+      settings: {
+        describe: async () => {
+          const local = await describeNamespace()
+          return { result: { ok: true, value: { writable: true, hasDocument: true, namespaces: local.namespace === undefined ? [] : [local.namespace] } } }
+        },
+        mutate,
+      },
+    } as unknown as RemoteApi,
+    describeNamespace,
     t: (key: string) => key,
     mount,
     editors,
+    mutate,
     ...overrides,
   }
 }
@@ -120,6 +137,33 @@ async function settle(reconcileFn: () => void, state: ReturnType<typeof createSc
   await state.describePromise
   await Promise.resolve()
   await Promise.resolve()
+}
+
+/** Build an approximation of the official create card, typed and draftable. */
+function buildCreateDom(route = 'acme-gateway'): HTMLElement {
+  const section = document.createElement('div')
+  section.className = 'section'
+  section.innerHTML = `
+    <div class="editor">
+      <div class="editorHeader"><span class="editorTitle">Custom provider</span></div>
+      <div class="field"><input aria-label="Provider ID" value="${route}" /></div>
+      <div class="field"><input aria-label="Base URL" value="https://gw.example.com/v1" /></div>
+      <div class="field"><select aria-label="API protocol"><option selected>openai-completions</option></select></div>
+      <div class="modelCatalog">
+        <div class="modelEntry">
+          <div class="modelRow">
+            <input aria-label="Model ID" value="deepseek-v4-flash-free" />
+            <button aria-label="Capacities 1"></button>
+          </div>
+          <div class="modelAdvanced" style="display:block">
+            <label><span>Context window</span><input /></label>
+            <label><span>Max tokens</span><input /></label>
+          </div>
+        </div>
+      </div>
+    </div>`
+  document.body.appendChild(section)
+  return section
 }
 
 describe('reconcile', () => {
@@ -270,8 +314,8 @@ describe('reconcile', () => {
     const deps = makeDeps()
     const state = createScanState()
     await settle(() => reconcile(root, deps, state), state)
-    // The edit card resolves to 'aliyun'; the create card (fixed heading, no
-    // key) cannot resolve a route and stays unmounted.
+    // The edit card resolves to 'aliyun'; the second card (fixed heading, no
+    // key, no Provider ID input) cannot resolve a route and stays unmounted.
     const props = vi.mocked(deps.mount).mock.calls.map(call => call[1] as EditorMountProps)
     expect(props).toHaveLength(1)
     expect(props[0].route).toBe('aliyun')
@@ -341,5 +385,110 @@ describe('reconcile', () => {
     root.querySelector('.modelCatalog')?.appendChild(replacement)
     await settle(() => reconcile(root, deps, state), state)
     expect(state.mounted.size).toBe(2)
+  })
+
+  it('mounts a staged editor on the create card from its typed route id', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildCreateDom('acme-gateway')
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).toHaveBeenCalledTimes(1)
+    const props = vi.mocked(deps.mount).mock.calls[0]![1] as EditorMountProps
+    expect(props.route).toBe('acme-gateway')
+    expect(props.staged).toBe(true)
+    expect(props.modelId).toBe('deepseek-v4-flash-free')
+    // The create card's typed facts stand in for the (absent) stored profile.
+    expect(props.routeApi).toBe('openai-completions')
+    expect(props.routeBaseURL).toBe('https://gw.example.com/v1')
+  })
+
+  it('leaves the create card unmounted while its route id is still blank', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildCreateDom('')
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).not.toHaveBeenCalled()
+  })
+
+  it('never mistakes a create card for an edit card over a colliding title', async () => {
+    // A provider whose display name is literally "Custom provider" must not
+    // capture the create card's rows (the create card is marked by its
+    // Provider ID input, and wins over the display-name arm).
+    const colliding: SettingsJoin = structuredClone(join)
+    ;(colliding.namespace!.value as { providers: Record<string, unknown> }).providers['acme'] = {
+      displayName: 'Custom provider',
+      models: [{ id: 'deepseek-v4-flash-free' }],
+    }
+    const deps = makeDeps({ describeNamespace: async () => colliding })
+    const state = createScanState()
+    const root = buildCreateDom('')
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).not.toHaveBeenCalled()
+  })
+
+  it('reads a staged row\'s baseline from the pending store', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { off: null, low: 'low', high: 'high', max: 'max' })
+    const root = buildCreateDom('acme-gateway')
+    await settle(() => reconcile(root, deps, state), state)
+    const props = vi.mocked(deps.mount).mock.calls[0]![1] as EditorMountProps
+    expect(props.efforts).toEqual({ off: null, low: 'low', high: 'high', max: 'max' })
+  })
+
+  it('flushes staged declarations once the route appears in the document', async () => {
+    let saved = false
+    const describe = vi.fn(async (): Promise<SettingsJoin> => {
+      const local = structuredClone(join)
+      if (saved) {
+        ;(local.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+          api: 'openai-completions',
+          models: [{ id: 'deepseek-v4-flash-free' }],
+        }
+      }
+      return local
+    })
+    const deps = makeDeps({ describeNamespace: describe })
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { off: null, low: 'low', high: 'high', max: 'max' })
+    // The create card is open (route unsaved): one scan stages, nothing writes.
+    const root = buildCreateDom('acme-gateway')
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mutate).not.toHaveBeenCalled()
+
+    // The card's create lands: the next scan sees the route and flushes.
+    saved = true
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    // flushRoute is fire-and-forget; give its awaits a turn.
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    const op = deps.mutate.mock.calls[0]![0].ops[0]
+    expect(op.path).toEqual(['providers', 'acme-gateway', 'models'])
+    const flushed = op.value as Array<Record<string, unknown>>
+    expect(flushed[0]!['reasoningEfforts']).toEqual({ off: null, low: 'low', high: 'high', max: 'max' })
+    // The landed declaration left the pending store.
+    expect(state.pending.size).toBe(0)
+  })
+
+  it('drops a staged declaration the saved profile already answers', async () => {
+    // "Never silently overwrite": a model carrying a declaration (or an unset
+    // marker) when its route appears keeps what the document says.
+    const answered: SettingsJoin = structuredClone(join)
+    ;(answered.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+      api: 'openai-completions',
+      models: [{ id: 'deepseek-v4-flash-free', reasoningEfforts: { high: 'high' } }],
+    }
+    const deps = makeDeps({ describeNamespace: async () => answered })
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { low: 'low' })
+    const root = buildCreateDom('acme-gateway')
+    await settle(() => reconcile(root, deps, state), state)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.pending.size).toBe(0)
   })
 })

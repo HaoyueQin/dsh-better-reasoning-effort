@@ -46,7 +46,13 @@ export function draftFrom(efforts: EffortIntent): DraftLevels {
  * Resolve a draft to the value to write:
  *  - no level armed          → `undefined` (unset the declaration);
  *  - only `off` armed        → `false` (reasoning disabled);
- *  - at least one thinking level → the dict (with `off: null` when armed).
+ *  - at least one thinking level → the dict (with `off` when armed).
+ *
+ * The off level's wire value is meaningful: `null` means "send nothing"
+ * (pi-ai lets the endpoint default apply), while a string is what
+ * dispatch sends to close thinking — `none` on OpenAI-style endpoints,
+ * or any non-null spelling to arm the deepseek/zai formats' explicit
+ * `thinking: disabled`.
  */
 export function buildIntent(draft: DraftLevels): EffortIntent {
   let off = false
@@ -57,6 +63,8 @@ export function buildIntent(draft: DraftLevels): EffortIntent {
     if (!cell.on) continue
     if (level === 'off') {
       off = true
+      const wire = cell.wire.trim()
+      out.off = wire.length === 0 ? null : wire
       continue
     }
     thinking = true
@@ -65,10 +73,7 @@ export function buildIntent(draft: DraftLevels): EffortIntent {
     const wire = cell.wire.trim()
     out[level] = wire.length === 0 ? level : wire
   }
-  if (thinking) {
-    if (off) out.off = null
-    return out
-  }
+  if (thinking) return out
   return off ? false : undefined
 }
 

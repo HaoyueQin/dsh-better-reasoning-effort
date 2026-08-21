@@ -26,8 +26,9 @@ This plugin brings that configuration back into the UI: **edit right inside the 
 
 ## Features
 
-- **In-page injection**: a "Reasoning effort" block appears in the official Models page under each model row's disclosure, next to context window / max tokens — not a separate settings page, but part of the official editing flow (same `settings.mutate` contract, same save style). The block spans the full row at the same density as the official capacity fields.
-- **Auto-adapt**: a built-in model knowledge base (DeepSeek V3/R1, OpenAI o-series, Qwen, GLM, Kimi, MiniMax, Doubao…) plus protocol inference keyed by pi-ai's real wire protocols (`openai-completions` / `openai-responses` / `anthropic-messages`, plus a DeepSeek endpoint dialect from `baseURL`) fills recommended levels and wire spellings in one click. Compat suggestions are gated to the one protocol whose gate accepts them.
+- **In-page injection**: a "Reasoning effort" block appears in the official Models page under each model row's disclosure, next to context window / max tokens — not a separate settings page, but part of the official editing flow (same `settings.mutate` contract, same save style). The block spans the full row; its level rows split into the same two columns as the official capacity pair.
+- **Create-card staging**: the editor also appears while a provider is still being created — auto-adapt works from the typed protocol/endpoint, **Stage** holds the declaration, and the plugin writes it automatically the moment the provider is saved (a declaration already in the document is never overwritten).
+- **Auto-adapt**: a built-in model knowledge base (DeepSeek V3/V4/R1; OpenAI GPT-5 by generation and o-series; Claude 4/5, Gemini 3.x, Grok 4.x, Mistral Magistral; Qwen, GLM 4/5, Kimi K2/K3, Doubao, Hunyuan hy3, Step — spellings verified against each vendor's docs, 2026-08) plus protocol inference keyed by pi-ai's real wire protocols (`openai-completions` / `openai-responses` / `anthropic-messages`, plus a DeepSeek endpoint dialect from `baseURL`) fills recommended levels and wire spellings in one click. Families whose endpoints take no effort ladder (MiniMax, Llama, Nova, Phi, Cohere, Perplexity sonar) deliberately carry no entry — the low-confidence generic suggestion is more honest. Compat suggestions are gated to the one protocol whose gate accepts them.
 - **Endpoint evidence**: Auto-adapt also probes the provider's RAW `/models` listing through a same-origin host route (credential resolved server-side, never echoed) and fuses the signal by confidence — an explicit "does not reason" wins outright; knowledge-base wire values stay authoritative; every suggestion is labeled high / medium / low so you know what to double-check.
 - **Host auto-fill**: on every settings update, models without a `reasoningEfforts` declaration get a recommended one (declared models, explicit `false`, and deliberately unset models are never touched). The write is optimistic-locked: if your edit moved the namespace first, the fill backs off and waits for the next update — it never fights you for the write.
 - **Three intents**: all levels off = unset the declaration (back to inheritance — persisted as a `reasoningEffortsUnset` marker so auto-fill respects it, even across restarts); only `off` armed = disable reasoning (`false`); levels armed = write the declaration. The editor stays in sync with official-page re-renders and pushed settings changes without clobbering your in-flight edits.
@@ -109,13 +110,13 @@ npm test            # vitest: knowledge / inference / autofill / DOM injection /
 npm run build       # lib/*.js + lib/client.js (module-loader bundle)
 ```
 
-Contract version: `@deepseek-ai/dsh-api-remotes@0.1.1-rc.1` (client contract types), verified by typecheck, the test suite, and a full build against the `0.1.1-rc.1` packages.
+Contract version: `@deepseek-ai/dsh-api-remotes@0.1.1-rc.2` (client contract types), verified by typecheck, the test suite, and a full build against the `0.1.1-rc.2` packages.
 
 ## Known limitations
 
 - Injection depends on the official Models page's current DOM (aria-label/class). If an official upgrade changes the structure, injection pauses until adapted; the official page is unaffected meanwhile.
 - `reasoningEfforts` declarations are suggestions: which levels/spellings an endpoint actually accepts is up to its docs — tweak each in the UI.
-- The knowledge base is not exhaustive — unlisted models fall back to protocol inference + generic levels and can be adjusted by hand.
+- The knowledge base is not exhaustive — spellings drift as vendors ship models, and families without an effort ladder carry no entry at all; unlisted models fall back to protocol inference + generic levels and can be adjusted by hand.
 
 ## License
 

@@ -102,6 +102,43 @@ describe('createEditorApi', () => {
     }
   })
 
+  it('feeds staged facts to inference for a route the document does not hold', async () => {
+    // The create card's typed protocol/endpoint stand in for the stored
+    // profile: a known family even gets its compat block, gated as usual.
+    const { api } = fakeApi({ providers: {} })
+    const editor = createEditorApi(api)
+    const reply = await editor.suggest('acme-gateway', 'deepseek-v4-flash-free', undefined, {
+      api: 'openai-completions',
+      baseURL: 'https://api.deepseek.com/v1',
+    })
+    expect(reply.ok).toBe(true)
+    if (reply.ok) {
+      expect(reply.suggestion.matched).toBe(true)
+      expect(reply.suggestion.source).toBe('deepseek-v4')
+      expect(reply.suggestion.efforts).toEqual({ off: 'off', low: 'low', high: 'high', max: 'max' })
+    }
+  })
+
+  it('prefers the stored profile over staged facts when both exist', async () => {
+    const { api } = fakeApi(initialValue)
+    const editor = createEditorApi(api)
+    // A stale create-card fact must not shadow what the document says for a
+    // saved route.
+    const reply = await editor.suggest('aliyun', 'qwen-max', undefined, { api: 'anthropic-messages' })
+    expect(reply.ok).toBe(true)
+    if (reply.ok) expect(reply.suggestion.source).toBe('qwen')
+  })
+
+  it('stages through the injected sink and tolerates no sink', async () => {
+    const { api } = fakeApi(initialValue)
+    const sink = vi.fn()
+    const staging = createEditorApi(api, undefined, sink)
+    staging.stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
+    expect(sink).toHaveBeenCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' })
+    // An edit-card seam (no sink) is a no-op, not a crash.
+    createEditorApi(api).stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
+  })
+
   it('writes one model through settings.mutate, preserving siblings', async () => {
     const { api, mutates } = fakeApi(initialValue)
     const editor = createEditorApi(api)

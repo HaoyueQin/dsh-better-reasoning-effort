@@ -14,6 +14,7 @@ import { PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
 import { modelsOf, routeFactsOf } from '../shared.js'
 import type {
+  EffortEditorApi,
   RemoteApi,
   SettingsJoin,
   SettingsNamespaceView,
@@ -74,22 +75,31 @@ async function probeEndpoint(route: string, modelId: string): Promise<EndpointSi
  * Build the write seam over a settings Remote face.
  * @param api - the settings Remote methods.
  * @param describe - how to obtain the pi-ai namespace join (injectable for tests).
+ * @param stage - sink for declarations staged against a route that is not
+ * saved yet; the injector owns the store and flushes it once the route exists.
  */
 export function createEditorApi(
   api: RemoteApi,
   describe: () => Promise<SettingsJoin> = () => describeNamespace(api),
-): {
-  suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
-  writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): Promise<WriteEffortsReply>
-} {
+  stage?: (route: string, modelId: string, efforts: ReasoningEfforts | false | undefined) => void,
+): EffortEditorApi {
   return {
-    async suggest(route, modelId, name) {
+    async suggest(route, modelId, name, stagedFacts) {
       const providers = providersOf((await describe()).namespace)
-      const facts = routeFactsOf(providers, route)
+      const stored = routeFactsOf(providers, route)
+      // A saved route's stored profile is authoritative; the staged facts only
+      // fill what the settings document does not hold yet (the create card).
+      const facts = {
+        api: stored.api ?? stagedFacts?.api,
+        baseURL: stored.baseURL ?? stagedFacts?.baseURL,
+        displayName: name ?? stored.displayName,
+      }
       // L1 first: the endpoint's own word about this model. The fusion in
-      // suggestEfforts keeps wire values knowledge-base-only.
+      // suggestEfforts keeps wire values knowledge-base-only. A staged route
+      // cannot be probed (the host resolves routes from the settings), so the
+      // signal stays 'unknown' until the route is saved.
       const endpoint = await probeEndpoint(route, modelId)
-      const suggestion = suggestEfforts(modelId, { ...facts, displayName: name ?? facts.displayName }, endpoint)
+      const suggestion = suggestEfforts(modelId, facts, endpoint)
       if (suggestion.efforts === undefined) return { ok: false, error: 'no-suggestion' }
       return {
         ok: true,
@@ -101,6 +111,9 @@ export function createEditorApi(
           ...(suggestion.endpoint === undefined ? {} : { endpoint: suggestion.endpoint }),
         },
       }
+    },
+    stageEfforts(route, modelId, efforts) {
+      stage?.(route, modelId, efforts)
     },
     async writeEfforts(route, modelId, efforts) {
       // Retry once on a revision conflict: a concurrent writer (this plugin's

@@ -26,8 +26,9 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 特性
 
-- **官方页内注入**：官方「模型 → 编辑 → 自定义设置 → 模型行展开区」里出现「思考强度」编辑块，和上下文窗口 / 最大输出并列——不是另起炉灶的单列页面，而是融进官方编辑流程（同一个 `settings.mutate` 契约、同一种保存方式）。编辑块占满展开区整行，与官方容量字段同密度。
-- **自动适配**：内置模型知识库（DeepSeek V3/R1、OpenAI o 系列、Qwen、GLM、Kimi、MiniMax、豆包等）+ 协议推断（按 pi-ai 真实线协议 `openai-completions` / `openai-responses` / `anthropic-messages`，以及从 `baseURL` 识别的 DeepSeek 官方端点方言），一键填入推荐档位与线上取值。compat 建议只在协议门允许的线协议上给出。
+- **官方页内注入**：官方「模型 → 编辑 → 自定义设置 → 模型行展开区」里出现「思考强度」编辑块，和上下文窗口 / 最大输出并列——不是另起炉灶的单列页面，而是融进官方编辑流程（同一个 `settings.mutate` 契约、同一种保存方式）。编辑块横跨展开区整行，档位行按官方容量字段同样的两列均分。
+- **新建卡暂存**：新建供应商的卡片上同样会出现编辑块——自动适配可直接用卡上已填的协议/端点，**暂存**保存选择，供应商创建后自动写入（绝不覆盖文档里已有的声明）。
+- **自动适配**：内置模型知识库（DeepSeek V3/V4/R1；OpenAI GPT-5 按代际 + o 系列；Claude 4/5、Gemini 3.x、Grok 4.x、Mistral Magistral；通义千问、智谱 GLM 4/5、Kimi K2/K3、豆包、混元 hy3、阶跃 Step——档位拼写均已对照各家官方文档核实，2026-08）+ 协议推断（按 pi-ai 真实线协议 `openai-completions` / `openai-responses` / `anthropic-messages`，以及从 `baseURL` 识别的 DeepSeek 官方端点方言），一键填入推荐档位与线上取值。官方端点不吃 effort 档的家族（MiniMax、Llama、Nova、Phi、Cohere、Perplexity sonar）有意不设条目——低置信度的通用建议更诚实。compat 建议只在协议门允许的线协议上给出。
 - **端点取证**：自动适配还会经 host 同源路由探测供应商的**原始** `/models` 列表（凭据只在服务端解析、绝不回显），按置信度融合信号——端点明确"不支持推理"时直接建议禁用；知识库的线上取值始终权威；每条建议标注高/中/低置信度，低置信度建议核对后再用。
 - **Host 自动填充**：settings 更新时，为没有 `reasoningEfforts` 声明的模型自动补一份推荐声明（不覆盖已声明、显式 `false`、以及被刻意取消的模型）。写入采用乐观锁：若你的编辑已把设置顶高，自动填充会放弃并等下一次更新，绝不与你抢写。
 - **三种意图**：全不勾 = 取消声明（回到继承——以 `reasoningEffortsUnset` 标记持久化，自动填充会尊重它，重启后依然有效）；只勾 off = 禁用推理（`false`）；勾选档位 = 写入声明。编辑器随官方页重新渲染与推送的设置变更保持同步，你编辑到一半不会被打断。
@@ -107,13 +108,13 @@ npm test            # vitest：知识库 / 推断 / autofill / DOM 注入 / 写�
 npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 ```
 
-契约版本：`@deepseek-ai/dsh-api-remotes@0.1.1-rc.1`（client 契约类型），已通过针对 `0.1.1-rc.1` 各包的 typecheck、测试套件与完整构建验证。
+契约版本：`@deepseek-ai/dsh-api-remotes@0.1.1-rc.2`（client 契约类型），已通过针对 `0.1.1-rc.2` 各包的 typecheck、测试套件与完整构建验证。
 
 ## 已知限制
 
 - 注入依赖官方 Models 页当前 DOM（aria-label/class）。官方升级若改结构，注入自动停用，需要跟进适配；停用期间官方页不受影响。
 - `reasoningEfforts` 声明是建议值：网关实际接受哪些档位/取值以端点文档为准，可在 UI 里逐个修改。
-- 知识库覆盖面有限——未收录的模型走协议推断 + 通用档位，可手动调整。
+- 知识库覆盖面有限——各家上新后拼写会漂移，不吃 effort 档的家族则完全无条目；未收录的模型走协议推断 + 通用档位，可手动调整。
 
 ## License
 
