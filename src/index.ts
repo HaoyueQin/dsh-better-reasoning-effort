@@ -13,12 +13,15 @@
  * @module dsh-better-reasoning-effort
  */
 
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+// Type-only: pulls the webServer service merge into this program's Context.
+import type {} from '@deepseek-ai/dsh-host-webserver'
 // Runtime helper + the `declare module '@deepseek-ai/cordis'` merge that types
 // `ctx.settings` as `SettingsProvider` (describe() returns one descriptor per
 // registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
-import { PI_AI_NS, PLUGIN_ID } from './constants.js'
+import { PI_AI_NS, PLUGIN_ID, PROBE_PATH } from './constants.js'
 import { suggestEfforts, type RouteFacts } from './knowledge.js'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
@@ -111,14 +114,63 @@ export function buildAutofillPatch(
 const BOOT_RETRY_MS = 1000
 const BOOT_RETRY_MAX = 5
 
+/** Probe fetch budget: a gateway that cannot answer /models in 15s will not answer the composer either. */
+const PROBE_TIMEOUT_MS = 15_000
+
+interface CredentialsService {
+  resolve(ref: string): Promise<{ value?: string } | undefined>
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+}
+
+/**
+ * Browser trust fence for the probe route, mirroring the /api route's
+ * semantics: reject declared cross-site requests, reject mismatched Origins,
+ * and require some same-origin/same-site browser signal before a non-loopback
+ * Host is answered. The route proxies only endpoints the user's own settings
+ * already name, but it does so with the stored credential attached — so it
+ * must not be callable from elsewhere.
+ */
+function isTrustedRequest(req: IncomingMessage): boolean {
+  const host = req.headers.host
+  if (typeof host !== 'string' || host.length === 0) return false
+  const secFetchSite = req.headers['sec-fetch-site']
+  if (secFetchSite === 'cross-site') return false
+  const origin = req.headers.origin
+  if (typeof origin === 'string') {
+    try {
+      if (new URL(origin).host !== host) return false
+    } catch {
+      return false
+    }
+  }
+  const hostname = host.split(':')[0]!.toLowerCase()
+  if (isLoopbackHostname(hostname)) return true
+  if (secFetchSite === 'same-origin' || secFetchSite === 'same-site') return true
+  return typeof origin === 'string'
+}
+
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.statusCode = status
+  res.setHeader('content-type', 'application/json; charset=utf-8')
+  res.end(JSON.stringify(body))
+}
+
 /**
  * Apply the plugin: autofill undeclared models on boot and after every commit
  * that touches the pi-ai namespace.
  * @param ctx - host context.
  */
 export function apply(ctx: Context): void {
+  // The probe route (registered below, possibly before the settings injection
+  // runs) reads the pi-ai section through this closure slot.
+  let piSection: unknown = undefined
+
   ctx.inject(['settings'], (settingsCtx) => {
     const settings = settingsCtx.settings
+    piSection = () => settings.get(PI_NS)
 
     /** One autofill pass; resolves false while the pi-ai namespace is unregistered. */
     const autofillOnce = async (): Promise<boolean> => {
@@ -167,5 +219,84 @@ export function apply(ctx: Context): void {
     ctx.on('settings/updated', (ns) => {
       if (ns === PI_NS) void autofillOnce().catch(logFailure)
     })
+  })
+
+  // Same-origin probe route: the browser half's Auto-adapt asks the endpoint's
+  // RAW /models listing through here, because the sanctioned llm wire call
+  // strips reasoning signals host-side. The credential resolves server-side
+  // and never echoes back; only routes the user's own settings name are
+  // reachable, and the trust fence rejects cross-site callers.
+  ctx.inject(['webServer'], (webServerCtx) => {
+    ctx.effect(
+      () =>
+        webServerCtx.webServer.register({
+          kind: 'exact',
+          path: PROBE_PATH,
+          handler: async (req, res) => {
+            if (!isTrustedRequest(req)) {
+              sendJson(res, 403, { ok: false, error: 'forbidden' })
+              return
+            }
+            if (req.method !== 'GET') {
+              sendJson(res, 405, { ok: false, error: 'method not allowed' })
+              return
+            }
+            const url = new URL(req.url ?? '/', 'http://x')
+            const route = url.searchParams.get('route') ?? ''
+            const readSection = typeof piSection === 'function' ? piSection : () => undefined
+            const section = readSection()
+            const profile = isRecord(section) && isRecord(section['providers'])
+              ? section['providers'][route]
+              : undefined
+            if (!isRecord(profile)) {
+              sendJson(res, 400, { ok: false, error: `no llm-pi-ai provider route "${route}"` })
+              return
+            }
+            const baseURL = typeof profile['baseURL'] === 'string' ? profile['baseURL'] : ''
+            if (baseURL.length === 0) {
+              sendJson(res, 400, { ok: false, error: `provider route "${route}" has no baseURL` })
+              return
+            }
+            const apiKeyEnv = typeof profile['apiKeyEnv'] === 'string' ? profile['apiKeyEnv'] : undefined
+            const listingURL = `${baseURL.replace(/\/+$/, '')}/models`
+            let apiKey: string | undefined
+            if (apiKeyEnv !== undefined) {
+              try {
+                const credentials = ctx.get('credentials') as CredentialsService | undefined
+                const hit = credentials === undefined ? undefined : await credentials.resolve(apiKeyEnv)
+                apiKey = hit !== undefined && typeof hit.value === 'string' && hit.value.length > 0
+                  ? hit.value
+                  : undefined
+              } catch {
+                // Unresolvable credential: probe unauthenticated rather than fail.
+              }
+            }
+            try {
+              const upstream = await fetch(listingURL, {
+                method: 'GET',
+                headers: { accept: 'application/json', ...(apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` }) },
+                signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+              })
+              if (!upstream.ok) {
+                const hint = upstream.status === 401 || upstream.status === 403 ? '; check the API key' : ''
+                sendJson(res, 200, { ok: false, error: `${listingURL} answered ${upstream.status}${hint}` })
+                return
+              }
+              const body = (await upstream.json()) as { data?: unknown }
+              if (body === null || !Array.isArray(body['data'])) {
+                sendJson(res, 200, { ok: false, error: `${listingURL} model listing has no "data" array` })
+                return
+              }
+              sendJson(res, 200, { ok: true, url: listingURL, data: body['data'] })
+            } catch (error) {
+              sendJson(res, 200, {
+                ok: false,
+                error: `could not reach ${listingURL}: ${error instanceof Error ? error.message : String(error)}`,
+              })
+            }
+          },
+        }),
+      'dsh-better-reasoning-effort: raw-models probe route',
+    )
   })
 }
