@@ -90,9 +90,6 @@ export interface EffortSuggestion {
   endpoint?: { reasoning: boolean | 'unknown'; source: string | null }
 }
 
-const record = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 /**
  * The curated knowledge base. Patterns are lowercase substring matches against
  * the model id (and display name). First match wins, longest pattern wins.
@@ -278,16 +275,34 @@ export function matchKnowledgeBase(modelId: string, displayName?: string): Knowl
 
 /**
  * Infer which PROTOCOL_INFERENCE key applies to a route. A configured `api`
- * is already a pi-ai protocol name and wins as-is; otherwise the endpoint URL
- * names the dialect, and anything unrecognized resolves to the
- * OpenAI-compatible ladder (the overwhelming majority of gateways).
+ * is already a pi-ai protocol name and wins as-is; otherwise the endpoint's
+ * HOST names the dialect — matched on the registrable domain so an aggregator
+ * path like `https://gw.example.com/deepseek/v1` stays generic — and anything
+ * unrecognized resolves to the OpenAI-compatible ladder (the overwhelming
+ * majority of gateways).
  */
+const NATIVE_DIALECT_DOMAINS: Readonly<Record<string, string>> = {
+  'deepseek.com': 'deepseek',
+  'deepseek.ai': 'deepseek',
+  'anthropic.com': 'anthropic-messages',
+}
+
 export function inferProtocol(route: RouteFacts): string {
   const api = normalize(route.api)
   if (api.length > 0) return api
-  const url = normalize(route.baseURL)
-  if (url.includes('deepseek')) return 'deepseek'
-  if (url.includes('anthropic')) return 'anthropic-messages'
+  const baseURL = route.baseURL
+  if (baseURL !== undefined && baseURL.length > 0) {
+    try {
+      const host = new URL(baseURL).hostname.toLowerCase()
+      const parts = host.split('.')
+      if (parts.length >= 2) {
+        const dialect = NATIVE_DIALECT_DOMAINS[parts.slice(-2).join('.')]
+        if (dialect !== undefined) return dialect
+      }
+    } catch {
+      // Malformed URL: fall through to the generic ladder.
+    }
+  }
   // Former 'gemini' guessing removed: pi-ai has no gemini protocol, and
   // Gemini gateways speak the OpenAI-compatible dialect.
   return 'openai-completions'
@@ -386,18 +401,4 @@ export function suggestEfforts(
     confidence: 'low',
     ...(endpoint === undefined ? {} : { endpoint }),
   }
-}
-
-/** Whether a value looks like a valid reasoningEfforts dict (schema-tolerant). */
-export function isValidEfforts(value: unknown): value is ReasoningEfforts {
-  if (value === undefined) return true
-  if (value === false) return true
-  if (!record(value)) return false
-  const entries = Object.entries(value)
-  if (entries.length === 0) return false
-  return entries.every(([level, wire]) => {
-    if (!(THINKING_LEVELS as readonly string[]).includes(level)) return false
-    if (wire === null) return level === 'off'
-    return typeof wire === 'string' && wire.length > 0
-  })
 }

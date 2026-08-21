@@ -21,8 +21,9 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // `ctx.settings` as `SettingsProvider` (describe() returns one descriptor per
 // registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
-import { PI_AI_NS, PLUGIN_ID, PROBE_PATH } from './constants.js'
-import { suggestEfforts, type RouteFacts } from './knowledge.js'
+import { PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
+import { suggestEfforts } from './knowledge.js'
+import { isRecord, modelsOf, routeFactsOf } from './shared.js'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
 export const name = PLUGIN_ID
@@ -34,28 +35,6 @@ export const inject = ['settings']
 const PI_NS = settingsNamespace(PI_AI_NS)
 
 type JsonObject = Record<string, unknown>
-
-const isRecord = (value: unknown): value is JsonObject =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
-/** Read one provider profile's route facts from a resolved settings value. */
-function routeFacts(providers: unknown, route: string): RouteFacts {
-  if (!isRecord(providers)) return {}
-  const profile = providers[route]
-  if (!isRecord(profile)) return {}
-  const api = typeof profile['api'] === 'string' ? profile['api'] : undefined
-  const baseURL = typeof profile['baseURL'] === 'string' ? profile['baseURL'] : undefined
-  const displayName = typeof profile['displayName'] === 'string' ? profile['displayName'] : undefined
-  return { api, baseURL, displayName }
-}
-
-/** The models array of one route, as records (preserving unknown fields). */
-function modelsOf(providers: unknown, route: string): JsonObject[] {
-  if (!isRecord(providers)) return []
-  const profile = providers[route]
-  if (!isRecord(profile) || !Array.isArray(profile['models'])) return []
-  return profile['models'].filter(isRecord)
-}
 
 /**
  * Build a patch that adds reasoningEfforts to every undeclared model of the
@@ -77,7 +56,11 @@ export function buildAutofillPatch(
     const nextModels: JsonObject[] = []
     let changed = false
     for (const model of models) {
-      if (model['reasoningEfforts'] !== undefined) {
+      // Declared models are untouched — and so are models the user
+      // deliberately unset: the durable marker records that absence as a
+      // decision, so auto-fill never reads it back as a gap (the bug this
+      // guards: a refill one event after every user "unset").
+      if (model['reasoningEfforts'] !== undefined || model[UNSET_MARKER] === true) {
         nextModels.push(model)
         continue
       }
@@ -86,7 +69,7 @@ export function buildAutofillPatch(
         nextModels.push(model)
         continue
       }
-      const routeInfo = routeFacts(providers, route)
+      const routeInfo = routeFactsOf(providers, route)
       const name = typeof model['name'] === 'string' ? model['name'] : undefined
       const suggestion = suggestEfforts(id, { ...routeInfo, displayName: name ?? routeInfo.displayName })
       if (suggestion.efforts === undefined) {

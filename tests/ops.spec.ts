@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { createEditorApi, effortsOf, modelsOf, providersOf } from '../src/client/ops.js'
+import { createEditorApi, effortsOf, providersOf } from '../src/client/ops.js'
+import { modelsOf } from '../src/shared.js'
 import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
 
 /** A minimal settings Remote that records mutate calls. */
@@ -125,6 +126,35 @@ describe('createEditorApi', () => {
     expect(reply).toEqual({ ok: true })
     const models = mutates[0].ops[0].value as Record<string, unknown>[]
     expect(models[1].reasoningEfforts).toBe(false)
+  })
+
+  it('unset writes the durable marker so auto-fill respects it', async () => {
+    const { api, mutates } = fakeApi(initialValue)
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', undefined)
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0].reasoningEfforts).toBeUndefined()
+    expect(models[0].reasoningEffortsUnset).toBe(true)
+  })
+
+  it('writing a declaration clears an earlier unset marker', async () => {
+    const preUnset = {
+      providers: {
+        aliyun: {
+          displayName: 'Aliyun',
+          api: 'openai-completions',
+          models: [{ id: 'qwen-max', name: 'Qwen Max', reasoningEffortsUnset: true }],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(preUnset)
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0].reasoningEfforts).toEqual({ high: 'high' })
+    expect(models[0].reasoningEffortsUnset).toBeUndefined()
   })
 
   it('fails cleanly when the model does not exist', async () => {

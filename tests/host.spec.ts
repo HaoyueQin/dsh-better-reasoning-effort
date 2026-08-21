@@ -134,6 +134,54 @@ describe('apply() autofill', () => {
     expect(settings.updates).toHaveLength(1)
   })
 
+  it('does not refill a declaration the user deliberately unset', async () => {
+    const settings = fakeSettings(PROVIDERS)
+    const { ctx, emitUpdated } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    // The boot fill declares the model.
+    await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
+    // The editor's unset flow lands: the field is gone, the durable marker
+    // records the absence as a decision.
+    settings.register('llm-pi-ai', {
+      aliyun: {
+        displayName: 'Aliyun',
+        api: 'openai-completions',
+        models: [{ id: 'qwen-max', name: 'Qwen Max', reasoningEffortsUnset: true }],
+      },
+    })
+    emitUpdated('llm-pi-ai')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // No second write: the unset survives the very next autofill pass (and,
+    // being persisted in the document, every later boot).
+    expect(settings.updates).toHaveLength(1)
+  })
+
+  it('fills a genuinely new model added after the boot fill', async () => {
+    const settings = fakeSettings(PROVIDERS)
+    const { ctx, emitUpdated } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
+    settings.register('llm-pi-ai', {
+      aliyun: {
+        displayName: 'Aliyun',
+        api: 'openai-completions',
+        models: [
+          { id: 'qwen-max', name: 'Qwen Max', reasoningEffortsUnset: true },
+          { id: 'qwen-turbo' },
+        ],
+      },
+    })
+    emitUpdated('llm-pi-ai')
+    await vi.waitFor(() => { expect(settings.updates).toHaveLength(2) })
+    const patch = settings.updates[1]!.patch as { providers: Record<string, { models: Array<Record<string, unknown>> }> }
+    const models = patch.providers.aliyun.models
+    // Only the new model is filled; the deliberately-unset one stays untouched.
+    expect(models.find(model => model['id'] === 'qwen-max')!['reasoningEfforts']).toBeUndefined()
+    expect(models.find(model => model['id'] === 'qwen-turbo')!['reasoningEfforts']).toBeDefined()
+  })
+
   it('survives a conflicting write without throwing', async () => {
     const settings = fakeSettings(PROVIDERS)
     // Force the optimistic lock to refuse.
@@ -246,6 +294,75 @@ describe('apply() probe route', () => {
     const { res, out } = fakeRes()
     await handler(fakeReq({ headers: { host: '10.0.0.5:3080', 'sec-fetch-site': 'cross-site' } }), res)
     expect(out().status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('rejects an Origin that does not match the Host (DNS-rebinding shape)', async () => {
+    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    // A rebinding page resolves its own origin's host to this server: the
+    // Origin header still names the attacker's site and must be refused.
+    await handler(fakeReq({
+      headers: { host: '127.0.0.1:3080', origin: 'http://evil.example:4080' },
+    }), res)
+    expect(out().status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses a non-loopback Host with no browser trust signal at all', async () => {
+    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    // A plain non-browser client (curl): no Origin, no Sec-Fetch-Site. The
+    // loopback exemption does not cover a LAN-addressed Host.
+    await handler(fakeReq({ headers: { host: '10.0.0.5:3080' } }), res)
+    expect(out().status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('admits a same-origin browser caller on a non-loopback Host', async () => {
+    const settings = fakeSettings({})
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const { res, out } = fakeRes()
+    // Positive control: a real browser tab served from this very server.
+    // The fence passes it; the request then fails on the missing route,
+    // which proves the rejection above is the fence and not the route table.
+    await handler(fakeReq({
+      headers: { host: '10.0.0.5:3080', 'sec-fetch-site': 'same-origin' },
+      url: '?route=missing',
+    }), res)
+    expect(out().status).toBe(400)
+    expect(String(out().body['error'])).toContain('no llm-pi-ai provider route')
+  })
+
+  it('answers only GET', async () => {
+    const settings = fakeSettings(PROVIDERS)
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler(fakeReq({ method: 'POST' }), res)
+    expect(out().status).toBe(405)
     expect(fetchMock).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
   })

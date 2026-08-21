@@ -76,20 +76,33 @@ const join: SettingsJoin = {
   writable: true,
 }
 
-function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps {
-  const mount = vi.fn((container: HTMLElement, _props: EditorMountProps) => {
+/** One handle reconcile received back from mount(), with its spies. */
+interface FakeEditor {
+  unmount: ReturnType<typeof vi.fn>
+  render: ReturnType<typeof vi.fn>
+}
+
+function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & { editors: FakeEditor[] } {
+  const editors: FakeEditor[] = []
+  const mount = vi.fn((container: HTMLElement, _props: EditorMountProps): FakeEditor => {
     // Mirror the real mount: the editor DOM carries the plugin marker, which
     // is what the idempotency guard checks.
     const marker = document.createElement('div')
     marker.dataset['plugin'] = 'dsh-better-reasoning-effort'
     container.appendChild(marker)
-    return () => { marker.remove() }
+    const editor: FakeEditor = {
+      unmount: vi.fn(() => { marker.remove() }),
+      render: vi.fn(),
+    }
+    editors.push(editor)
+    return editor
   })
   return {
     api: { settings: { describe: async () => ({ result: { ok: true, value: { writable: true, hasDocument: true, namespaces: [join.namespace] } } }) } } as unknown as RemoteApi,
     describeNamespace: async () => join,
     t: (key: string) => key,
     mount,
+    editors,
     ...overrides,
   }
 }
@@ -137,6 +150,46 @@ describe('reconcile', () => {
     expect(deps.mount).toHaveBeenCalledTimes(2)
     await settle(() => reconcile(root, deps, state), state)
     expect(deps.mount).toHaveBeenCalledTimes(2)
+  })
+
+  it('refreshes an existing editor when the saved declaration changes under it', async () => {
+    // The official page may keep the container node and only move the
+    // document under it; the editor must not keep showing a stale saved
+    // declaration (its Apply button would never reset).
+    const localJoin: SettingsJoin = structuredClone(join)
+    const deps = makeDeps({ describeNamespace: async () => localJoin })
+    const state = createScanState()
+    const root = buildModelsDom()
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).toHaveBeenCalledTimes(2)
+    expect(deps.editors[0]!.render).not.toHaveBeenCalled()
+
+    const providers = (localJoin.namespace!.value as { providers: Record<string, { models: Array<Record<string, unknown>> }> }).providers
+    providers.aliyun.models[0]!['reasoningEfforts'] = { high: 'high' }
+    // The apply()-level invalidation clears the folded snapshot; the next
+    // scan re-describes and swaps the fresh props in place.
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+
+    expect(deps.mount).toHaveBeenCalledTimes(2)
+    expect(deps.editors[0]!.render).toHaveBeenCalledTimes(1)
+    const refreshed = vi.mocked(deps.editors[0]!.render).mock.calls[0]![0] as EditorMountProps
+    expect(refreshed.efforts).toEqual({ high: 'high' })
+    // The untouched row is not re-rendered.
+    expect(deps.editors[1]!.render).not.toHaveBeenCalled()
+  })
+
+  it('does not re-render editors whose props did not change', async () => {
+    // render mutates DOM and DOM mutations schedule scans: without a no-op
+    // guard the refresh would feed itself forever.
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    await settle(() => reconcile(root, deps, state), state)
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).toHaveBeenCalledTimes(2)
+    for (const editor of deps.editors) expect(editor.render).not.toHaveBeenCalled()
   })
 
   it('unmounts editors whose rows disappeared', async () => {

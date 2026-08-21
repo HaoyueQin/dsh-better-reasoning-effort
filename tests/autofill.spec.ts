@@ -70,6 +70,27 @@ describe('buildAutofillPatch', () => {
     expect(buildAutofillPatch(allDeclared)).toBeUndefined()
   })
 
+  it('skips models the user deliberately unset (durable marker)', () => {
+    // The editor writes `reasoningEffortsUnset: true` when the user clears
+    // the declaration; auto-fill must read that absence as a decision, not a
+    // gap — otherwise every "unset" is refilled one event later.
+    const unset = { route: { models: [{ id: 'a', reasoningEffortsUnset: true }] } }
+    expect(buildAutofillPatch(unset)).toBeUndefined()
+    // A model that still declares is unaffected by the marker's existence.
+    const mixed = {
+      route: {
+        models: [
+          { id: 'a', reasoningEffortsUnset: true },
+          { id: 'b' },
+        ],
+      },
+    }
+    const patch = buildAutofillPatch(mixed)
+    const models = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).route.models
+    expect(models[0].reasoningEfforts).toBeUndefined()
+    expect(models[1].reasoningEfforts).toBeDefined()
+  })
+
   it('respects the route filter', () => {
     const patch = buildAutofillPatch(providers, route => route === 'deepseek')
     expect((patch!.providers as Record<string, unknown>).aliyun).toBeUndefined()

@@ -9,12 +9,13 @@
 import {
   suggestEfforts,
   type ReasoningEfforts,
-  type RouteFacts,
 } from '../knowledge.js'
-import { PI_AI_NS, PROBE_PATH } from '../constants.js'
-import { analyzeListingEntry, findListingEntry, type EndpointSignal } from '../detection.js'
+import { PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
+import { detectModelSignal, type EndpointSignal } from '../detection.js'
+import { modelsOf, routeFactsOf } from '../shared.js'
 import type {
   RemoteApi,
+  SettingsJoin,
   SettingsNamespaceView,
   SuggestReply,
   WriteEffortsReply,
@@ -29,24 +30,6 @@ export function providersOf(namespace: SettingsNamespaceView | undefined): Recor
     Object.entries(providers as Record<string, unknown>).filter(([, profile]) =>
       typeof profile === 'object' && profile !== null && !Array.isArray(profile)),
   ) as Record<string, Record<string, unknown>>
-}
-
-/** The models array of one route, as records preserving unknown fields. */
-export function modelsOf(providers: Record<string, Record<string, unknown>>, route: string): Record<string, unknown>[] {
-  const models = providers[route]?.['models']
-  return Array.isArray(models)
-    ? models.filter((entry): entry is Record<string, unknown> =>
-      typeof entry === 'object' && entry !== null && !Array.isArray(entry))
-    : []
-}
-
-/** Route facts for one route (used by suggestion inference). */
-export function routeFactsOf(providers: Record<string, Record<string, unknown>>, route: string): RouteFacts {
-  const profile = providers[route] ?? {}
-  const api = typeof profile['api'] === 'string' ? profile['api'] as string : undefined
-  const baseURL = typeof profile['baseURL'] === 'string' ? profile['baseURL'] as string : undefined
-  const displayName = typeof profile['displayName'] === 'string' ? profile['displayName'] as string : undefined
-  return { api, baseURL, displayName }
 }
 
 /** The reasoningEfforts of one model in a route's models. */
@@ -81,7 +64,7 @@ async function probeEndpoint(route: string, modelId: string): Promise<EndpointSi
     if (!response.ok) return { reasoning: 'unknown', source: null }
     const body = (await response.json()) as { ok?: boolean; data?: unknown }
     if (!body?.ok) return { reasoning: 'unknown', source: null }
-    return analyzeListingEntry(findListingEntry(body.data, modelId))
+    return detectModelSignal(body.data, modelId).signal
   } catch {
     return { reasoning: 'unknown', source: null }
   }
@@ -90,18 +73,18 @@ async function probeEndpoint(route: string, modelId: string): Promise<EndpointSi
 /**
  * Build the write seam over a settings Remote face.
  * @param api - the settings Remote methods.
- * @param describe - how to obtain the pi-ai namespace view (injectable for tests).
+ * @param describe - how to obtain the pi-ai namespace join (injectable for tests).
  */
 export function createEditorApi(
   api: RemoteApi,
-  describe: () => Promise<SettingsNamespaceView | undefined> = () => describeNamespace(api),
+  describe: () => Promise<SettingsJoin> = () => describeNamespace(api),
 ): {
   suggest(route: string, modelId: string, name?: string): Promise<SuggestReply>
   writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): Promise<WriteEffortsReply>
 } {
   return {
     async suggest(route, modelId, name) {
-      const providers = providersOf(await describe())
+      const providers = providersOf((await describe()).namespace)
       const facts = routeFactsOf(providers, route)
       // L1 first: the endpoint's own word about this model. The fusion in
       // suggestEfforts keeps wire values knowledge-base-only.
@@ -127,9 +110,9 @@ export function createEditorApi(
       // surfaces as-is.
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          const namespace = await describe()
-          if (namespace === undefined) return { ok: false, error: 'no-namespace' }
-          const providers = providersOf(namespace)
+          const join = await describe()
+          if (join.namespace === undefined) return { ok: false, error: 'no-namespace' }
+          const providers = providersOf(join.namespace)
           const models = modelsOf(providers, route)
           const index = models.findIndex(model => model['id'] === modelId)
           if (index < 0) return { ok: false, error: 'model-not-found' }
@@ -137,19 +120,26 @@ export function createEditorApi(
             if (at !== index) return model
             const copy = { ...model }
             if (efforts === undefined) {
-              // Unset the declaration: the model goes back to inheriting.
+              // Unset the declaration durably: the marker records the absence
+              // as a decision, so the host's auto-fill never reads it back as
+              // a gap to fill — not now, and not after the next restart.
               delete copy['reasoningEfforts']
-            } else if (efforts === false) {
-              copy['reasoningEfforts'] = false
+              copy[UNSET_MARKER] = true
             } else {
-              copy['reasoningEfforts'] = { ...efforts }
+              // A real declaration supersedes any earlier unset marker.
+              delete copy[UNSET_MARKER]
+              if (efforts === false) {
+                copy['reasoningEfforts'] = false
+              } else {
+                copy['reasoningEfforts'] = { ...efforts }
+              }
             }
             return copy
           })
           const response = await api.settings.mutate({
             ns: PI_AI_NS,
             ops: [{ op: 'set', path: ['providers', route, 'models'], value: nextModels }],
-            expectedRevision: namespace.revision,
+            expectedRevision: join.namespace.revision,
           })
           if (!response.result.ok) {
             // The stable wire code, not the message prose: 'settings-conflict'
@@ -170,9 +160,14 @@ export function createEditorApi(
   }
 }
 
-/** Describe the pi-ai namespace through the settings Remote. */
-async function describeNamespace(api: RemoteApi): Promise<SettingsNamespaceView | undefined> {
+/**
+ * Describe the pi-ai namespace plus writability through the settings Remote.
+ * The single describe seam for the browser half: both the injector's scan
+ * join and the editor's write seam read through it.
+ */
+export async function describeNamespace(api: RemoteApi): Promise<SettingsJoin> {
   const response = await api.settings.describe({})
-  if (!response.result.ok) return undefined
-  return response.result.value.namespaces.find(ns => ns.ns === PI_AI_NS)
+  if (!response.result.ok) return { namespace: undefined, writable: false }
+  const namespace = response.result.value.namespaces.find(ns => ns.ns === PI_AI_NS)
+  return { namespace, writable: response.result.value.writable }
 }

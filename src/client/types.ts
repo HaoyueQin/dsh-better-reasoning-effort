@@ -7,10 +7,10 @@
  * @module dsh-better-reasoning-effort/types
  */
 
-import type { IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
+import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
 import type { ReasoningEfforts } from '../knowledge.js'
 
-export type { ConfigurableProviderView, SettingsNamespaceView, SettingsPathOpView, RpcResponse } from
+export type { ConfigurableProviderView, SettingsPathOpView, RpcResponse } from
   '@deepseek-ai/dsh-api-remotes/client'
 
 /** The `settings` Remote methods the browser half calls. */
@@ -20,6 +20,16 @@ export type SettingsRemoteApi = Pick<IApiClient['settings'], 'describe' | 'mutat
 export interface RemoteApi {
   settings: SettingsRemoteApi
 }
+
+/** The join the injector renders from: the pi-ai namespace plus writability. */
+export interface SettingsJoin {
+  /** The pi-ai namespace view, when registered. */
+  namespace: SettingsNamespaceView | undefined
+  /** Whether the settings document accepts writes. */
+  writable: boolean
+}
+
+export type { SettingsNamespaceView }
 
 /** One result of writing a model's reasoningEfforts. */
 export type WriteEffortsReply = { ok: true } | { ok: false; error: string }

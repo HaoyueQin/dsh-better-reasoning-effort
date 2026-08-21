@@ -23,10 +23,11 @@ import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
-import { createScanState, reconcile, type SettingsJoin } from './injector.ts'
+import { createScanState, reconcile } from './injector.ts'
 import { en, zh, type BreKey } from './locales.ts'
+import { describeNamespace } from './ops.ts'
 import { STYLES } from './styles.ts'
-import type { RemoteApi, SettingsNamespaceView } from './types.ts'
+import type { RemoteApi } from './types.ts'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
 export const name = PLUGIN_ID
@@ -91,14 +92,6 @@ export function apply(ctx: ClientContext): void {
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
 
-  /** Read the pi-ai namespace plus writability through the settings Remote. */
-  const describeNamespace = async (): Promise<SettingsJoin> => {
-    const response = await api.settings.describe({})
-    if (!response.result.ok) return { namespace: undefined, writable: false }
-    const namespace = response.result.value.namespaces.find(ns => ns.ns === PI_AI_NS)
-    return { namespace, writable: response.result.value.writable }
-  }
-
   // ---- DOM bypass injection ----
   const scanState = createScanState()
   let scanTimer: number | undefined
@@ -113,7 +106,7 @@ export function apply(ctx: ClientContext): void {
       const root = panelRoot()
       reconcile(root, {
         api,
-        describeNamespace,
+        describeNamespace: () => describeNamespace(api),
         t,
         mount(container, props) {
           const rootEl = document.createElement('div')
@@ -126,12 +119,18 @@ export function apply(ctx: ClientContext): void {
           rootEl.dataset['plugin'] = PLUGIN_ID
           container.appendChild(rootEl)
           const reactRoot = createRoot(rootEl)
-          reactRoot.render(createElement(
-            EffortBoundary,
-            null,
-            createElement(EffortEditor, props),
-          ))
-          return () => { reactRoot.unmount() }
+          const renderEditor = (p: typeof props): void => {
+            reactRoot.render(createElement(
+              EffortBoundary,
+              null,
+              createElement(EffortEditor, p),
+            ))
+          }
+          renderEditor(props)
+          return {
+            unmount: () => { reactRoot.unmount() },
+            render: renderEditor,
+          }
         },
       }, scanState)
     }, 120)
@@ -154,7 +153,14 @@ export function apply(ctx: ClientContext): void {
 
   ctx.effect(() => {
     startObserver()
-    return () => { stopObserver() }
+    return () => {
+      stopObserver()
+      // Orphaned editors must not outlive the fiber: on plugin disable or
+      // HMR they would keep rendering with a stale api face, failing every
+      // write visibly. Unmount every React root this plugin created.
+      for (const [, entry] of scanState.mounted) entry.editor.unmount()
+      scanState.mounted.clear()
+    }
   }, 'dsh-better-reasoning-effort: DOM injector')
 
   // Refresh the injection when the settings document changes (an apply from

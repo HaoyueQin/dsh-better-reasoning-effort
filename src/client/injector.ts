@@ -25,8 +25,12 @@
 
 import { PLUGIN_MARKER } from '../constants.js'
 import type { ReasoningEfforts } from '../knowledge.js'
-import { createEditorApi, effortsOf, modelsOf, nameOf, providersOf } from './ops.js'
-import type { EffortEditorApi, RemoteApi, SettingsNamespaceView } from './types.js'
+import { modelsOf } from '../shared.js'
+import { sameEfforts } from './effort.js'
+import { createEditorApi, effortsOf, nameOf, providersOf } from './ops.js'
+import type { EffortEditorApi, RemoteApi, SettingsJoin } from './types.js'
+
+export type { SettingsJoin }
 
 /** Localized aria-labels that identify the official disclosure buttons. */
 const CAPACITY_ARIA = ['Capacities', '容量']
@@ -44,14 +48,6 @@ interface FoundModel {
   card: HTMLElement
 }
 
-/** The join the injector renders from: the pi-ai namespace plus writability. */
-export interface SettingsJoin {
-  /** The pi-ai namespace view, when registered. */
-  namespace: SettingsNamespaceView | undefined
-  /** Whether the settings document accepts writes. */
-  writable: boolean
-}
-
 /** The join the injector renders from. */
 export interface InjectorDeps {
   /** settings Remote face. */
@@ -60,8 +56,14 @@ export interface InjectorDeps {
   describeNamespace(): Promise<SettingsJoin>
   /** Localized copy. */
   t: (key: string, params?: Record<string, string | number>) => string
-  /** Mount one editor into a container (React); returns the unmount. */
-  mount(container: HTMLElement, props: EditorMountProps): () => void
+  /** Mount one editor into a container (React); render() updates its props in place. */
+  mount(container: HTMLElement, props: EditorMountProps): MountedEditor
+}
+
+/** One mounted editor: unmount disposes the React root; render swaps props in place. */
+export interface MountedEditor {
+  unmount(): void
+  render(props: EditorMountProps): void
 }
 
 /** Props handed to the editor mount for one model row. */
@@ -90,7 +92,7 @@ export interface EditorMountProps {
 /** Mutable scan state kept across reconcile invocations. */
 export interface ScanState {
   /** Currently mounted editors, keyed by their container element. */
-  mounted: Map<HTMLElement, { unmount: () => void }>
+  mounted: Map<HTMLElement, { editor: MountedEditor; props: EditorMountProps }>
   /** The last describe promise, folded so scans never stack reads. */
   describePromise: Promise<SettingsJoin> | undefined
 }
@@ -134,6 +136,24 @@ function disclosureOf(trigger: HTMLButtonElement): HTMLElement | undefined {
 /** Whether an editor is already mounted in a container (idempotency guard). */
 function hasEditor(container: HTMLElement): boolean {
   return container.querySelector(`[data-plugin="${PLUGIN_MARKER}"]`) !== null
+}
+
+/**
+ * Semantic equality of two mount-prop sets, so a scan only re-renders an
+ * existing editor when the settings document actually moved under it. The
+ * guard is what makes refresh safe under the MutationObserver: render mutates
+ * DOM, DOM mutations schedule scans, and a no-op comparison ends the cycle.
+ */
+function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
+  return a.route === b.route
+    && a.routeDisplayName === b.routeDisplayName
+    && a.routeApi === b.routeApi
+    && a.routeBaseURL === b.routeBaseURL
+    && a.modelId === b.modelId
+    && a.modelName === b.modelName
+    && a.index === b.index
+    && a.readOnly === b.readOnly
+    && sameEfforts(a.efforts, b.efforts)
 }
 
 /**
@@ -197,13 +217,12 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     // Unmount editors whose rows are gone (the page re-rendered).
     for (const [key, entry] of state.mounted) {
       if (!found.some(candidate => candidate.container === key)) {
-        entry.unmount()
+        entry.editor.unmount()
         state.mounted.delete(key)
       }
     }
 
     found.forEach((target, index) => {
-      if (hasEditor(target.container)) return
       const route = routeOfCard(target.card, providers)
       if (route === undefined) return
       const profile = providers[route] ?? {}
@@ -213,7 +232,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       // The editor's write seam reads the namespace LIVE through its own
       // describe (not this scan's snapshot): a conflict retry must re-read a
       // fresh revision to have any chance of succeeding.
-      const unmount = deps.mount(target.container, {
+      const next: EditorMountProps = {
         route,
         routeDisplayName: typeof profile['displayName'] === 'string' ? profile['displayName'] as string : route,
         ...typeof profile['api'] === 'string' ? { routeApi: profile['api'] as string } : {},
@@ -225,8 +244,22 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         api: createEditorApi(deps.api),
         readOnly: join.writable !== true,
         t: deps.t,
-      })
-      state.mounted.set(target.container, { unmount })
+      }
+      const existing = state.mounted.get(target.container)
+      if (existing !== undefined) {
+        // The official page kept the container but moved the document under
+        // it (an apply from this editor or elsewhere): swap the fresh props
+        // in place so the editor never shows a stale saved declaration. The
+        // sameProps guard keeps unchanged rows from re-rendering.
+        if (!sameProps(existing.props, next)) {
+          existing.props = next
+          existing.editor.render(next)
+        }
+        return
+      }
+      if (hasEditor(target.container)) return
+      const editor = deps.mount(target.container, next)
+      state.mounted.set(target.container, { editor, props: next })
     })
   }
   // A rejected describe must not permanently disable the injector: clear the

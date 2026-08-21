@@ -24,8 +24,7 @@ export interface EndpointSignal {
   source: string | null
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
+import { isRecord } from './shared.js'
 
 const hasString = (entry: Record<string, unknown>, key: string): boolean => {
   const value = entry[key]

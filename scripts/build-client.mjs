@@ -2,7 +2,9 @@
 import { build } from 'esbuild'
 import { readFile } from 'node:fs/promises'
 
-const ID = 'dsh-better-reasoning-effort'
+// The module id must equal the package name (the profile composer serves this
+// bundle under it), so read it instead of duplicating the literal here.
+const { name: ID } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'))
 const BANNER = `window.__ModuleLoader__.load({
 \tid: "${ID}",
 \tfactory: (require) => {

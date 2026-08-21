@@ -13,6 +13,15 @@ export const PROBE_PATH = '/dsh-better-reasoning-effort/raw-models'
 /** The settings namespace this plugin edits: pi-ai custom provider routes. */
 export const PI_AI_NS = 'llm-pi-ai'
 
+/**
+ * Model-level marker written when the user deliberately unsets the
+ * declaration ("back to inheritance"). Schemastery passes unknown model keys
+ * through, so the marker survives official-page saves and restarts — which is
+ * the point: auto-fill must respect the absence as a decision, not as a gap
+ * to fill.
+ */
+export const UNSET_MARKER = 'reasoningEffortsUnset'
+
 /** Locale dictionary namespace for the browser half's copy (not a settings namespace). */
 export const STORE_NS = PLUGIN_ID
 

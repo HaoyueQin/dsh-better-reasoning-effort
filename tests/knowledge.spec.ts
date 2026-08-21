@@ -7,10 +7,8 @@ import {
   GENERIC_OPENAI_EFFORTS,
   KNOWLEDGE_BASE,
   inferProtocol,
-  isValidEfforts,
   matchKnowledgeBase,
   suggestEfforts,
-  THINKING_LEVELS,
 } from '../src/knowledge.js'
 
 describe('matchKnowledgeBase', () => {
@@ -50,11 +48,21 @@ describe('inferProtocol', () => {
     expect(inferProtocol({ baseURL: 'https://api.anthropic.com' })).toBe('anthropic-messages')
   })
 
+  it('matches the dialect on the registrable domain, not the URL text', () => {
+    // An aggregator path naming a vendor must stay generic: only the host's
+    // registrable domain speaks for the endpoint.
+    expect(inferProtocol({ baseURL: 'https://gw.example.com/deepseek/v1' })).toBe('openai-completions')
+    expect(inferProtocol({ baseURL: 'https://deepseek.fake-gateway.com/v1' })).toBe('openai-completions')
+    expect(inferProtocol({ baseURL: 'https://api.deepseek.com/v1' })).toBe('deepseek')
+  })
+
   it('defaults unknown endpoints to the OpenAI-compatible protocol', () => {
     expect(inferProtocol({ baseURL: 'https://gateway.example.com' })).toBe('openai-completions')
     // pi-ai has no gemini protocol; Gemini gateways speak openai-completions.
     expect(inferProtocol({ baseURL: 'https://generativelanguage.googleapis.com' })).toBe('openai-completions')
     expect(inferProtocol({})).toBe('openai-completions')
+    // A malformed URL degrades to the generic ladder instead of throwing.
+    expect(inferProtocol({ baseURL: 'not-a-url' })).toBe('openai-completions')
   })
 })
 
@@ -151,25 +159,5 @@ describe('suggestEfforts', () => {
     const suggestion = suggestEfforts('mystery-model', {})
     expect(suggestion.efforts).toEqual(GENERIC_OPENAI_EFFORTS)
     expect(suggestion.compat).toBeUndefined()
-  })
-})
-
-describe('isValidEfforts', () => {
-  it('accepts a valid dict', () => {
-    expect(isValidEfforts({ off: null, high: 'high' })).toBe(true)
-  })
-
-  it('rejects non-off levels with null wire', () => {
-    expect(isValidEfforts({ high: null })).toBe(false)
-  })
-
-  it('rejects empty dicts and unknown levels', () => {
-    expect(isValidEfforts({})).toBe(false)
-    expect(isValidEfforts({ turbo: 'turbo' })).toBe(false)
-  })
-
-  it('accepts false and undefined as inherit/disabled markers', () => {
-    expect(isValidEfforts(false)).toBe(true)
-    expect(isValidEfforts(undefined)).toBe(true)
   })
 })
