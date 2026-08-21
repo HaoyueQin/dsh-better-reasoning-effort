@@ -39,14 +39,29 @@ function fakeSettings(providers: Record<string, unknown> | undefined) {
 }
 
 /** Minimal cordis context face capturing what apply() touches. */
-function fakeHost(settings: ReturnType<typeof fakeSettings>): {
+function fakeHost(
+  settings: ReturnType<typeof fakeSettings>,
+  options?: { credentials?: { resolve(ref: string): Promise<{ value?: string } | undefined> } },
+): {
   ctx: HostCtx
   emitUpdated: (ns: unknown) => void
+  routes: Map<string, (req: unknown, res: unknown) => Promise<void>>
 } {
   const listeners: Array<(ns: unknown) => void> = []
+  const routes = new Map<string, (req: unknown, res: unknown) => Promise<void>>()
   const ctx = {
-    inject(deps: string[], cb: (injected: { settings: ReturnType<typeof fakeSettings> }) => void): void {
-      if (deps.includes('settings')) cb({ settings })
+    inject(deps: string[], cb: (injected: Record<string, unknown>) => void): void {
+      const injected: Record<string, unknown> = {}
+      if (deps.includes('settings')) injected['settings'] = settings
+      if (deps.includes('webServer')) {
+        injected['webServer'] = {
+          register(route: { path: string; handler: (req: unknown, res: unknown) => Promise<void> }): () => void {
+            routes.set(route.path, route.handler)
+            return () => { routes.delete(route.path) }
+          },
+        }
+      }
+      cb(injected)
     },
     effect(setup: () => () => void, _name?: string): void {
       setup()
@@ -54,8 +69,11 @@ function fakeHost(settings: ReturnType<typeof fakeSettings>): {
     on(event: string, cb: (ns: unknown) => void): void {
       if (event === 'settings/updated') listeners.push(cb)
     },
+    get(name: string): unknown {
+      return name === 'credentials' ? options?.credentials : undefined
+    },
   } as unknown as HostCtx
-  return { ctx, emitUpdated: (ns) => { for (const listener of listeners) listener(ns) } }
+  return { ctx, emitUpdated: (ns) => { for (const listener of listeners) listener(ns) }, routes }
 }
 
 const PROVIDERS = {
@@ -156,5 +174,111 @@ describe('apply() autofill', () => {
     // The schedule is bounded: no further writes fire.
     await vi.advanceTimersByTimeAsync(10_000)
     expect(settings.updates).toHaveLength(1)
+  })
+})
+
+describe('apply() probe route', () => {
+  const PROBE_PATH = '/dsh-better-reasoning-effort/raw-models'
+
+  function fakeRes(): { res: unknown; out: () => { status: number; body: Record<string, unknown> } } {
+    let status = 0
+    let raw = ''
+    const res = {
+      set statusCode(value: number) { status = value },
+      get statusCode(): number { return status },
+      setHeader(_key: string, _value: string): void {},
+      end(body?: string): void { raw = body ?? '' },
+    }
+    return {
+      res,
+      out: () => ({ status, body: JSON.parse(raw.length > 0 ? raw : '{}') as Record<string, unknown> }),
+    }
+  }
+
+  function fakeReq(overrides?: { method?: string; url?: string; headers?: Record<string, string> }): unknown {
+    return {
+      method: 'GET',
+      url: `?route=aliyun`,
+      headers: { host: '127.0.0.1:3080' },
+      ...overrides,
+    }
+  }
+
+  it('proxies the raw listing with the stored credential, never echoing it', async () => {
+    const settings = fakeSettings({
+      aliyun: { api: 'openai-completions', baseURL: 'https://gw.example.com/v1', apiKeyEnv: 'ALIYUN_KEY', models: [] },
+    })
+    const credentials = { resolve: async (ref: string) => ({ value: ref === 'ALIYUN_KEY' ? 'sk-secret' : undefined }) }
+    const { ctx, routes } = fakeHost(settings, { credentials })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)
+    expect(handler).toBeDefined()
+
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: [{ id: 'qwen-max', supported_parameters: ['reasoning'] }] }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { res, out } = fakeRes()
+    await handler!(fakeReq(), res)
+    const reply = out()
+    expect(reply.status).toBe(200)
+    expect(reply.body['ok']).toBe(true)
+    expect((reply.body['data'] as unknown[]).length).toBe(1)
+    // The credential went upstream as a bearer token and nowhere else.
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string> }]
+    expect(url).toBe('https://gw.example.com/v1/models')
+    expect(init.headers['authorization']).toBe('Bearer sk-secret')
+    expect(JSON.stringify(reply.body)).not.toContain('sk-secret')
+    vi.unstubAllGlobals()
+  })
+
+  it('rejects cross-site callers before touching anything', async () => {
+    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler(fakeReq({ headers: { host: '10.0.0.5:3080', 'sec-fetch-site': 'cross-site' } }), res)
+    expect(out().status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('reports upstream auth failures with a key hint instead of throwing', async () => {
+    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com/v1', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 401 })))
+    const { res, out } = fakeRes()
+    await handler(fakeReq(), res)
+    const reply = out()
+    expect(reply.status).toBe(200)
+    expect(reply.body['ok']).toBe(false)
+    expect(String(reply.body['error'])).toContain('check the API key')
+    vi.unstubAllGlobals()
+  })
+
+  it('probes unauthenticated when no credential resolves', async () => {
+    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com/v1', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler(fakeReq(), res)
+    expect(out().body['ok']).toBe(true)
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string> }]
+    expect(init.headers['authorization']).toBeUndefined()
+    vi.unstubAllGlobals()
   })
 })
