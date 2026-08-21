@@ -14,8 +14,11 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import z from '@deepseek-ai/schemastery'
-import { PI_AI_NS, PLUGIN_ID, STORE_NS } from './constants.js'
+// Runtime helper + the `declare module '@deepseek-ai/cordis'` merge that types
+// `ctx.settings` as `SettingsProvider` (describe() returns one descriptor per
+// registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import { PI_AI_NS, PLUGIN_ID } from './constants.js'
 import { suggestEfforts, type RouteFacts } from './knowledge.js'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
@@ -24,10 +27,8 @@ export const name = PLUGIN_ID
 /** Hard dependencies: the loader waits for these before calling apply. */
 export const inject = ['settings']
 
-/** Schema for the plugin's own store namespace. */
-const StoreSchema = z.object({
-  entries: z.array(z.any()).default([]),
-})
+/** The branded settings namespace this plugin reads and fills. */
+const PI_NS = settingsNamespace(PI_AI_NS)
 
 type JsonObject = Record<string, unknown>
 
@@ -101,52 +102,70 @@ export function buildAutofillPatch(
   return Object.keys(patchRoutes).length === 0 ? undefined : { providers: patchRoutes }
 }
 
-/** Host-side settings service face (narrowed). */
-interface HostSettingsService {
-  get(ns: string): unknown
-  register<T>(ns: string, schema: z<T>, options?: { validate?: boolean }): unknown
-  describe(options?: { redactSecrets?: boolean }): { namespaces: Array<{ ns: string; revision: number }> }
-  update(ns: string, patch: object, expectedRevision?: number): Promise<void>
-}
+/**
+ * Boot-fill retry budget: llm-pi-ai registers its namespace in its own apply,
+ * and cordis gives this plugin no ordering guarantee against it. If the
+ * namespace is not up yet at boot, retry on this bounded schedule before
+ * leaving the rest to the next `settings/updated`.
+ */
+const BOOT_RETRY_MS = 1000
+const BOOT_RETRY_MAX = 5
 
 /**
- * Apply the plugin: register the store namespace and autofill undeclared
- * models on every `llm-pi-ai` update.
+ * Apply the plugin: autofill undeclared models on boot and after every commit
+ * that touches the pi-ai namespace.
  * @param ctx - host context.
  */
 export function apply(ctx: Context): void {
-  const settings = ctx.get('settings') as HostSettingsService | undefined
-  if (settings === undefined) return
-  const settingsService = settings
+  ctx.inject(['settings'], (settingsCtx) => {
+    const settings = settingsCtx.settings
 
-  settingsService.register(STORE_NS, StoreSchema)
-
-  /** Fill undeclared models across every configured pi-ai route. */
-  const autofill = async (): Promise<void> => {
-    try {
-      const value = settingsService.get(PI_AI_NS)
-      if (!isRecord(value)) return
+    /** One autofill pass; resolves false while the pi-ai namespace is unregistered. */
+    const autofillOnce = async (): Promise<boolean> => {
+      const value = settings.get(PI_NS)
+      if (!isRecord(value)) return false
       const patch = buildAutofillPatch(value['providers'])
-      if (patch === undefined) return
+      if (patch === undefined) return true
       // Optimistic lock: only write while the namespace has not moved past
       // this read. The fill is a background suggestion — losing the race to a
-      // user edit is fine, the next `settings/updated` retries it. Without the
-      // lock, every fill bumps the revision and invalidates the revision the
-      // settings page read, surfacing as a SettingsConflictError on the next
-      // user save.
-      const revision = settingsService.describe().namespaces.find(ns => ns.ns === PI_AI_NS)?.revision
-      await settingsService.update(PI_AI_NS, patch, revision)
-    } catch (error) {
-      // Auto-fill must never break the settings pipeline; log and move on.
-      // A SettingsConflictError lands here (the user edited while we filled).
+      // user edit is fine, the next `settings/updated` retries it. Without
+      // the lock, every fill bumps the revision and invalidates the revision
+      // the settings page read, surfacing as SettingsConflictError on the
+      // next user save.
+      const revision = settings.describe().find(entry => entry.ns === PI_NS)?.revision
+      await settings.update(PI_NS, patch, revision)
+      return true
+    }
+
+    /** Auto-fill must never break the settings pipeline; log and move on. */
+    const logFailure = (error: unknown): void => {
       console.error(`[dsh-better-reasoning-effort] autofill failed: ${error instanceof Error ? error.message : String(error)}`)
     }
-  }
 
-  // Fill once at boot for models declared before this plugin was installed,
-  // then after every commit that touches the pi-ai namespace.
-  void autofill()
-  ctx.on('settings/updated', (ns: unknown) => {
-    if (ns === PI_AI_NS) void autofill()
+    // Pending boot-retry timers, cleared with the fiber (a disposed plugin
+    // must not fire into a torn-down service graph).
+    const timers = new Set<ReturnType<typeof setTimeout>>()
+    ctx.effect(() => () => {
+      for (const timer of timers) clearTimeout(timer)
+      timers.clear()
+    }, 'dsh-better-reasoning-effort: boot-fill retries')
+
+    // Fill once at boot for models declared before this plugin was installed.
+    const bootFill = (attempt: number): void => {
+      void autofillOnce().then((ready) => {
+        if (ready || attempt >= BOOT_RETRY_MAX) return
+        const timer = setTimeout(() => {
+          timers.delete(timer)
+          bootFill(attempt + 1)
+        }, BOOT_RETRY_MS)
+        timers.add(timer)
+      }, logFailure)
+    }
+    bootFill(0)
+
+    // Then after every commit that touches the pi-ai namespace.
+    ctx.on('settings/updated', (ns) => {
+      if (ns === PI_NS) void autofillOnce().catch(logFailure)
+    })
   })
 }
