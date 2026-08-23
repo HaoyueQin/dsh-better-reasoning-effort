@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { PLUGIN_MARKER } from '../constants.js'
 import type {
+  CompatSuggestion,
   ReasoningEfforts,
 } from '../knowledge.js'
 import {
@@ -88,6 +89,10 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   const [suggested, setSuggested] = useState<ReasoningEfforts | false | undefined>(undefined)
   const [suggestedSource, setSuggestedSource] = useState('')
   const [suggestedConfidence, setSuggestedConfidence] = useState<'high' | 'medium' | 'low'>('low')
+  // The compat block the applied suggestion carries. Survives level tweaks
+  // (it describes the wire format, not the level set) so Apply writes the
+  // same bytes the host autofill would have written.
+  const [suggestedCompat, setSuggestedCompat] = useState<CompatSuggestion | undefined>(undefined)
   // Once the user edits, the draft owns the row: a re-render that changes
   // `initialEfforts` (the official page re-renders on its own edits and on
   // apply) must not overwrite in-flight input. Before any edit the draft
@@ -130,12 +135,18 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setMessage(undefined)
   }
 
-  const applySuggestion = (efforts: ReasoningEfforts | false, source: string, confidence: 'high' | 'medium' | 'low'): void => {
+  const applySuggestion = (
+    efforts: ReasoningEfforts | false,
+    source: string,
+    confidence: 'high' | 'medium' | 'low',
+    compat?: CompatSuggestion,
+  ): void => {
     markDirty()
     setDraft(draftFrom(efforts))
     setSuggested(efforts)
     setSuggestedSource(source)
     setSuggestedConfidence(confidence)
+    setSuggestedCompat(compat)
     setMessage({ kind: 'info', text: t('suggestionApplied') })
   }
 
@@ -152,7 +163,12 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         setMessage({ kind: 'error', text: reply.error === 'no-suggestion' ? t('noSuggestion') : reply.error })
         return
       }
-      applySuggestion(reply.suggestion.efforts, reply.suggestion.source, reply.suggestion.confidence)
+      applySuggestion(
+        reply.suggestion.efforts,
+        reply.suggestion.source,
+        reply.suggestion.confidence,
+        reply.suggestion.compat,
+      )
     } catch (error) {
       setMessage({ kind: 'error', text: t('writeError', { message: String(error) }) })
     } finally {
@@ -169,12 +185,12 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       // route id; the settings write happens when the injector sees the
       // saved route appear.
       if (staged) {
-        api.stageEfforts(route, modelId, next)
+        api.stageEfforts(route, modelId, next, suggestedCompat)
         dirtyRef.current = false
         setMessage({ kind: 'success', text: t('staged') })
         return
       }
-      const reply = await api.writeEfforts(route, modelId, next)
+      const reply = await api.writeEfforts(route, modelId, next, suggestedCompat)
       if (!reply.ok) {
         setMessage({ kind: 'error', text: reply.error })
         return
@@ -197,6 +213,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggested(undefined)
     setSuggestedSource('')
     setSuggestedConfidence('low')
+    setSuggestedCompat(undefined)
     setMessage(undefined)
   }
 

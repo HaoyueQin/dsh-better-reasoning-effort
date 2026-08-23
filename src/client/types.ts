@@ -8,7 +8,7 @@
  */
 
 import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
-import type { ReasoningEfforts } from '../knowledge.js'
+import type { CompatSuggestion, ReasoningEfforts } from '../knowledge.js'
 
 export type { ConfigurableProviderView, SettingsPathOpView, RpcResponse } from
   '@deepseek-ai/dsh-api-remotes/client'
@@ -41,6 +41,8 @@ export type SuggestReply =
       suggestion: {
         /** The declaration to apply; `false` = the endpoint says it does not reason. */
         efforts: ReasoningEfforts | false
+        /** The compat block to write alongside (thinkingFormat etc.), when derivable. */
+        compat?: CompatSuggestion
         matched: boolean
         source: string
         /** Evidence strength: high (knowledge base / endpoint), medium, low. */
@@ -68,12 +70,26 @@ export interface EffortEditorApi {
     name?: string,
     stagedFacts?: StagedRouteFacts,
   ): Promise<SuggestReply>
-  /** Write one model's reasoningEfforts (unset, disabled, or a dict). */
-  writeEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): Promise<WriteEffortsReply>
+  /**
+   * Write one model's reasoningEfforts (unset, disabled, or a dict). A compat
+   * block is written only when one is supplied alongside a dict declaration —
+   * an omitted compat leaves whatever the document already holds untouched.
+   */
+  writeEfforts(
+    route: string,
+    modelId: string,
+    efforts: ReasoningEfforts | false | undefined,
+    compat?: CompatSuggestion,
+  ): Promise<WriteEffortsReply>
   /**
    * Stage one model's declaration for a route that does not exist in the
    * settings document yet (the create card). Synchronous, memory-only; the
    * injector flushes staged declarations once the route appears.
    */
-  stageEfforts(route: string, modelId: string, efforts: ReasoningEfforts | false | undefined): void
+  stageEfforts(
+    route: string,
+    modelId: string,
+    efforts: ReasoningEfforts | false | undefined,
+    compat?: CompatSuggestion,
+  ): void
 }

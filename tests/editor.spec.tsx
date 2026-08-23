@@ -195,17 +195,19 @@ describe('EffortEditor', () => {
     expect(hasButton(container, t('apply'))).toBe(false)
     await act(async () => { stageButton.click() })
 
-    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' })
+    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' }, undefined)
     expect(api.writeEfforts).not.toHaveBeenCalled()
     expect(container.querySelector('.bre-effort-message')?.textContent).toContain(t('staged'))
   })
 
   it('staged: auto-adapt feeds the card-typed protocol and endpoint as inference facts', async () => {
     const api = baseApi()
+    const compat = { thinkingFormat: 'deepseek' as const, supportsReasoningEffort: true }
     api.suggest.mockResolvedValue({
       ok: true,
       suggestion: {
         efforts: { off: null, low: 'low', high: 'high', max: 'max' },
+        compat,
         matched: true,
         source: 'deepseek-v4',
         confidence: 'high',
@@ -225,5 +227,14 @@ describe('EffortEditor', () => {
       api: 'openai-completions',
       baseURL: 'https://api.deepseek.com/v1',
     })
+    // Staging must carry the suggestion's compat so the flush writes the
+    // same declaration the host autofill would have written.
+    await act(async () => { buttonByText(container, t('stage')).click() })
+    expect(api.stageEfforts).toHaveBeenCalledWith(
+      'acme-gateway',
+      'qwen-max',
+      { off: null, low: 'low', high: 'high', max: 'max' },
+      compat,
+    )
   })
 })

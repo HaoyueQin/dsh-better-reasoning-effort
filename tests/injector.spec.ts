@@ -450,7 +450,10 @@ describe('reconcile', () => {
     })
     const deps = makeDeps({ describeNamespace: describe })
     const state = createScanState()
-    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { off: null, low: 'low', high: 'high', max: 'max' })
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { off: null, low: 'low', high: 'high', max: 'max' }, {
+      thinkingFormat: 'deepseek',
+      supportsReasoningEffort: true,
+    })
     // The create card is open (route unsaved): one scan stages, nothing writes.
     const root = buildCreateDom('acme-gateway')
     await settle(() => reconcile(root, deps, state), state)
@@ -469,6 +472,9 @@ describe('reconcile', () => {
     expect(op.path).toEqual(['providers', 'acme-gateway', 'models'])
     const flushed = op.value as Array<Record<string, unknown>>
     expect(flushed[0]!['reasoningEfforts']).toEqual({ off: null, low: 'low', high: 'high', max: 'max' })
+    // The staged compat flushed beside the declaration — the same bytes the
+    // host autofill writes.
+    expect(flushed[0]!['compat']).toEqual({ thinkingFormat: 'deepseek', supportsReasoningEffort: true })
     // The landed declaration left the pending store.
     expect(state.pending.size).toBe(0)
   })

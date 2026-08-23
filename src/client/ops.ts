@@ -8,6 +8,7 @@
 
 import {
   suggestEfforts,
+  type CompatSuggestion,
   type ReasoningEfforts,
 } from '../knowledge.js'
 import { PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
@@ -81,7 +82,12 @@ async function probeEndpoint(route: string, modelId: string): Promise<EndpointSi
 export function createEditorApi(
   api: RemoteApi,
   describe: () => Promise<SettingsJoin> = () => describeNamespace(api),
-  stage?: (route: string, modelId: string, efforts: ReasoningEfforts | false | undefined) => void,
+  stage?: (
+    route: string,
+    modelId: string,
+    efforts: ReasoningEfforts | false | undefined,
+    compat?: CompatSuggestion,
+  ) => void,
 ): EffortEditorApi {
   return {
     async suggest(route, modelId, name, stagedFacts) {
@@ -105,6 +111,12 @@ export function createEditorApi(
         ok: true,
         suggestion: {
           efforts: suggestion.efforts,
+          // The host autofill writes the suggestion's compat block beside the
+          // declaration; the browser seam must write the SAME bytes so one
+          // suggestion never produces two different documents. (thinkingFormat
+          // is what makes off/thinking dispatch work on deepseek/qwen/zai
+          // endpoints.)
+          ...(suggestion.compat === undefined ? {} : { compat: suggestion.compat }),
           matched: suggestion.matched,
           source: suggestion.source,
           confidence: suggestion.confidence,
@@ -112,10 +124,10 @@ export function createEditorApi(
         },
       }
     },
-    stageEfforts(route, modelId, efforts) {
-      stage?.(route, modelId, efforts)
+    stageEfforts(route, modelId, efforts, compat) {
+      stage?.(route, modelId, efforts, compat)
     },
-    async writeEfforts(route, modelId, efforts) {
+    async writeEfforts(route, modelId, efforts, compat) {
       // Retry once on a revision conflict: a concurrent writer (this plugin's
       // own autofill, or the official page) moved the namespace between our
       // describe and mutate. Re-reading and retrying with the fresh revision
@@ -145,6 +157,10 @@ export function createEditorApi(
                 copy['reasoningEfforts'] = false
               } else {
                 copy['reasoningEfforts'] = { ...efforts }
+                // The compat belongs to the declaration: write it only when
+                // one was supplied (a hand-tuned compat already in the
+                // document survives a declaration edit that carries none).
+                if (compat !== undefined) copy['compat'] = { ...compat }
               }
             }
             return copy

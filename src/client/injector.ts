@@ -24,7 +24,7 @@
  */
 
 import { PLUGIN_MARKER, UNSET_MARKER } from '../constants.js'
-import type { ReasoningEfforts } from '../knowledge.js'
+import type { CompatSuggestion, ReasoningEfforts } from '../knowledge.js'
 import { modelsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
 import { createEditorApi, effortsOf, nameOf, providersOf } from './ops.js'
@@ -120,7 +120,13 @@ export interface ScanState {
    * Flushed automatically once a route appears; lives only in memory, so it
    * dies with the plugin fiber.
    */
-  pending: Map<string, Map<string, ReasoningEfforts | false>>
+  pending: Map<string, Map<string, StagedDeclaration>>
+}
+
+/** One staged declaration: the level set plus the suggestion's compat block. */
+export interface StagedDeclaration {
+  efforts: ReasoningEfforts | false
+  compat?: CompatSuggestion
 }
 
 export function createScanState(): ScanState {
@@ -136,6 +142,7 @@ export function stageEffortsInto(
   route: string,
   modelId: string,
   efforts: ReasoningEfforts | false | undefined,
+  compat?: CompatSuggestion,
 ): void {
   const models = state.pending.get(route)
   if (efforts === undefined) {
@@ -144,7 +151,10 @@ export function stageEffortsInto(
     if (models.size === 0) state.pending.delete(route)
     return
   }
-  state.pending.set(route, (models ?? new Map()).set(modelId, efforts))
+  state.pending.set(route, (models ?? new Map()).set(modelId, {
+    efforts,
+    ...(compat === undefined ? {} : { compat }),
+  }))
 }
 
 /**
@@ -160,11 +170,11 @@ async function flushRoute(
   deps: InjectorDeps,
   state: ScanState,
   route: string,
-  models: ReadonlyMap<string, ReasoningEfforts | false>,
+  models: ReadonlyMap<string, StagedDeclaration>,
 ): Promise<void> {
   const api = createEditorApi(deps.api)
   // Snapshot: stageEffortsInto below mutates the stored map as writes land.
-  for (const [modelId, efforts] of [...models]) {
+  for (const [modelId, declaration] of [...models]) {
     const join = await deps.describeNamespace()
     const providers = providersOf(join.namespace)
     const current = modelsOf(providers, route).find(model => model['id'] === modelId)
@@ -172,7 +182,7 @@ async function flushRoute(
       stageEffortsInto(state, route, modelId, undefined)
       continue
     }
-    const reply = await api.writeEfforts(route, modelId, efforts)
+    const reply = await api.writeEfforts(route, modelId, declaration.efforts, declaration.compat)
     if (reply.ok || reply.error === 'model-not-found') {
       stageEffortsInto(state, route, modelId, undefined)
     }
@@ -345,7 +355,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       // and endpoint stand in for the stored profile facts, both for the
       // editor's display and for suggestion inference.
       const efforts = staged
-        ? state.pending.get(route)?.get(target.modelId)
+        ? state.pending.get(route)?.get(target.modelId)?.efforts
         : effortsOf(models, target.modelId)
       const modelName = staged ? undefined : nameOf(models, target.modelId)
       const typedApi = staged ? inputValueByLabel(target.card, API_PROTOCOL_ARIA) : ''
@@ -370,7 +380,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ...efforts === undefined ? {} : { efforts },
         index,
         staged,
-        api: createEditorApi(deps.api, undefined, (r, m, e) => { stageEffortsInto(state, r, m, e) }),
+        api: createEditorApi(deps.api, undefined, (r, m, e, c) => { stageEffortsInto(state, r, m, e, c) }),
         readOnly: join.writable !== true,
         t: deps.t,
       }

@@ -134,9 +134,55 @@ describe('createEditorApi', () => {
     const sink = vi.fn()
     const staging = createEditorApi(api, undefined, sink)
     staging.stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
-    expect(sink).toHaveBeenCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' })
+    expect(sink).toHaveBeenCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, undefined)
+    // The suggestion's compat rides the same seam.
+    const compat = { thinkingFormat: 'deepseek' as const, supportsReasoningEffort: true }
+    staging.stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat)
+    expect(sink).toHaveBeenLastCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat)
     // An edit-card seam (no sink) is a no-op, not a crash.
     createEditorApi(api).stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
+  })
+
+  it('carries the suggestion compat so the browser path writes what the host fill writes', async () => {
+    const { api } = fakeApi({ providers: {} })
+    const editor = createEditorApi(api)
+    const reply = await editor.suggest('acme-gateway', 'deepseek-v4-flash-free', undefined, {
+      api: 'openai-completions',
+      baseURL: 'https://gw.example.com/v1',
+    })
+    expect(reply.ok).toBe(true)
+    if (reply.ok) {
+      expect(reply.suggestion.compat).toEqual({ thinkingFormat: 'deepseek', supportsReasoningEffort: true })
+    }
+  })
+
+  it('writes the supplied compat alongside the declaration', async () => {
+    const { api, mutates } = fakeApi(initialValue)
+    const editor = createEditorApi(api)
+    const compat = { thinkingFormat: 'qwen' as const }
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { off: null, high: 'high' }, compat)
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0].reasoningEfforts).toEqual({ off: null, high: 'high' })
+    expect(models[0].compat).toEqual({ thinkingFormat: 'qwen' })
+  })
+
+  it('leaves an existing compat untouched when the write carries none', async () => {
+    const preCompat = {
+      providers: {
+        aliyun: {
+          displayName: 'Aliyun',
+          api: 'openai-completions',
+          models: [{ id: 'qwen-max', name: 'Qwen Max', compat: { thinkingFormat: 'qwen' } }],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(preCompat)
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0].compat).toEqual({ thinkingFormat: 'qwen' })
   })
 
   it('writes one model through settings.mutate, preserving siblings', async () => {
