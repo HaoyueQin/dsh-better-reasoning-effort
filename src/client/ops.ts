@@ -101,10 +101,11 @@ export function createEditorApi(
         displayName: name ?? stored.displayName,
       }
       // L1 first: the endpoint's own word about this model. The fusion in
-      // suggestEfforts keeps wire values knowledge-base-only. A staged route
-      // cannot be probed (the host resolves routes from the settings), so the
-      // signal stays 'unknown' until the route is saved.
-      const endpoint = await probeEndpoint(route, modelId)
+      // suggestEfforts keeps wire values knowledge-base-only. A route the
+      // settings document does not hold (a create card) cannot be probed —
+      // the host resolves routes from settings — so skip the doomed round
+      // trip and leave the signal absent until the route is saved.
+      const endpoint = providers[route] === undefined ? undefined : await probeEndpoint(route, modelId)
       const suggestion = suggestEfforts(modelId, facts, endpoint)
       if (suggestion.efforts === undefined) return { ok: false, error: 'no-suggestion' }
       return {

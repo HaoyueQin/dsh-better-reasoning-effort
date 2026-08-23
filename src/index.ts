@@ -213,6 +213,21 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /**
+ * A URL safe to echo in responses: a baseURL may carry userinfo
+ * (https://user:pass@host), and failure messages must never repeat it.
+ */
+function displayUrl(raw: string): string {
+  try {
+    const url = new URL(raw)
+    url.username = ''
+    url.password = ''
+    return url.toString()
+  } catch {
+    return raw
+  }
+}
+
+/**
  * Apply the plugin: autofill undeclared models on boot and after every commit
  * that touches the pi-ai namespace.
  * @param ctx - host context.
@@ -352,19 +367,19 @@ export function apply(ctx: Context, config: Config = {}): void {
               })
               if (!upstream.ok) {
                 const hint = upstream.status === 401 || upstream.status === 403 ? '; check the API key' : ''
-                sendJson(res, 200, { ok: false, error: `${listingURL} answered ${upstream.status}${hint}` })
+                sendJson(res, 502, { ok: false, error: `${displayUrl(listingURL)} answered ${upstream.status}${hint}` })
                 return
               }
               const body = (await upstream.json()) as { data?: unknown }
               if (body === null || !Array.isArray(body['data'])) {
-                sendJson(res, 200, { ok: false, error: `${listingURL} model listing has no "data" array` })
+                sendJson(res, 502, { ok: false, error: `${displayUrl(listingURL)} model listing has no "data" array` })
                 return
               }
-              sendJson(res, 200, { ok: true, url: listingURL, data: body['data'] })
+              sendJson(res, 200, { ok: true, url: displayUrl(listingURL), data: body['data'] })
             } catch (error) {
-              sendJson(res, 200, {
+              sendJson(res, 502, {
                 ok: false,
-                error: `could not reach ${listingURL}: ${error instanceof Error ? error.message : String(error)}`,
+                error: `could not reach ${displayUrl(listingURL)}: ${error instanceof Error ? error.message : String(error)}`,
               })
             }
           },

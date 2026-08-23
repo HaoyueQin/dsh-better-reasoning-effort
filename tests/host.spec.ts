@@ -492,9 +492,28 @@ describe('apply() probe route', () => {
     const { res, out } = fakeRes()
     await handler(fakeReq(), res)
     const reply = out()
-    expect(reply.status).toBe(200)
+    // An upstream failure is a bad-gateway answer, not a silent 200.
+    expect(reply.status).toBe(502)
     expect(reply.body['ok']).toBe(false)
     expect(String(reply.body['error'])).toContain('check the API key')
+    vi.unstubAllGlobals()
+  })
+
+  it('never echoes baseURL credentials in failure responses', async () => {
+    const settings = fakeSettings({ aliyun: { baseURL: 'https://user:sekrit@gw.example.com/v1', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom') }))
+    const { res, out } = fakeRes()
+    await handler(fakeReq(), res)
+    const reply = out()
+    expect(reply.status).toBe(502)
+    const text = JSON.stringify(reply.body)
+    expect(text).not.toContain('sekrit')
+    expect(text).not.toContain('user:')
+    expect(text).toContain('gw.example.com')
     vi.unstubAllGlobals()
   })
 

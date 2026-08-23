@@ -27,7 +27,7 @@ import { PLUGIN_MARKER, UNSET_MARKER } from '../constants.js'
 import type { CompatSuggestion, ReasoningEfforts } from '../knowledge.js'
 import { modelsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
-import { createEditorApi, effortsOf, nameOf, providersOf } from './ops.js'
+import { createEditorApi, describeNamespace, effortsOf, nameOf, providersOf } from './ops.js'
 import type { EffortEditorApi, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
@@ -172,7 +172,6 @@ async function flushRoute(
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
 ): Promise<void> {
-  const api = createEditorApi(deps.api)
   // Snapshot: stageEffortsInto below mutates the stored map as writes land.
   for (const [modelId, declaration] of [...models]) {
     const join = await deps.describeNamespace()
@@ -182,7 +181,19 @@ async function flushRoute(
       stageEffortsInto(state, route, modelId, undefined)
       continue
     }
-    const reply = await api.writeEfforts(route, modelId, declaration.efforts, declaration.compat)
+    // Seed the write's FIRST describe attempt with the join this loop
+    // already read — one wire read per model instead of two. A conflict
+    // retry re-describes fresh through the live seam, so the seed never
+    // costs the write its recovery path.
+    let seeded = false
+    const seededApi = createEditorApi(deps.api, () => {
+      if (!seeded) {
+        seeded = true
+        return Promise.resolve(join)
+      }
+      return describeNamespace(deps.api)
+    })
+    const reply = await seededApi.writeEfforts(route, modelId, declaration.efforts, declaration.compat)
     if (reply.ok || reply.error === 'model-not-found') {
       stageEffortsInto(state, route, modelId, undefined)
     }

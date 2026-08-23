@@ -126,6 +126,23 @@ describe('createEditorApi', () => {
     }
   })
 
+  it('skips the endpoint probe for a route the document does not hold', async () => {
+    // The host probe resolves routes from settings: asking for a create
+    // card's typed route would always 400, so the client must not spend
+    // the round trip.
+    const { api } = fakeApi({ providers: {} })
+    const fetchSpy = vi.fn(async () => { throw new Error('probe must not run') })
+    vi.stubGlobal('fetch', fetchSpy)
+    try {
+      const editor = createEditorApi(api)
+      const reply = await editor.suggest('acme-gateway', 'mystery', undefined, { api: 'openai-completions' })
+      expect(reply.ok).toBe(true)
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('prefers the stored profile over staged facts when both exist', async () => {
     const { api } = fakeApi(initialValue)
     const editor = createEditorApi(api)
