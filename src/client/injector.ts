@@ -310,8 +310,21 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     // second pass sees the first pass's declaration and skips.
     if (join.writable === true) {
       for (const [route, models] of state.pending) {
-        if (models.size === 0 || !hasOwn(providers, route)) continue
-        void flushRoute(deps, state, route, models)
+        // An emptied entry can only ever be skipped again — drop it instead
+        // of rescanning it on every future pass.
+        if (models.size === 0) {
+          state.pending.delete(route)
+          continue
+        }
+        if (!hasOwn(providers, route)) continue
+        // flushRoute reads the wire through the live describe seam; a
+        // transport failure there rejects, and a bare `void` would surface
+        // as an unhandled promise rejection. The staged declarations stay
+        // staged, and the next scan retries — logging is all the failure
+        // owes the user.
+        void flushRoute(deps, state, route, models).catch((error: unknown) => {
+          console.error(`[bre] staged flush failed for "${route}": ${error instanceof Error ? error.message : String(error)}`)
+        })
       }
     }
 

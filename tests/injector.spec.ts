@@ -526,6 +526,53 @@ describe('reconcile', () => {
     expect(deps.mutate).toHaveBeenCalled()
   })
 
+  it('keeps staged declarations staged when a flush read fails', async () => {
+    // flushRoute reads the wire through the live describe seam; when that
+    // read rejects (transport down), the rejection must be contained — the
+    // declarations stay staged and the next scan retries.
+    let calls = 0
+    const describe = vi.fn(async (): Promise<SettingsJoin> => {
+      calls += 1
+      if (calls >= 3) throw new Error('wire down')
+      if (calls === 2) {
+        const local = structuredClone(join)
+        ;(local.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+          api: 'openai-completions',
+          models: [{ id: 'deepseek-v4-flash-free' }],
+        }
+        return local
+      }
+      return join
+    })
+    const deps = makeDeps({ describeNamespace: describe })
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { high: 'high' })
+    const root = buildCreateDom('acme-gateway')
+    // Scan one: the route is unsaved — stages, no flush, no write.
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mutate).not.toHaveBeenCalled()
+    // Scan two: the fold read sees the saved route and starts the flush;
+    // the flush's own live read rejects.
+    state.describePromise = undefined
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await settle(() => reconcile(root, deps, state), state)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.pending.size).toBe(1)
+    expect(errorSpy.mock.calls[0]![0]).toContain('staged flush failed')
+    errorSpy.mockRestore()
+  })
+
+  it('drops empty pending routes instead of rescanning them forever', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    state.pending.set('acme-gateway', new Map())
+    const root = buildCreateDom('acme-gateway')
+    await settle(() => reconcile(root, deps, state), state)
+    expect(state.pending.has('acme-gateway')).toBe(false)
+  })
+
   it('drops a staged declaration the saved profile already answers', async () => {
     // "Never silently overwrite": a model carrying a declaration (or an unset
     // marker) when its route appears keeps what the document says.
