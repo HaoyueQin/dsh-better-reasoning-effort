@@ -4,6 +4,9 @@ node_modules/
 # Build output
 lib/
 
+# Packed release artifacts
+*.tgz
+
 # Logs
 *.log
 npm-debug.log*
