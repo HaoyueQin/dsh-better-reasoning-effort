@@ -14,6 +14,7 @@
  * reaches a user's settings.yaml. Update the pins together with the upgrade.
  */
 
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   INPUT_MODALITIES,
@@ -22,6 +23,29 @@ import {
   suggestEfforts,
   type ReasoningEfforts,
 } from '../src/knowledge.js'
+
+/**
+ * The core adapter's request-modality vocabulary, extracted MECHANICALLY from
+ * the installed @deepseek-ai/dsh-llm-pi-ai artifact (pinned as a
+ * devDependency). The upstream constant is module-private in the published
+ * lib, so this pin reads the artifact instead of hardcoding the vocabulary:
+ * any dependency upgrade that moves the set fails THIS test before a drifted
+ * declaration reaches a user's settings.yaml.
+ */
+function coreModalities(): string[] {
+  const source = readFileSync(
+    'node_modules/@deepseek-ai/dsh-llm-pi-ai/lib/index.js',
+    'utf8',
+  )
+  const match = source.match(/const MODALITIES = Object\.keys\(\{([\s\S]*?)\}\)/)
+  if (match === null) {
+    throw new Error(
+      'could not extract MODALITY_GATE keys from @deepseek-ai/dsh-llm-pi-ai/lib/index.js -- '
+      + 'the generated shape changed; update this extractor together with the upgrade',
+    )
+  }
+  return [...match[1].matchAll(/([a-z]+):\s*true/g)].map(m => m[1]!)
+}
 
 /** pi-ai's nameable reasoning-dispatch formats (THINKING_FORMAT_GATE keys). */
 const PI_AI_THINKING_FORMATS = [
@@ -133,11 +157,9 @@ describe('knowledge base vocabulary grid', () => {
   })
 
   it('declares only pi-ai request modalities, always including text', () => {
-    // Pinned from llm-pi-ai's MODALITY_GATE (src/catalog.ts): the drift gate
-    // grows this set exactly when pi-ai's Model['input'] does, so this pin
-    // fails HERE the moment the vocabulary moves -- before a bad declaration
-    // reaches a user's settings.yaml.
-    expect([...INPUT_MODALITIES]).toEqual(['text', 'image'])
+    // Mechanically pinned against the INSTALLED core adapter (see
+    // coreModalities): this is the drift gate made executable.
+    expect([...INPUT_MODALITIES]).toEqual(coreModalities())
     for (const entry of KNOWLEDGE_BASE) {
       if (entry.input === undefined) continue
       expect(entry.input.length, entry.id).toBeGreaterThan(0)

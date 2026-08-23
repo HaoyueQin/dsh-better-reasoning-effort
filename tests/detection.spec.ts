@@ -100,8 +100,12 @@ describe('modality + capacity disclosures', () => {
   it('maps vision feature flags in every convention', () => {
     expect(analyzeListingEntry({ supported_features: ['vision'] }).input).toEqual(['image'])
     expect(analyzeListingEntry({ capabilities: ['completion', 'vision'] }).input).toEqual(['image'])
-    // An explicit refusal is an empty disclosure -- distinct from silence.
-    expect(analyzeListingEntry({ supports_vision: false }).input).toEqual([])
+    // An explicit refusal ANSWERED: it maps to the text floor (every
+    // supported protocol carries text), so fusion can strip an image claim
+    // instead of mistaking the refusal for silence.
+    expect(analyzeListingEntry({ supports_vision: false }).input).toEqual(['text'])
+    expect(analyzeListingEntry({ supportsVision: false }).input).toEqual(['text'])
+    expect(analyzeListingEntry({ input_modalities: [] }).input).toEqual(['text'])
     expect(analyzeListingEntry({ supportsVision: true }).input).toEqual(['image'])
   })
 

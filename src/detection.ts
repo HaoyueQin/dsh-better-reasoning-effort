@@ -152,9 +152,11 @@ function signalParts(entry: Record<string, unknown>): Pick<EndpointSignal, 'inpu
     if (hasBoolean(entry, 'supports_vision')) input = entry['supports_vision'] === true ? ['image'] : []
     else if (hasBoolean(entry, 'supportsVision')) input = entry['supportsVision'] === true ? ['image'] : []
   }
-  // An empty disclosure means the field existed with nothing usable -- kept
-  // as [] so "asked and answered: nothing we map" stays distinct from silence.
-  if (input !== undefined) parts.input = input
+  // An empty disclosure still ANSWERED: an explicit refusal (supports_vision:
+  // false, or a gateway declaring no members at all) maps to the text floor
+  // every supported protocol carries -- so the fusion layer can strip an
+  // image claim instead of mistaking refusal for silence.
+  if (input !== undefined) parts.input = input.length === 0 ? ['text'] : input
 
   const length = entry['context_length']
   if (typeof length === 'number' && Number.isFinite(length) && length > 0) {

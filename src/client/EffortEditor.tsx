@@ -154,12 +154,11 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       previousEfforts.current = initialEfforts
       if (!dirtyRef.current) setDraft(draftFrom(initialEfforts))
     }
-    if (previousInput.current !== initialInput && !dirtyRef.current) {
-      const before = previousInput.current
+    if (previousInput.current !== initialInput) {
       previousInput.current = initialInput
       // A push that lands while the user is mid-edit must not clobber the
       // draft -- same contract as the level grid above.
-      setModality(current => (current.declared && !sameModality(current, before) ? current : modalityFrom(initialInput)))
+      if (!dirtyRef.current) setModality(modalityFrom(initialInput))
     }
   }, [initialEfforts, initialInput])
 
@@ -174,8 +173,9 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggestedCompat(undefined)
     setSuggestedInput(undefined)
     setSuggestedInputSource(undefined)
-    setReferenceContext(undefined)
-    setReferenceMaxTokens(undefined)
+    // Reference capacities SURVIVE tweaks: they are read-only context about
+    // the model, not part of the applied suggestion -- only Reset or a fresh
+    // Auto-adapt replaces them.
   }
 
   const patchLevel = (level: (typeof LEVEL_ORDER)[number], on: boolean): void => {
