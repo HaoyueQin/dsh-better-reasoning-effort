@@ -4,7 +4,14 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import type { RpcId, RpcResponse } from '@deepseek-ai/dsh-api-remotes/client'
 import { createEditorApi, effortsOf, providersOf } from '../src/client/ops.js'
+
+/** Wrap a result in an RpcResponse with a branded fake rpcId. */
+const fakeRpc = <T>(result: RpcResponse<T>['result']): RpcResponse<T> => ({
+  rpcId: 'fake' as unknown as RpcId,
+  result,
+})
 import { modelsOf } from '../src/shared.js'
 import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
 
@@ -27,7 +34,7 @@ function fakeApi(initial: unknown): {
   const api: RemoteApi = {
     settings: {
       async describe() {
-        return { rpcId: 'fake', result: { ok: true, value: { writable: true, hasDocument: true, namespaces: [namespace] } } }
+        return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [namespace] } })
       },
       async mutate(request) {
         mutates.push(request)
@@ -38,7 +45,7 @@ function fakeApi(initial: unknown): {
           const [_, route, key] = op.path
           providers[route][key] = op.value
         }
-        return { rpcId: 'fake', result: { ok: true, value: namespace } }
+        return fakeRpc({ ok: true, value: namespace })
       },
     },
   }
@@ -254,29 +261,23 @@ describe('createEditorApi', () => {
     const api: RemoteApi = {
       settings: {
         async describe() {
-          return {
-            rpcId: 'fake',
-            result: { ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision, applies: 'live' as const, secrets: [] }] } },
-          }
+          return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision, applies: 'live' as const, secrets: [] }] } })
         },
         async mutate(request) {
           mutates.push(request)
           if (conflictsLeft > 0) {
             conflictsLeft -= 1
             revision += 1 // a concurrent writer moved the namespace
-            return {
-              rpcId: 'fake',
-              result: {
-                ok: false,
-                error: {
-                  code: 'settings-conflict',
-                  message: 'settings namespace "llm-pi-ai" changed since it was read',
-                  details: { ns: 'llm-pi-ai', expected: revision - 1, actual: revision },
-                },
+            return fakeRpc({
+              ok: false,
+              error: {
+                code: 'settings-conflict',
+                message: 'settings namespace "llm-pi-ai" changed since it was read',
+                details: { ns: 'llm-pi-ai', expected: revision - 1, actual: revision },
               },
-            }
+            })
           }
-          return { rpcId: 'fake', result: { ok: true, value: undefined } }
+          return fakeRpc({ ok: true, value: undefined as unknown as SettingsNamespaceView })
         },
       },
     }
@@ -292,23 +293,17 @@ describe('createEditorApi', () => {
     const api: RemoteApi = {
       settings: {
         async describe() {
-          return {
-            rpcId: 'fake',
-            result: { ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 7, applies: 'live' as const, secrets: [] }] } },
-          }
+          return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 7, applies: 'live' as const, secrets: [] }] } })
         },
         async mutate() {
-          return {
-            rpcId: 'fake',
-            result: {
-              ok: false,
-              error: {
-                code: 'settings-rejected',
-                message: 'model "qwen-max" sets compat "thinkingFormat", but its api is "openai-responses"',
-                details: { ns: 'llm-pi-ai' },
-              },
+          return fakeRpc({
+            ok: false,
+            error: {
+              code: 'settings-rejected',
+              message: 'model "qwen-max" sets compat "thinkingFormat", but its api is "openai-responses"',
+              details: { ns: 'llm-pi-ai' },
             },
-          }
+          })
         },
       },
     }

@@ -108,8 +108,11 @@ describe('knowledge base vocabulary grid', () => {
       const probe = entry.patterns[0]!
       for (const api of PI_AI_PROTOCOLS) {
         const suggestion = suggestEfforts(probe, { api })
-        expect(suggestion.efforts, `${entry.id} x ${api}`).toBeDefined()
-        assertEffortsShape(suggestion.efforts!)
+        const efforts = suggestion.efforts
+        expect(efforts, `${entry.id} x ${api}`).toBeDefined()
+        // Knowledge-base entries always carry a dict here; the `false` arm
+        // of the union only exists for explicit endpoint refusals.
+        assertEffortsShape(efforts as ReasoningEfforts)
         for (const field of Object.keys(suggestion.compat ?? {})) {
           expect(
             COMPAT_GATES[api],

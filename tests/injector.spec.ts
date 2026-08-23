@@ -7,7 +7,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type SettingsJoin } from '../src/client/injector.js'
+import { createScanState, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
 import type { RemoteApi } from '../src/client/types.js'
 
 /** Build an approximation of the official models page section. */
@@ -87,7 +87,7 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
   mutate: ReturnType<typeof vi.fn>
 } {
   const editors: FakeEditor[] = []
-  const mount = vi.fn((container: HTMLElement, _props: EditorMountProps): FakeEditor => {
+  const mount = vi.fn<(container: HTMLElement, props: EditorMountProps) => MountedEditor>((container, _props) => {
     // Mirror the real mount: the editor DOM carries the plugin marker, which
     // is what the idempotency guard checks.
     const marker = document.createElement('div')
@@ -98,7 +98,7 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
       render: vi.fn(),
     }
     editors.push(editor)
-    return editor
+    return editor as unknown as MountedEditor
   })
   const mutate = vi.fn(async () => ({ result: { ok: true } }))
   // The write seam describes through api.settings.describe, not through the

@@ -35,7 +35,7 @@ function baseApi(): EffortEditorApi & {
   return {
     suggest: vi.fn(async (): Promise<SuggestReply> => ({ ok: false, error: 'no-suggestion' })),
     writeEfforts: vi.fn(async (): Promise<WriteEffortsReply> => ({ ok: true })),
-    stageEfforts: vi.fn(),
+    stageEfforts: vi.fn((_route: string, _modelId: string, _efforts: unknown, _compat?: unknown): void => {}),
   }
 }
 

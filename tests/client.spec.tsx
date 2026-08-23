@@ -169,7 +169,7 @@ describe('client apply()', () => {
     try {
       buildModelsDom()
       const { apply } = await import('../src/client/index.js')
-      apply(h.ctx as Ctx)
+      apply(h.ctx as unknown as Ctx)
 
       // Dictionaries registered under the plugin store namespace.
       expect(h.localeRegister).toHaveBeenCalledWith(STORE_NS, { zh, en })
@@ -196,7 +196,7 @@ describe('client apply()', () => {
     try {
       buildModelsDom()
       const { apply } = await import('../src/client/index.js')
-      apply(h.ctx as Ctx)
+      apply(h.ctx as unknown as Ctx)
       await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
       const initialDescribes = api.describeSpy.mock.calls.length
 
@@ -224,7 +224,7 @@ describe('client apply()', () => {
     try {
       buildModelsDom()
       const { apply } = await import('../src/client/index.js')
-      apply(h.ctx as Ctx)
+      apply(h.ctx as unknown as Ctx)
       await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
       const initialDescribes = api.describeSpy.mock.calls.length
 
