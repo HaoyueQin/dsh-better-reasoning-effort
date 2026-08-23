@@ -21,6 +21,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // `ctx.settings` as `SettingsProvider` (describe() returns one descriptor per
 // registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+import Schema from '@deepseek-ai/schemastery'
 import { PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
 import { suggestEfforts } from './knowledge.js'
 import { isRecord, modelsOf, routeFactsOf } from './shared.js'
@@ -105,6 +106,30 @@ const BOOT_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as con
 /** Probe fetch budget: a gateway that cannot answer /models in 15s will not answer the composer either. */
 const PROBE_TIMEOUT_MS = 15_000
 
+/**
+ * Plugin configuration, supplied through the profile's cordis layer
+ * (the row's `config:` block). Every tunable two deployments may want
+ * to set differently lives here rather than as a code constant.
+ */
+export interface Config {
+  /** Auto-fill undeclared pi-ai models on boot and after settings updates (default true). */
+  autofill?: boolean
+  /** Upstream fetch timeout for the raw /models probe route, in milliseconds (default 15000). */
+  probeTimeoutMs?: number
+  /**
+   * Boot-fill retry backoff schedule in milliseconds; an empty list means
+   * "try exactly once" (default [1000, 2000, 4000, 8000, 16000, 30000]).
+   */
+  bootRetryDelaysMs?: number[]
+}
+
+/** Schemastery schema: Cordis validates the row config and fills defaults before apply(). */
+export const Config: Schema<Config> = Schema.object({
+  autofill: Schema.boolean().default(true),
+  probeTimeoutMs: Schema.natural().min(1).default(PROBE_TIMEOUT_MS),
+  bootRetryDelaysMs: Schema.array(Schema.natural().min(1)).default([...BOOT_RETRY_DELAYS_MS]),
+})
+
 interface CredentialsService {
   resolve(ref: string): Promise<{ value?: string } | undefined>
 }
@@ -186,7 +211,14 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
  * that touches the pi-ai namespace.
  * @param ctx - host context.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config = {}): void {
+  // Cordis fills schema defaults; direct calls (tests) may omit fields.
+  const resolved = {
+    autofill: config.autofill !== false,
+    probeTimeoutMs: config.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
+    bootRetryDelaysMs: config.bootRetryDelaysMs ?? [...BOOT_RETRY_DELAYS_MS],
+  }
+
   // Module-level `inject` already guarantees the settings service; using it
   // directly (instead of a redundant inner ctx.inject) keeps one dependency
   // declaration as the single source of truth.
@@ -196,7 +228,7 @@ export function apply(ctx: Context): void {
   // closure slot.
   const piSection: unknown = () => settings.get(PI_NS)
 
-  {
+  if (resolved.autofill) {
     /** One autofill pass; resolves false while the pi-ai namespace is unregistered. */
     const autofillOnce = async (): Promise<boolean> => {
       const value = settings.get(PI_NS)
@@ -240,11 +272,11 @@ export function apply(ctx: Context): void {
     // backing off exponentially while llm-pi-ai has not registered yet.
     const bootFill = (attempt: number): void => {
       void autofillOnce().then((ready) => {
-        if (ready || attempt >= BOOT_RETRY_DELAYS_MS.length) return
+        if (ready || attempt >= resolved.bootRetryDelaysMs.length) return
         const timer = setTimeout(() => {
           timers.delete(timer)
           bootFill(attempt + 1)
-        }, BOOT_RETRY_DELAYS_MS[attempt])
+        }, resolved.bootRetryDelaysMs[attempt])
         timers.add(timer)
       }, logFailure)
     }
@@ -310,7 +342,7 @@ export function apply(ctx: Context): void {
               const upstream = await fetch(listingURL, {
                 method: 'GET',
                 headers: { accept: 'application/json', ...(apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` }) },
-                signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+                signal: AbortSignal.timeout(resolved.probeTimeoutMs),
               })
               if (!upstream.ok) {
                 const hint = upstream.status === 401 || upstream.status === 403 ? '; check the API key' : ''

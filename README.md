@@ -75,6 +75,25 @@ Restart `dsh web`, hard-refresh the browser. Each model row's disclosure on the 
 
 Declared models are immediately selectable for reasoning effort in the composer's model picker.
 
+## Configuration
+
+The host half accepts optional configuration on its profile row (the values below are the defaults):
+
+```yaml
+- insert:
+    - id: dsh-better-reasoning-effort
+      name: dsh-better-reasoning-effort
+      config:
+        # Auto-fill undeclared models on boot and after settings updates.
+        autofill: true
+        # Upstream /models probe fetch timeout, in milliseconds.
+        probeTimeoutMs: 15000
+        # Boot-fill retry backoff schedule; [] means "try exactly once".
+        bootRetryDelaysMs: [1000, 2000, 4000, 8000, 16000, 30000]
+```
+
+Set `autofill: false` to disable the silent auto-fill entirely — the browser-side **Auto-adapt** button keeps working.
+
 ## How it works
 
 ```

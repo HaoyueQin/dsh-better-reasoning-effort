@@ -75,6 +75,25 @@ dsh plugin --profile web add link:D:/Project/dsh-better-reasoning-effort
 
 声明后的模型在 Composer 模型选择器里立即可选思考强度。
 
+## 配置
+
+host 侧接受可选的配置项（以下是默认值）：
+
+```yaml
+- insert:
+    - id: dsh-better-reasoning-effort
+      name: dsh-better-reasoning-effort
+      config:
+        # 启动时与设置更新后自动填充未声明的模型。
+        autofill: true
+        # 上游 /models 探测请求超时，单位毫秒。
+        probeTimeoutMs: 15000
+        # 启动填充的重试退避表；[] 表示只尝试一次。
+        bootRetryDelaysMs: [1000, 2000, 4000, 8000, 16000, 30000]
+```
+
+设 `autofill: false` 可完全关闭静默自动填充——浏览器里的 **Auto-adapt（自动适配）** 按钮不受影响。
+
 ## 工作方式（架构）
 
 ```

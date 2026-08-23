@@ -230,6 +230,33 @@ describe('apply() autofill', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(settings.updates).toHaveLength(1)
   })
+
+  it('honors an autofill: false configuration by never writing', async () => {
+    const settings = fakeSettings(PROVIDERS)
+    const { ctx, emitUpdated } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { autofill: false })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(settings.updates).toHaveLength(0)
+    emitUpdated('llm-pi-ai')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(settings.updates).toHaveLength(0)
+  })
+
+  it('honors a configured boot retry schedule', async () => {
+    vi.useFakeTimers()
+    const settings = fakeSettings(undefined)
+    const { ctx } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { bootRetryDelaysMs: [5, 5] })
+    // The namespace registers after the first (failed) pass; the retry
+    // scheduled on the CONFIGURED 5ms delay fills it.
+    settings.register('llm-pi-ai', PROVIDERS)
+    await vi.advanceTimersByTimeAsync(6)
+    expect(settings.updates).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(settings.updates).toHaveLength(1)
+  })
 })
 
 describe('apply() probe route', () => {
