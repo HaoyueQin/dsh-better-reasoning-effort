@@ -37,7 +37,7 @@ This plugin brings that configuration back into the UI: **edit right inside the 
 
 ## Install
 
-Requires DeepSeek Harness `0.1.1-rc.1` or newer (`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`; `^0.1.0-rc.8` is accepted too). The wire contract is verified against `0.1.1-rc.2`.
+Requires DeepSeek Harness `0.1.1-rc.1` or newer (`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`; the host half also peers on `@deepseek-ai/dsh-settings@^0.1.1-rc.1` and `@deepseek-ai/schemastery@^3.18.0`). The wire contract is verified against `0.1.1-rc.2`; older release-candidate lines are not supported.
 
 ### From npm
 

@@ -37,7 +37,7 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 安装
 
-需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`，亦接受 `^0.1.0-rc.8`）。线协议契约已对照 `0.1.1-rc.2` 验证。
+需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`；host 侧同时 peer 依赖 `@deepseek-ai/dsh-settings@^0.1.1-rc.1` 与 `@deepseek-ai/schemastery@^3.18.0`）。线协议契约已对照 `0.1.1-rc.2` 验证；更早的 rc 线不受支持。
 
 ### 从 npm
 
