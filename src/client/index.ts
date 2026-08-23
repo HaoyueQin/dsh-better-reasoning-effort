@@ -93,6 +93,8 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(STORE_NS) as Translate
 
   // ---- DOM bypass injection ----
+  /** Debounce window for DOM-mutation scans (one scan per render burst). */
+  const SCAN_DEBOUNCE_MS = 120
   const scanState = createScanState()
   let scanTimer: number | undefined
   let observer: MutationObserver | undefined
@@ -136,7 +138,7 @@ export function apply(ctx: ClientContext): void {
           }
         },
       }, scanState)
-    }, 120)
+    }, SCAN_DEBOUNCE_MS)
   }
 
   const startObserver = (): void => {

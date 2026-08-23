@@ -289,6 +289,20 @@ function routeOfCard(
  * @param state - mutable scan state shared across invocations.
  */
 export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanState): void {
+  // Cheap DOM gate BEFORE the wire read: most mutations in a running app
+  // (chat streaming, typing anywhere) fire while no model row exists at
+  // all. One prefix query per locale answers "is the Models page here?" —
+  // when it is not and nothing is mounted, the scan costs nothing more.
+  if (!root.isConnected) return
+  const hasCapacityRows = CAPACITY_ARIA.some(aria =>
+    root.querySelector(`button[aria-label^="${aria}"]`) !== null)
+  if (!hasCapacityRows) {
+    if (state.mounted.size > 0) {
+      for (const [, entry] of state.mounted) entry.editor.unmount()
+      state.mounted.clear()
+    }
+    return
+  }
   // Fold the describe request across scans (one wire read per wave). A
   // promise's .then ALWAYS runs asynchronously (microtask), even when already
   // resolved — the fold just keeps concurrent scans from stacking wire reads.

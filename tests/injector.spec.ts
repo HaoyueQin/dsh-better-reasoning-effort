@@ -321,6 +321,33 @@ describe('reconcile', () => {
     expect(props[0].route).toBe('aliyun')
   })
 
+  it('skips the describe read while no capacity rows are present', async () => {
+    // Most mutations in a running app fire nowhere near the Models page;
+    // the scan gate must not spend a wire read on them.
+    const describe = vi.fn(async () => join)
+    const deps = makeDeps({ describeNamespace: describe })
+    const state = createScanState()
+    document.body.innerHTML = '<div class="chat"><p>streaming…</p></div>'
+    reconcile(document.body, deps, state)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(describe).not.toHaveBeenCalled()
+    expect(state.mounted.size).toBe(0)
+  })
+
+  it('unmounts editors when the models page disappears, without a wire read', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    await settle(() => reconcile(root, deps, state), state)
+    expect(state.mounted.size).toBe(2)
+    // Navigation replaces the whole section with something else.
+    document.body.innerHTML = '<div class="chat"><p>hello</p></div>'
+    await settle(() => reconcile(document.body, deps, state), state)
+    expect(state.mounted.size).toBe(0)
+    for (const editor of deps.editors) expect(editor.unmount).toHaveBeenCalled()
+  })
+
   it('scans a document.body root, matching the plugin\'s real panel root', async () => {
     const deps = makeDeps()
     const state = createScanState()
