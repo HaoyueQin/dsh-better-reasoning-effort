@@ -23,7 +23,7 @@
  * @module dsh-better-reasoning-effort/injector
  */
 
-import { PLUGIN_MARKER, UNSET_MARKER } from '../constants.js'
+import { PLUGIN_ID, UNSET_MARKER } from '../constants.js'
 import type { CompatSuggestion, ReasoningEfforts } from '../knowledge.js'
 import { modelsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
@@ -234,7 +234,7 @@ function disclosureOf(trigger: HTMLButtonElement): HTMLElement | undefined {
 
 /** Whether an editor is already mounted in a container (idempotency guard). */
 function hasEditor(container: HTMLElement): boolean {
-  return container.querySelector(`[data-plugin="${PLUGIN_MARKER}"]`) !== null
+  return container.querySelector(`[data-plugin="${PLUGIN_ID}"]`) !== null
 }
 
 /**

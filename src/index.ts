@@ -96,12 +96,6 @@ export function buildAutofillPatch(
 }
 
 /**
- * Boot-fill retry budget: llm-pi-ai registers its namespace in its own apply,
- * and cordis gives this plugin no ordering guarantee against it. If the
- * namespace is not up yet at boot, retry on this bounded schedule before
- * leaving the rest to the next `settings/updated`.
- */
-/**
  * Exponential backoff for the boot fill: llm-pi-ai may register its namespace
  * well after this plugin on a slow start, and registration emits no event of
  * its own — the schedule must outlast a realistically slow profile instead of
@@ -148,7 +142,9 @@ function isLoopbackHostname(hostname: string): boolean {
 function parseAuthority(authority: string): URL | undefined {
   try {
     // http: is a WHATWG special scheme: parsing yields a hostname or throws,
-    // and normalizes away IPv6 brackets and casing the raw header keeps.
+    // and normalizes casing the raw header keeps. Note the hostname of an
+    // IPv6 authority KEEPS its brackets (`[::1]`) — the literal check below
+    // deliberately matches on the colon.
     return new URL(`http://${authority}`)
   } catch {
     return undefined
@@ -247,7 +243,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   // The probe route (registered below) reads the pi-ai section through this
   // closure slot.
-  const piSection: unknown = () => settings.get(PI_NS)
+  const piSection = (): unknown => settings.get(PI_NS)
 
   if (resolved.autofill) {
     /** One autofill pass; resolves false while the pi-ai namespace is unregistered. */
@@ -331,8 +327,7 @@ export function apply(ctx: Context, config: Config = {}): void {
             }
             const url = new URL(req.url ?? '/', 'http://x')
             const route = url.searchParams.get('route') ?? ''
-            const readSection = typeof piSection === 'function' ? piSection : () => undefined
-            const section = readSection()
+            const section = piSection()
             const profile = isRecord(section) && isRecord(section['providers'])
               ? section['providers'][route]
               : undefined

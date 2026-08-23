@@ -8,8 +8,8 @@
 
 import { THINKING_LEVELS, type ReasoningEfforts, type ThinkingLevel } from '../knowledge.js'
 
-/** The escalation order, newest-first-freeze, matching the schema's ladder. */
-export const LEVEL_ORDER: readonly ThinkingLevel[] = [...THINKING_LEVELS]
+/** The escalation order, matching the schema's ladder (same tuple, local alias). */
+export const LEVEL_ORDER: readonly ThinkingLevel[] = THINKING_LEVELS
 
 /** Draft state of one level's wire value. */
 export type DraftLevels = Record<ThinkingLevel, { on: boolean; wire: string }>

@@ -24,6 +24,3 @@ export const UNSET_MARKER = 'reasoningEffortsUnset'
 
 /** Locale dictionary namespace for the browser half's copy (not a settings namespace). */
 export const STORE_NS = PLUGIN_ID
-
-/** DOM marker used by the injector's idempotency guard. */
-export const PLUGIN_MARKER = PLUGIN_ID

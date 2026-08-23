@@ -10,7 +10,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { PLUGIN_MARKER } from '../constants.js'
+import { PLUGIN_ID } from '../constants.js'
 import type {
   CompatSuggestion,
   ReasoningEfforts,
@@ -220,7 +220,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   const disabled = readOnly || busy
 
   return (
-    <div className="bre-effort-editor" data-plugin={PLUGIN_MARKER}>
+    <div className="bre-effort-editor" data-plugin={PLUGIN_ID}>
       <div className="bre-effort-head">
         <span className="bre-effort-title">{t('reasoningEffort')}</span>
         <button
@@ -236,7 +236,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         {LEVEL_ORDER.map(level => {
           const cell = draft[level]
           return (
-            <label key={level} className={`bre-effort-row${cell.on ? ' bre-on' : ''}`}>
+            <label key={level} className="bre-effort-row">
               <input
                 type="checkbox"
                 checked={cell.on}
