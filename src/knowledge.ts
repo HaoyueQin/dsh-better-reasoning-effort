@@ -1,43 +1,61 @@
 /**
- * The reasoning-effort knowledge base + wire-protocol inference engine.
+ * The reasoning-effort + input-modality knowledge base + wire-protocol
+ * inference engine.
  *
  * Every model a third-party provider route serves must declare its
- * `reasoningEfforts` (which DSH thinking levels it accepts, and the exact
+ * 'reasoningEfforts' (which DSH thinking levels it accepts, and the exact
  * string to send on the wire for each) before the composer's model picker
  * offers any reasoning control for it. This module answers "what should this
- * model's declaration be?" from two sources, in order:
+ * model's declaration be?" from three sources, in order:
  *
- *   1. A curated knowledge base keyed by model id/name patterns, carrying the
- *      exact level set, wire spellings, and `compat` (thinkingFormat etc.)
- *      known to work against that family of endpoints.
- *   2. Wire-protocol inference from the route's `api` / `baseURL`: a
- *      best-effort level set for families the knowledge base does not name.
+ *   1. An endpoint listing signal (when the route was probed): an explicit
+ *      "does not reason", a modality disclosure, or a context length.
+ *   2. A curated knowledge base keyed by model id/name patterns, carrying the
+ *      exact level set, wire spellings, request modalities, and reference
+ *      capacities known to work against that family of endpoints.
+ *   3. Wire-protocol inference from the route's 'api' / 'baseURL', plus a
+ *      conservative name heuristic for modalities, for families nothing else
+ *      names.
  *
- * Both sources stay on the adapter's own vocabulary (`THINKING_LEVELS`, the
- * `reasoningEfforts` dict shape) so a suggested declaration can be written to
- * `llm-pi-ai` settings with no translation step. A suggestion is a *preset*:
- * the user can accept it, tune it, or ignore it. The plugin never silently
- * overwrites a declaration the user already made.
+ * All outputs stay on the adapter's own vocabulary (THINKING_LEVELS,
+ * INPUT_MODALITIES, the reasoningEfforts/input dict shapes) so a suggested
+ * declaration can be written to llm-pi-ai settings with no translation step.
+ * A suggestion is a *preset*: the user can accept it, tune it, or ignore it.
+ * The plugin never silently overwrites a declaration the user already made.
  *
  * @module dsh-better-reasoning-effort/knowledge
  */
 
-/** The canonical pi-ai escalation order accepted by `llm-pi-ai`. */
+/** The canonical pi-ai escalation order accepted by llm-pi-ai. */
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number]
 
-/** One level's wire spelling; `null` means "send nothing for this level". */
+/**
+ * The request-modality vocabulary llm-pi-ai accepts on a model entry -- a
+ * local mirror of pi-ai's MODALITY_GATE (text/image today). The core schema
+ * refuses anything else at write time, and its drift gate forces the
+ * vocabulary to grow exactly when pi-ai's Model['input'] does; the vocabulary
+ * spec pins this mirror against upstream so the UI follows.
+ */
+export const INPUT_MODALITIES = ['text', 'image'] as const
+
+export type InputModality = (typeof INPUT_MODALITIES)[number]
+
+/** One level's wire spelling; null means "send nothing for this level". */
 export type WireSpelling = string | null
 
-/** A full reasoning-effort declaration value: level → wire spelling. */
+/** A full reasoning-effort declaration value: level -> wire spelling. */
 export type ReasoningEfforts = Partial<Record<ThinkingLevel, WireSpelling>>
 
-/** The `compat` fields this plugin may suggest (a subset of the profile schema). */
+/** A full input-modality declaration value: the modalities a model accepts. */
+export type InputModalities = readonly InputModality[]
+
+/** The compat fields this plugin may suggest (a subset of the profile schema). */
 export interface CompatSuggestion {
   /** Wire format the endpoint speaks; omitted when unknown. */
   thinkingFormat?: string
-  /** Whether the endpoint accepts a `reasoning_effort`-style parameter. */
+  /** Whether the endpoint accepts a reasoning-effort-style parameter. */
   supportsReasoningEffort?: boolean
 }
 
@@ -51,13 +69,26 @@ export interface KnowledgeEntry {
   efforts: ReasoningEfforts
   /** Optional compat block to declare alongside the efforts. */
   compat?: CompatSuggestion
+  /**
+   * Request modalities to declare, in core vocabulary. Absent = no modality
+   * suggestion for this family. Wider support a gateway may serve (pdf,
+   * audio, video) is recorded in 'note' until the core vocabulary grows.
+   */
+  input?: InputModalities
+  /**
+   * Reference context window in tokens (display-only advice; the official
+   * capacity inputs are never auto-filled).
+   */
+  contextWindow?: number
+  /** Reference max output tokens in tokens (display-only advice). */
+  maxTokens?: number
   /** Human note shown next to the suggestion (localized by the caller). */
   note?: string
 }
 
 /** What a provider route names about itself that inference can use. */
 export interface RouteFacts {
-  /** Wire protocol as configured (`api`), if any. */
+  /** Wire protocol as configured ('api'), if any. */
   api?: string
   /** Endpoint URL, if any. */
   baseURL?: string
@@ -65,15 +96,44 @@ export interface RouteFacts {
   displayName?: string
 }
 
+/** The endpoint facts a suggestion fuses, as the probe route reports them. */
+export interface EndpointFacts {
+  /** Tri-state reasoning signal: true / false / 'unknown' (listing silent). */
+  reasoning: boolean | 'unknown'
+  /** The listing field that produced the reasoning signal, null when none did. */
+  source: string | null
+  /**
+   * The listing's input-modality disclosure, normalized to lowercase strings,
+   * when the listing named such a field at all. Present-but-empty means the
+   * field existed with no usable members; absent means the listing never
+   * spoke about modalities (or the probe never ran) -- the tri-state
+   * discipline: silence is not refusal.
+   */
+  input?: readonly string[]
+  /** Context length the listing disclosed, when it carries one. */
+  contextLength?: number
+}
+
+/** How a suggestion's input-modality part was derived. */
+export type InputSource = 'knowledge' | 'endpoint' | 'heuristic'
+
 /** A resolved suggestion for one model on one route. */
 export interface EffortSuggestion {
   /**
-   * The reasoning-effort declaration to write, if one is derivable. `false`
+   * The reasoning-effort declaration to write, if one is derivable. False
    * arrives when the endpoint explicitly reports the model does not reason.
    */
   efforts?: ReasoningEfforts | false
   /** The compat block to write alongside, if any. */
   compat?: CompatSuggestion
+  /** Request modalities to declare, when derivable. */
+  input?: InputModalities
+  /** Where the modality part came from -- its confidence rides this. */
+  inputSource?: InputSource
+  /** Reference context window (display-only; never auto-filled anywhere). */
+  contextWindow?: number
+  /** Reference max output tokens (display-only). */
+  maxTokens?: number
   /** Whether a knowledge-base entry matched (vs protocol inference). */
   matched: boolean
   /** The knowledge entry id when one matched. */
@@ -94,33 +154,44 @@ export interface EffortSuggestion {
  * The curated knowledge base. Patterns are lowercase substring matches against
  * the model id (and display name). First match wins, longest pattern wins.
  *
- * Sources of truth (per family, checked 2026-08): official API docs —
+ * Sources of truth (per family, checked 2026-08): official API docs --
  * api-docs.deepseek.com, platform.openai.com, platform.claude.com,
  * ai.google.dev, docs.x.ai, docs.mistral.ai, platform.stepfun.com,
  * cloud.tencent.com (TokenHub), platform.kimi.ai, docs.bigmodel.cn,
- * help.aliyun.com. The wire spellings below are what each vendor's
- * OpenAI-compatible `reasoning_effort` (or thinking switch) actually accepts;
- * families whose official endpoints take no effort ladder at all (MiniMax,
- * Llama, Nova, Phi, Cohere, Perplexity sonar) deliberately carry no entry —
- * the generic protocol suggestion (low confidence) is more honest than a
- * made-up ladder.
+ * help.aliyun.com -- cross-checked against the public models.dev catalog
+ * (modalities.input, limit.context/output) with multi-provider agreement.
+ * Capacities are REFERENCE values: aggregators disagree, so the note says so
+ * where the spread is wide, and families whose numbers stay contested simply
+ * carry none.
  */
 export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
   {
-    id: 'deepseek-v4',
-    // One pattern covers the family: every serving suffixes the base id
-    // (deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-flash-free, the
-    // vision experiment), so the shared stem keys them all — including
-    // free/aggregator spellings the official catalog never lists.
-    patterns: ['deepseek-v4'],
-    // V4 widened the official ladder with a Low step: llm-deepseek's
-    // REASONING_EFFORTS offers Off / Low / High / Max (medium/xhigh are
-    // accepted but fold to high/high — not offered here). Closing thinking
-    // is the `thinking: disabled` object, so the off spelling is a non-null
-    // placeholder that arms the deepseek format's disabled branch.
+    id: 'deepseek-v4-vision',
+    // Must precede deepseek-v4 semantically -- guaranteed anyway by the
+    // longest-boundary-hit rule, since these patterns are strictly longer.
+    patterns: ['deepseek-v4-flash-vision', 'deepseek-v4-vision'],
     efforts: { off: 'off', low: 'low', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
-    note: 'DeepSeek V4 官方档位：Off / Low / High / Max。',
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 384_000,
+    note: 'DeepSeek V4 视觉实验版：官方目录标注图片输入。',
+  },
+  {
+    id: 'deepseek-v4',
+    // One pattern covers the family: every serving suffixes the base id
+    // (deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-flash-free ...), so
+    // the shared stem keys them all -- including free/aggregator spellings
+    // the official catalog never lists. Closing thinking is the
+    // 'thinking: disabled' object, so the off spelling is a non-null
+    // placeholder that arms the deepseek format's disabled branch.
+    patterns: ['deepseek-v4'],
+    efforts: { off: 'off', low: 'low', high: 'high', max: 'max' },
+    compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
+    input: ['text'],
+    contextWindow: 1_048_576,
+    maxTokens: 128_000,
+    note: 'DeepSeek V4 官方档位：Off / Low / High / Max。容量取 flash 官方值（pro 略低）；vision 实验版见单独条目。',
   },
   {
     id: 'deepseek-v3',
@@ -129,9 +200,11 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // (deepseek-chat / deepseek-reasoner) was retired upstream in 2026-07;
     // the id patterns stay for third-party gateways still serving V3.x.
     patterns: ['deepseek-v3', 'deepseek-chat'],
-    // V3's official ladder had no low step; same disabled-object close as V4.
     efforts: { off: 'off', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
+    input: ['text'],
+    contextWindow: 128_000,
+    maxTokens: 32_000,
     note: 'DeepSeek V3 档位：Off / High / Max。',
   },
   {
@@ -141,33 +214,45 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // treats it as a thinking model whose only declared level is the default.
     efforts: { high: 'high' },
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
+    input: ['text'],
+    contextWindow: 128_000,
+    maxTokens: 32_000,
     note: 'DeepSeek-R1 为推理模型，仅提供 High。',
   },
   {
     id: 'openai-gpt-5-2',
     patterns: ['gpt-5.2'],
-    // gpt-5.2 (2025-12) took `none` as the explicit no-thinking value
-    // (replacing gpt-5's `minimal`) and added `xhigh`; its default is none.
+    // gpt-5.2 (2025-12) took 'none' as the explicit no-thinking value
+    // (replacing gpt-5's 'minimal') and added xhigh; its default is none.
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'GPT-5.2 档位：None / Low / Medium / High / XHigh（默认 None）。',
+    input: ['text', 'image'],
+    contextWindow: 400_000,
+    maxTokens: 128_000,
+    note: 'GPT-5.2 档位：None / Low / Medium / High / XHigh（默认 None）。官方另支持 PDF 输入（核心词表暂不含）。',
   },
   {
     id: 'openai-gpt-5-1',
     patterns: ['gpt-5.1'],
     // gpt-5.1 (2025-11): none replaces minimal; no xhigh until 5.2.
-    // Codex variants take no `none` — drop that level by hand there.
+    // Codex variants take no 'none' -- drop that level by hand there.
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 400_000,
+    maxTokens: 128_000,
     note: 'GPT-5.1 档位：None / Low / Medium / High（默认 None）。',
   },
   {
     id: 'openai-gpt-5',
     patterns: ['gpt-5'],
     // The 2025-08 first generation: minimal is the floor, there is no none,
-    // and the default (medium) thinks — so no off level is offered.
+    // and the default (medium) thinks -- so no off level is offered.
     efforts: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 400_000,
+    maxTokens: 128_000,
     note: 'GPT-5 初代档位：Minimal / Low / Medium / High，无关闭档。',
   },
   {
@@ -181,28 +266,48 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // on), so no off level is offered.
     efforts: { low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'OpenAI o 系档位：Low / Medium / High（官方端点已停服，网关存量）。',
+    input: ['text', 'image'],
+    contextWindow: 200_000,
+    maxTokens: 100_000,
+    note: 'OpenAI o 系档位：Low / Medium / High。多数 o 系端点收图（o3-mini 例外）；部分网关标纯文本，以端点取证为准。',
+  },
+  {
+    id: 'openai-gpt-4o',
+    // Boundary matching keeps 'gpt-4' from hitting 'gpt-4o', so the vision
+    // generation needs its own entry. gpt-4.1 keeps the base entry (its
+    // nano variant is text-only; tune by hand).
+    patterns: ['gpt-4o'],
+    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 128_000,
+    maxTokens: 16_384,
+    note: 'GPT-4o 代际：图片输入全系标配（PDF 另支持）。',
   },
   {
     id: 'openai-gpt',
     patterns: ['gpt-4', 'gpt-3.5'],
     efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'OpenAI 通用档位（gpt-4 系不思考，发档位可能被忽略）。',
+    input: ['text'],
+    note: 'OpenAI 通用档位（gpt-4 系不思考，发档位可能被忽略）；gpt-4-turbo 起支持图片，按需手勾。',
   },
   {
     id: 'anthropic-claude-5',
     // Claude 5th generation (fable/mythos/opus/sonnet-5, 2026): adaptive
     // thinking with an effort ladder that adds xhigh and max; the fable and
     // mythos entries think always-on, so no off level.
-    patterns: ['claude-fable', 'claude-mythos', 'claude-opus-5', 'claude-sonnet-5'],
+    patterns: ['claude-fable', 'claude-mythos', 'claude-opus-5', 'claude-sonet-5', 'claude-sonnet-5'],
     // Anthropic's OpenAI-compat layer maps reasoning_effort to effort
     // (platform.claude.com/docs effort matrix: low/medium/high/xhigh/max).
     efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
     // No thinkingFormat: pi-ai has no 'anthropic' member, and the
     // anthropic-messages compat gate offers neither field.
     compat: { supportsReasoningEffort: true },
-    note: 'Claude 5 代档位（经 OpenAI 兼容层）：Low / Medium / High / XHigh / Max。',
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    note: 'Claude 5 代档位（经 OpenAI 兼容层）：Low / Medium / High / XHigh / Max。官方支持 PDF 输入（核心词表暂不含）。',
   },
   {
     id: 'anthropic-claude',
@@ -212,6 +317,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['claude'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
     compat: { supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 200_000,
+    maxTokens: 32_000,
     note: 'Claude 4.x 档位（经 OpenAI 兼容层）：Low / Medium / High。',
   },
   {
@@ -219,11 +327,14 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['gemini'],
     // Gemini 3.x over the OpenAI-compat layer maps reasoning_effort to
     // thinking_level; the ladder is minimal/low/medium/high with no off
-    // (`none` is rejected — minimal is the floor, and the 3.x default is
+    // ('none' is rejected -- minimal is the floor, and the 3.x default is
     // high thinking).
     efforts: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'Gemini 3.x 档位：Minimal / Low / Medium / High，无关闭档。',
+    input: ['text', 'image'],
+    contextWindow: 1_048_576,
+    maxTokens: 64_000,
+    note: 'Gemini 3.x 档位：Minimal / Low / Medium / High，无关闭档。官方另收音频/视频/PDF（核心词表暂不含）。',
   },
   {
     id: 'xai-grok-high',
@@ -232,38 +343,86 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // close thinking (docs.x.ai reasoning page).
     efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'Grok 4.6/4.7 档位：Low / Medium / High / XHigh，无关闭档。',
+    input: ['text', 'image'],
+    contextWindow: 500_000,
+    maxTokens: 500_000,
+    note: 'Grok 4.6/4.7 档位：Low / Medium / High / XHigh，无关闭档。官方另支持 PDF 输入（4.7 容量待核实）。',
   },
   {
     id: 'xai-grok',
     // grok-4.5 (and 4.1-fast etc.) take the standard three-step ladder;
-    // grok-4 and older reject reasoning_effort outright — gateways serving
+    // grok-4 and older reject reasoning_effort outright -- gateways serving
     // them will refuse the value and the user can clear it by hand.
     patterns: ['grok'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'Grok 通用档位：Low / Medium / High（grok-4 不支持该参数）。',
+    input: ['text'],
+    note: 'Grok 通用档位：Low / Medium / High（grok-4 不支持该参数）。grok-4-fast 等多模态变体请手动勾选图片。',
   },
   {
-    id: 'mistral-reasoning',
+    id: 'mistral-magistral',
     // Only magistral-1.2 and mistral-medium-3.5 take reasoning_effort
-    // (docs.mistral.ai); unsupported models 422 on it.
-    patterns: ['magistral', 'mistral-medium-3'],
+    // (docs.mistral.ai); unsupported models 422 on it. Magistral is the
+    // text-only reasoning line -- the medium-3.x vision line is a separate
+    // entry below (longer patterns win).
+    patterns: ['magistral'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'Magistral / Mistral Medium 3.x 档位：Low / Medium / High。',
+    input: ['text'],
+    contextWindow: 32_768,
+    maxTokens: 32_768,
+    note: 'Magistral 档位：Low / Medium / High（纯文本线）。',
+  },
+  {
+    id: 'mistral-medium-3',
+    patterns: ['mistral-medium-3'],
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 262_144,
+    maxTokens: 32_768,
+    note: 'Mistral Medium 3.x 档位：Low / Medium / High（带视觉）。',
+  },
+  {
+    id: 'qwen-vision',
+    // The DashScope vision lines: -vl suffixes and QvQ. Normalization folds
+    // 'qwen2.5-vl' to 'qwen2 5 vl', hence the spelled-out middle pattern.
+    patterns: ['qwen-vl', 'qwen2-vl', 'qwen2-5-vl', 'qwen3-vl', 'qvq'],
+    // DashScope takes NO reasoning_effort: thinking is the enable_thinking
+    // boolean -- pi-ai's 'qwen' format dispatches exactly that switch.
+    efforts: { off: null, high: 'high' },
+    compat: { thinkingFormat: 'qwen' },
+    input: ['text', 'image'],
+    contextWindow: 128_000,
+    maxTokens: 8_192,
+    note: '通义视觉线（Qwen-VL/QvQ）：enable_thinking 开关（开=High），收图。qwen3-vl 容量更大，按需上调。',
   },
   {
     id: 'qwen',
-    patterns: ['qwen', 'qwq', 'qvq'],
+    patterns: ['qwen', 'qwq'],
     // DashScope takes NO reasoning_effort: thinking is the enable_thinking
-    // boolean (plus thinking_budget) — pi-ai's 'qwen' format dispatches
+    // boolean (plus thinking_budget) -- pi-ai's 'qwen' format dispatches
     // exactly that switch, so the ladder is honestly open/close with one
-    // nominal thinking level. QwQ/QvQ are think-always models; clearing the
-    // off level there is one click.
+    // nominal thinking level. QwQ is think-always; clearing the off level
+    // there is one click.
     efforts: { off: null, high: 'high' },
     compat: { thinkingFormat: 'qwen' },
-    note: '通义千问：enable_thinking 开关（无 effort 档），开=High。',
+    input: ['text'],
+    contextWindow: 262_144,
+    maxTokens: 65_536,
+    note: '通义千问：enable_thinking 开关（无 effort 档），开=High。视觉线见 qwen-vision 条目。',
+  },
+  {
+    id: 'glm-vision',
+    // Zhipu's vision lines: glm-4v / glm-4.6v / glm-5v. Longer than the
+    // plain 'glm' patterns, so they win for those ids.
+    patterns: ['glm-4v', 'glm-46v', 'glm-5v'],
+    efforts: { off: null, high: 'high' },
+    compat: { thinkingFormat: 'zai' },
+    input: ['text', 'image'],
+    contextWindow: 131_072,
+    maxTokens: 32_768,
+    note: '智谱视觉线（GLM-4V/5V）：thinking 开关（开=High），收图。',
   },
   {
     id: 'glm-5-3',
@@ -272,36 +431,56 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // 5.2 ladder's minimal/none) errors, and thinking cannot be disabled.
     efforts: { low: 'low', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
+    input: ['text'],
     note: 'GLM-5.3 档位：Low / High / Max（强制思考）。',
   },
   {
     id: 'glm-5-2',
     patterns: ['glm-5.2'],
     // glm-5.2 takes the widest ladder in the wild: none/minimal/low/medium/
-    // high/xhigh/max (default max). The zai format arms
-    // thinking:disabled for off and sends the effort for the rest.
+    // high/xhigh/max (default max). The zai format arms thinking:disabled
+    // for off and sends the effort for the rest.
     efforts: { off: 'none', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
     compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
-    note: 'GLM-5.2 档位：None / Minimal / Low / Medium / High / XHigh / Max。',
+    input: ['text'],
+    contextWindow: 1_048_576,
+    maxTokens: 131_072,
+    note: 'GLM-5.2 档位：None / Minimal / Low / Medium / High / XHigh / Max。视觉线见 glm-vision 条目。',
   },
   {
     id: 'glm',
     patterns: ['glm', 'zhipu', 'chatglm'],
-    // GLM 4.x: thinking.type enabled/disabled only, no effort ladder —
+    // GLM 4.x: thinking.type enabled/disabled only, no effort ladder --
     // the zai format sends exactly that switch (and no effort value,
     // because supportsReasoningEffort is not declared).
     efforts: { off: null, high: 'high' },
     compat: { thinkingFormat: 'zai' },
-    note: 'GLM 4.x：thinking 开关（无 effort 档），开=High。',
+    input: ['text'],
+    note: 'GLM 4.x：thinking 开关（无 effort 档），开=High。容量各代不一，未给参考值；视觉线见 glm-vision 条目。',
   },
   {
     id: 'kimi-k3',
     patterns: ['kimi-k3'],
     // kimi-k3: top-level reasoning_effort low/high/max (default max),
-    // always thinking — the thinking object must not be sent at all.
+    // always thinking -- the thinking object must not be sent at all.
     efforts: { low: 'low', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: 'Kimi K3 档位：Low / High / Max（始终思考）。',
+    input: ['text', 'image'],
+    contextWindow: 1_048_576,
+    maxTokens: 131_072,
+    note: 'Kimi K3 档位：Low / High / Max（始终思考）。官方目录标注图片输入。',
+  },
+  {
+    id: 'kimi-k2-vision',
+    // K2.5/K2.6/K2.7 gained image input (K2.5 adds video per some catalogs);
+    // longer patterns beat the plain 'kimi' stem below.
+    patterns: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7'],
+    efforts: { off: null, high: 'high' },
+    compat: { thinkingFormat: 'deepseek' },
+    input: ['text', 'image'],
+    contextWindow: 256_000,
+    maxTokens: 256_000,
+    note: 'Kimi K2.5+ 视觉代：thinking 开关（开=High），收图。',
   },
   {
     id: 'kimi',
@@ -312,7 +491,10 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['kimi', 'moonshot'],
     efforts: { off: null, high: 'high' },
     compat: { thinkingFormat: 'deepseek' },
-    note: 'Kimi K2.x：thinking 开关（无 effort 档），开=High。',
+    input: ['text'],
+    contextWindow: 262_144,
+    maxTokens: 131_072,
+    note: 'Kimi K2.x：thinking 开关（无 effort 档），开=High。视觉代见 kimi-k2-vision 条目。',
   },
   {
     id: 'hunyuan-hy3',
@@ -321,7 +503,22 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['hy3'],
     efforts: { low: 'low', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text'],
+    contextWindow: 262_144,
+    maxTokens: 64_000,
     note: '混元 hy3 档位：Low / High（默认 Low）。',
+  },
+  {
+    id: 'step-3-7',
+    // StepFun step-3.7 is the vision-capable generation; 3.5 stayed
+    // text-only on the official serving plan.
+    patterns: ['step-3.7', 'step-3.6'],
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 262_144,
+    maxTokens: 256_000,
+    note: '阶跃 Step-3.6/3.7 档位：Low / Medium / High（带视觉）。',
   },
   {
     id: 'step',
@@ -330,25 +527,30 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['step-3', 'step-2'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: '阶跃 Step 档位：Low / Medium / High（默认 Medium，不可关闭）。',
+    input: ['text'],
+    note: '阶跃 Step 档位：Low / Medium / High（默认 Medium，不可关闭）。3.6/3.7 视觉代见单独条目。',
   },
   {
     id: 'doubao',
     // Volcengine Ark: officially documented is the thinking.type
     // enabled/disabled/auto switch; the reasoning_effort ladder on
     // seed-2.x has community evidence (chatbox/compshare) but no first-
-    // party doc yet — kept as the conventional ladder, verify per gateway.
+    // party doc yet -- kept as the conventional ladder, verify per gateway.
     // 'doubao' already covers every doubao-* spelling; the bare 'seed' token
-    // (boundary-checked) catches seed-first ids some gateways serve.
+    // (boundary-checked) catches seed-first ids some gateways serve. The
+    // seed generations are vision-capable; doubao-1.5-pro stays text-only.
     patterns: ['doubao', 'seed'],
     efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    note: '豆包档位（待官方确认）：Off / Low / Medium / High。',
+    input: ['text', 'image'],
+    contextWindow: 256_000,
+    maxTokens: 32_000,
+    note: '豆包档位（待官方确认）：Off / Low / Medium / High。seed 代收图（1.5-pro 例外），部分目录另标视频。',
   },
 ]
 
 /**
- * The generic OpenAI-compatible ladder — the single source for every
+ * The generic OpenAI-compatible ladder -- the single source for every
  * OpenAI-shaped protocol row below and the fallback when nothing matches.
  */
 export const GENERIC_OPENAI_EFFORTS: ReasoningEfforts = {
@@ -359,13 +561,13 @@ export const GENERIC_OPENAI_EFFORTS: ReasoningEfforts = {
 }
 
 /**
- * Level sets keyed by pi-ai's REAL wire protocols — the only values a route's
- * `api` may take are 'openai-completions' | 'openai-responses' |
- * 'anthropic-messages' (llm-pi-ai provider.ts PROTOCOLS) — plus the
+ * Level sets keyed by pi-ai's REAL wire protocols -- the only values a
+ * route's 'api' may take are 'openai-completions' | 'openai-responses' |
+ * 'anthropic-messages' (llm-pi-ai provider.ts PROTOCOLS) -- plus the
  * 'deepseek' URL dialect for routes that name no api but point at DeepSeek's
  * own endpoint, which takes its native off/high/max ladder.
  *
- * `off: null` is only offered where a no-thinking mode is plausible; the
+ * 'off: null' is only offered where a no-thinking mode is plausible; the
  * conservative choice elsewhere is to omit it so the picker never promises an
  * Off the endpoint would reject. Exported for the vocabulary grid tests that
  * pin these ladders against pi-ai's resolution rules.
@@ -392,7 +594,7 @@ function isAlnum(ch: string | undefined): boolean {
 
 /**
  * Lowercase and collapse every non-alphanumeric run to one space, so id /
- * display-name / pattern separators (`-`, `_`, `.`, spaces) compare equal:
+ * display-name / pattern separators ('-', '_', '.', spaces) compare equal:
  * pattern 'deepseek-v3' matches display name "DeepSeek V3".
  */
 function normalizeLoose(value: string): string {
@@ -400,8 +602,8 @@ function normalizeLoose(value: string): string {
 }
 
 /**
- * Whether the occurrence of a pattern at index `at` sits on a word boundary
- * in `haystack`: neither neighbor may be a letter/digit. Keeps short family
+ * Whether the occurrence of a pattern at index 'at' sits on a word boundary
+ * in the haystack: neither neighbor may be a letter/digit. Keeps short family
  * tokens from false-hitting ('o1' must hit 'o1 mini' but not 'ko1 pro';
  * 'seed' hits 'doubao seed 1 6' but not 'seedling').
  */
@@ -413,7 +615,7 @@ function onBoundary(haystack: string, at: number, length: number): boolean {
 
 /** Match the knowledge base: first match wins, longest boundary hit wins. */
 export function matchKnowledgeBase(modelId: string, displayName?: string): KnowledgeEntry | undefined {
-  const haystack = `${normalizeLoose(modelId)} ${normalizeLoose(displayName ?? '')}`
+  const haystack = normalizeLoose(modelId) + ' ' + normalizeLoose(displayName ?? '')
   let best: { entry: KnowledgeEntry; length: number } | undefined
   for (const entry of KNOWLEDGE_BASE) {
     for (const pattern of entry.patterns) {
@@ -434,10 +636,10 @@ export function matchKnowledgeBase(modelId: string, displayName?: string): Knowl
 }
 
 /**
- * Infer which PROTOCOL_INFERENCE key applies to a route. A configured `api`
+ * Infer which PROTOCOL_INFERENCE key applies to a route. A configured 'api'
  * is already a pi-ai protocol name and wins as-is; otherwise the endpoint's
- * HOST names the dialect — matched on the registrable domain so an aggregator
- * path like `https://gw.example.com/deepseek/v1` stays generic — and anything
+ * HOST names the dialect -- matched on the registrable domain so an aggregator
+ * path like https://gw.example.com/deepseek/v1 stays generic -- and anything
  * unrecognized resolves to the OpenAI-compatible ladder (the overwhelming
  * majority of gateways).
  */
@@ -487,43 +689,138 @@ function compatForRoute(compat: CompatSuggestion | undefined, route: RouteFacts)
 const ENDPOINT_CONFIRMED_LADDER: ReasoningEfforts = { off: null, low: 'low', medium: 'medium', high: 'high' }
 
 /**
+ * Name-heuristic modality tokens -- the last-resort tier (the practice
+ * one-api/new-api bake into code): vision-flavored tokens that appear in
+ * vendor ids often enough to suggest image input at LOW confidence. Boundary
+ * matching keeps 'vl' from hitting 'eval' or 'svelte'.
+ */
+const VISION_NAME_TOKENS: readonly string[] = [
+  'vl',
+  'vision',
+  'omni',
+  '4o',
+  'pixtral',
+  'internvl',
+]
+
+/** Lowest-confidence modality guess from the model id alone, or undefined. */
+export function inferModalitiesFromName(modelId: string): InputModalities | undefined {
+  const haystack = normalizeLoose(modelId)
+  for (const token of VISION_NAME_TOKENS) {
+    const needle = normalizeLoose(token)
+    let at = haystack.indexOf(needle)
+    while (at >= 0) {
+      if (onBoundary(haystack, at, needle.length)) return ['text', 'image']
+      at = haystack.indexOf(needle, at + 1)
+    }
+  }
+  return undefined
+}
+
+/**
+ * Intersect a raw listing disclosure with the core vocabulary. Returns
+ * undefined when the listing never named a modality field OR named one whose
+ * members all fall outside the core vocabulary (an audio-only declaration
+ * must NOT read as "text only"). A present disclosure always yields at least
+ * text-only when image is absent -- so an explicit text-only listing can
+ * strip an image claim.
+ */
+function declaredCoreInput(raw: readonly string[] | undefined): InputModalities | undefined {
+  if (raw === undefined) return undefined
+  const lowered = raw.map(value => value.toLowerCase())
+  if (!lowered.some(value => (INPUT_MODALITIES as readonly string[]).includes(value))) return undefined
+  return lowered.includes('image') ? ['text', 'image'] : ['text']
+}
+
+/**
  * Resolve the suggestion for one model on one route, fusing the available
  * signals by confidence:
  *
- *   L1  endpoint listing signal (when supplied) — answers "does it reason at
- *       all"; an explicit `false` wins outright (suggest `false`, high);
- *   L2  knowledge base — the ONLY source of wire spellings and compat;
- *   L4  protocol inference — level-ladder skeleton when nothing better exists.
+ *   L1  endpoint listing signal (when supplied) -- answers "does it reason at
+ *       all" and, independently, "what does it accept": an explicit false
+ *       wins the effort ladder outright (suggest false, high); a modality
+ *       disclosure or a context length feeds those parts regardless;
+ *   L2  knowledge base -- the ONLY source of wire spellings and compat, plus
+ *       modality/capacity references when the endpoint stays silent;
+ *   L3  name heuristic -- a low-confidence image guess for vision-flavored
+ *       ids when both sources above are silent;
+ *   L4  protocol inference -- level-ladder skeleton when nothing better exists.
  *
  * @param modelId - the model id (or display name) to match.
  * @param route - route facts used when the knowledge base misses; its
  *   displayName participates in knowledge-base matching.
- * @param endpoint - optional raw-listing signal for this model (from the
+ * @param endpoint - optional raw-listing facts for this model (from the
  *   host's same-origin probe route); omit when the endpoint was not asked.
- * @returns a suggestion (always derivable — protocol inference has a fallback).
+ * @returns a suggestion (always derivable -- protocol inference has a fallback).
  */
 export function suggestEfforts(
   modelId: string,
   route: RouteFacts,
-  endpoint?: { reasoning: boolean | 'unknown'; source: string | null },
+  endpoint?: EndpointFacts,
 ): EffortSuggestion {
+  const entry = matchKnowledgeBase(modelId, route.displayName)
+
+  // ---- Modality + capacity parts (orthogonal to the effort ladder) ----
+  let input: InputModalities | undefined
+  let inputSource: InputSource | undefined
+  let contextWindow: number | undefined
+  let maxTokens: number | undefined
+
+  if (entry?.input !== undefined) {
+    input = entry.input
+    inputSource = 'knowledge'
+  }
+  if (entry?.contextWindow !== undefined) contextWindow = entry.contextWindow
+  if (entry?.maxTokens !== undefined) maxTokens = entry.maxTokens
+
+  // An endpoint disclosure outranks the knowledge base; a disclosed context
+  // length likewise replaces the reference value. Silence changes nothing.
+  const listedInput = declaredCoreInput(endpoint?.input)
+  if (listedInput !== undefined) {
+    input = listedInput
+    inputSource = 'endpoint'
+  }
+  if (endpoint?.contextLength !== undefined && Number.isFinite(endpoint.contextLength) && endpoint.contextLength > 0) {
+    contextWindow = endpoint.contextLength
+  }
+
+  // L3: nothing named the modalities -- fall back to the name heuristic.
+  if (input === undefined) {
+    const guessed = inferModalitiesFromName(modelId)
+    if (guessed !== undefined) {
+      input = guessed
+      inputSource = 'heuristic'
+    }
+  }
+
+  const modalityParts = {
+    ...(input === undefined ? {} : { input }),
+    ...(inputSource === undefined ? {} : { inputSource }),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(maxTokens === undefined ? {} : { maxTokens }),
+  }
+
+  const endpointPart = endpoint === undefined
+    ? {}
+    : { endpoint: { reasoning: endpoint.reasoning, source: endpoint.source } }
+
   // L1: an explicit "does not reason" from the endpoint outranks everything.
   if (endpoint?.reasoning === false) {
     return {
       efforts: false,
       matched: false,
-      source: `endpoint:${endpoint.source ?? 'listing'}`,
+      source: 'endpoint:' + (endpoint.source ?? 'listing'),
       confidence: 'high',
-      endpoint,
+      ...endpointPart,
+      ...modalityParts,
     }
   }
 
-  const entry = matchKnowledgeBase(modelId, route.displayName)
   if (entry !== undefined) {
     const compat = compatForRoute(entry.compat, route)
     return {
       efforts: entry.efforts,
-      ...compat === undefined ? {} : { compat },
+      ...(compat === undefined ? {} : { compat }),
       matched: true,
       entryId: entry.id,
       source: entry.id,
@@ -531,12 +828,13 @@ export function suggestEfforts(
       // only reinforces it. A DISAGREEING signal (endpoint says no reasoning)
       // was handled above; unknown changes nothing.
       confidence: 'high',
-      ...(endpoint === undefined ? {} : { endpoint }),
+      ...endpointPart,
+      ...modalityParts,
     }
   }
 
   // L2 missed: the ladder comes from protocol inference. An explicit endpoint
-  // "reasons" upgrades confidence to medium — support is confirmed, but the
+  // "reasons" upgrades confidence to medium -- support is confirmed, but the
   // level set and spellings are inferred, so the user should double-check.
   const protocol = inferProtocol(route)
   const efforts = PROTOCOL_INFERENCE[protocol] ?? GENERIC_FALLBACK
@@ -547,19 +845,21 @@ export function suggestEfforts(
     return {
       efforts: { ...ENDPOINT_CONFIRMED_LADDER },
       // compat was already gated to the protocol above; no second gate.
-      ...compat === undefined ? {} : { compat },
+      ...(compat === undefined ? {} : { compat }),
       matched: false,
-      source: `endpoint:${endpoint.source ?? 'listing'}`,
+      source: 'endpoint:' + (endpoint.source ?? 'listing'),
       confidence: 'medium',
-      endpoint,
+      ...endpointPart,
+      ...modalityParts,
     }
   }
   return {
     efforts,
-    ...compat === undefined ? {} : { compat },
+    ...(compat === undefined ? {} : { compat }),
     matched: false,
-    source: `protocol:${protocol}`,
+    source: 'protocol:' + protocol,
     confidence: 'low',
-    ...(endpoint === undefined ? {} : { endpoint }),
+    ...endpointPart,
+    ...modalityParts,
   }
 }

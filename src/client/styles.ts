@@ -109,4 +109,44 @@ export const STYLES = `
 .bre-effort-message.bre-error { color: #c62828; }
 .bre-effort-message.bre-info { color: var(--dsh-accent, #4a90d9); }
 .bre-effort-note { font-size: 11px; margin: 0; color: var(--dsh-text-secondary, inherit); }
+/* ---- Input-modality section ---- */
+.bre-modality {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.bre-modality-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.bre-modality-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--dsh-accent, #4a90d9);
+  cursor: pointer;
+}
+.bre-modality-clear { margin-left: auto; }
+.bre-modality-note { font-size: 11px; margin: 0; color: var(--dsh-text-secondary, inherit); }
+/* ---- Zoned suggestion display ---- */
+.bre-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.bre-reference {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  padding: 6px 8px;
+  border: 1px dashed var(--dsh-border, rgba(128,128,128,0.35));
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--dsh-text-secondary, inherit);
+}
+.bre-reference-title { font-weight: 600; }
+.bre-reference-values { display: inline-flex; gap: 14px; }
 `

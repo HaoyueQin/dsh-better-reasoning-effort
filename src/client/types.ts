@@ -1,19 +1,24 @@
 /**
  * Wire-surface types the browser half consumes: the settings Remote faces and
  * the pure seam the effort editor needs. Derived from the published client
- * contract (`@deepseek-ai/dsh-api-remotes/client`) so a harness-side drift
+ * contract ('@deepseek-ai/dsh-api-remotes/client') so a harness-side drift
  * surfaces as a compile error rather than a browser surprise.
  *
  * @module dsh-better-reasoning-effort/types
  */
 
 import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
-import type { CompatSuggestion, ReasoningEfforts } from '../knowledge.js'
+import type {
+  CompatSuggestion,
+  InputModalities,
+  InputSource,
+  ReasoningEfforts,
+} from '../knowledge.js'
 
 export type { ConfigurableProviderView, SettingsPathOpView, RpcResponse } from
   '@deepseek-ai/dsh-api-remotes/client'
 
-/** The `settings` Remote methods the browser half calls. */
+/** The 'settings' Remote methods the browser half calls. */
 export type SettingsRemoteApi = Pick<IApiClient['settings'], 'describe' | 'mutate'>
 
 /** The Remote faces the browser half consumes. */
@@ -31,18 +36,30 @@ export interface SettingsJoin {
 
 export type { SettingsNamespaceView }
 
-/** One result of writing a model's reasoningEfforts. */
+/** One result of writing a model's declaration. */
 export type WriteEffortsReply = { ok: true } | { ok: false; error: string }
 
-/** One result of asking for a suggestion for one model. */
+/**
+ * One result of asking for a suggestion for one model. The effort ladder and
+ * the modality/capacity parts are independent: either may be present while
+ * the other is absent.
+ */
 export type SuggestReply =
   | {
       ok: true
       suggestion: {
-        /** The declaration to apply; `false` = the endpoint says it does not reason. */
+        /** The declaration to apply; false = the endpoint says it does not reason. */
         efforts: ReasoningEfforts | false
         /** The compat block to write alongside (thinkingFormat etc.), when derivable. */
         compat?: CompatSuggestion
+        /** Request modalities to declare, when derivable. */
+        input?: InputModalities
+        /** Where the modality part came from; its confidence rides this. */
+        inputSource?: InputSource
+        /** Reference context window (display-only; never auto-filled). */
+        contextWindow?: number
+        /** Reference max output tokens (display-only). */
+        maxTokens?: number
         matched: boolean
         source: string
         /** Evidence strength: high (knowledge base / endpoint), medium, low. */
@@ -61,6 +78,14 @@ export interface StagedRouteFacts {
   baseURL?: string
 }
 
+/**
+ * The modality part of a write intent. Undefined leaves whatever the document
+ * holds untouched (a staged flush must not strip declarations it never
+ * carried); null unsets the declaration durably (the marker records the
+ * absence as a decision); an array writes exactly those modalities.
+ */
+export type InputIntent = InputModalities | null | undefined
+
 /** The write seam the effort editor needs. */
 export interface EffortEditorApi {
   /** Ask for a knowledge-base / protocol suggestion for one model. */
@@ -71,15 +96,18 @@ export interface EffortEditorApi {
     stagedFacts?: StagedRouteFacts,
   ): Promise<SuggestReply>
   /**
-   * Write one model's reasoningEfforts (unset, disabled, or a dict). A compat
-   * block is written only when one is supplied alongside a dict declaration —
-   * an omitted compat leaves whatever the document already holds untouched.
+   * Write one model's reasoningEfforts (unset, disabled, or a dict) and,
+   * when an input intent is supplied, its input-modality declaration in the
+   * same mutate. A compat block is written only when one is supplied
+   * alongside a dict declaration -- an omitted compat leaves whatever the
+   * document already holds untouched.
    */
   writeEfforts(
     route: string,
     modelId: string,
     efforts: ReasoningEfforts | false | undefined,
     compat?: CompatSuggestion,
+    input?: InputIntent,
   ): Promise<WriteEffortsReply>
   /**
    * Stage one model's declaration for a route that does not exist in the
@@ -91,5 +119,6 @@ export interface EffortEditorApi {
     modelId: string,
     efforts: ReasoningEfforts | false | undefined,
     compat?: CompatSuggestion,
+    input?: InputModalities,
   ): void
 }

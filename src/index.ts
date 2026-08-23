@@ -22,7 +22,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
 import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
-import { PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
+import { INPUT_UNSET_MARKER, PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
 import { suggestEfforts } from './knowledge.js'
 import { isRecord, routeFactsOf } from './shared.js'
 
@@ -38,16 +38,31 @@ const PI_NS = settingsNamespace(PI_AI_NS)
 type JsonObject = Record<string, unknown>
 
 /**
- * Build a patch that adds reasoningEfforts to every undeclared model of the
- * given routes, from the knowledge base / protocol inference. Returns the
- * partial providers patch, or undefined when nothing needs filling.
+ * Whether a model row carries an input-modality declaration the document
+ * already answers with. An absent key and an empty array both read as "no
+ * answer here" -- mirroring how llm-pi-ai's own resolution treats them.
+ */
+function declaresInput(model: JsonObject): boolean {
+  const input = model['input']
+  return Array.isArray(input) && input.length > 0
+}
+
+/**
+ * Build a patch that adds reasoningEfforts -- and, unless declined, the
+ * input-modality declaration -- to every undeclared model of the given
+ * routes, from the knowledge base / protocol inference. Returns the partial
+ * providers patch, or undefined when nothing needs filling.
  * @param providers - the resolved providers dict.
  * @param routeFilter - optional route filter (defaults to all routes).
+ * @param options - fill switches; both default on.
  */
 export function buildAutofillPatch(
   providers: unknown,
   routeFilter: (route: string) => boolean = () => true,
+  options: { efforts?: boolean; modalities?: boolean } = {},
 ): JsonObject | undefined {
+  const fillEfforts = options.efforts !== false
+  const fillModalities = options.modalities !== false
   if (!isRecord(providers)) return undefined
   const patchRoutes: JsonObject = {}
   for (const route of Object.keys(providers)) {
@@ -63,11 +78,13 @@ export function buildAutofillPatch(
     const nextModels: JsonObject[] = []
     let changed = false
     for (const model of models) {
-      // Declared models are untouched — and so are models the user
-      // deliberately unset: the durable marker records that absence as a
-      // decision, so auto-fill never reads it back as a gap (the bug this
+      // Declared parts are untouched — and so are parts the user
+      // deliberately unset: the durable markers record those absences as
+      // decisions, so auto-fill never reads them back as gaps (the bug this
       // guards: a refill one event after every user "unset").
-      if (model['reasoningEfforts'] !== undefined || model[UNSET_MARKER] === true) {
+      const effortsDeclared = model['reasoningEfforts'] !== undefined || model[UNSET_MARKER] === true
+      const inputDeclared = declaresInput(model) || model[INPUT_UNSET_MARKER] === true
+      if ((effortsDeclared || !fillEfforts) && (inputDeclared || !fillModalities)) {
         nextModels.push(model)
         continue
       }
@@ -83,12 +100,28 @@ export function buildAutofillPatch(
         nextModels.push(model)
         continue
       }
+      const fill: JsonObject = { ...model }
+      let touched = false
+      // Capacities are never filled here: contextWindow / maxTokens are
+      // display-only reference values in the browser half, and writing them
+      // host-side would silently override the route defaults.
+      if (!effortsDeclared && fillEfforts) {
+        touched = true
+        if (suggestion.efforts !== false) delete fill[UNSET_MARKER]
+        fill['reasoningEfforts'] = suggestion.efforts as JsonObject
+        if (suggestion.compat !== undefined) fill['compat'] = suggestion.compat as JsonObject
+      }
+      if (!inputDeclared && fillModalities && suggestion.input !== undefined) {
+        touched = true
+        delete fill[INPUT_UNSET_MARKER]
+        fill['input'] = [...suggestion.input]
+      }
+      if (!touched) {
+        nextModels.push(model)
+        continue
+      }
       changed = true
-      nextModels.push({
-        ...model,
-        reasoningEfforts: suggestion.efforts,
-        ...suggestion.compat === undefined ? {} : { compat: suggestion.compat },
-      })
+      nextModels.push(fill)
     }
     if (changed) patchRoutes[route] = { models: nextModels }
   }
@@ -114,6 +147,11 @@ const PROBE_TIMEOUT_MS = 15_000
 export interface Config {
   /** Auto-fill undeclared pi-ai models on boot and after settings updates (default true). */
   autofill?: boolean
+  /**
+   * Whether the auto-fill above also fills the input-modality declaration
+   * (default true). Effort auto-fill is governed by {@link autofill} alone.
+   */
+  modalityAutofill?: boolean
   /** Upstream fetch timeout for the raw /models probe route, in milliseconds (default 15000). */
   probeTimeoutMs?: number
   /**
@@ -126,6 +164,7 @@ export interface Config {
 /** Schemastery schema: Cordis validates the row config and fills defaults before apply(). */
 export const Config: Schema<Config> = Schema.object({
   autofill: Schema.boolean().default(true),
+  modalityAutofill: Schema.boolean().default(true),
   probeTimeoutMs: Schema.natural().min(1).default(PROBE_TIMEOUT_MS),
   bootRetryDelaysMs: Schema.array(Schema.natural().min(1)).default([...BOOT_RETRY_DELAYS_MS]),
 })
@@ -232,6 +271,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   // Cordis fills schema defaults; direct calls (tests) may omit fields.
   const resolved = {
     autofill: config.autofill !== false,
+    modalityAutofill: config.modalityAutofill !== false,
     probeTimeoutMs: config.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
     bootRetryDelaysMs: config.bootRetryDelaysMs ?? [...BOOT_RETRY_DELAYS_MS],
   }
@@ -260,7 +300,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       const user = descriptor?.user
       const userProviders = isRecord(user) && isRecord(user['providers']) ? user['providers'] : undefined
       if (userProviders === undefined) return true
-      const patch = buildAutofillPatch(userProviders)
+      const patch = buildAutofillPatch(userProviders, () => true, { modalities: resolved.modalityAutofill })
       if (patch === undefined) return true
       // Optimistic lock: only write while the namespace has not moved past
       // this read. The fill is a background suggestion — losing the race to a

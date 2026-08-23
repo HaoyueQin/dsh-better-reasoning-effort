@@ -102,7 +102,7 @@ describe('EffortEditor', () => {
       efforts: { off: null, high: 'high' },
     }))
     const boxes = checkboxes(container)
-    expect(boxes).toHaveLength(7) // off, minimal, low, medium, high, xhigh, max
+    expect(boxes).toHaveLength(8) // off…max plus the image-input toggle
     // off and high armed; everything else not.
     expect(boxes[0]!.checked).toBe(true)
     expect(boxes[4]!.checked).toBe(true)
@@ -204,7 +204,7 @@ describe('EffortEditor', () => {
     expect(hasButton(container, t('apply'))).toBe(false)
     await act(async () => { stageButton.click() })
 
-    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' }, undefined)
+    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' }, undefined, undefined)
     expect(api.writeEfforts).not.toHaveBeenCalled()
     expect(container.querySelector('.bre-effort-message')?.textContent).toContain(t('staged'))
   })
@@ -244,6 +244,94 @@ describe('EffortEditor', () => {
       'qwen-max',
       { off: null, low: 'low', high: 'high', max: 'max' },
       compat,
+      undefined,
     )
+  })
+})
+
+describe('EffortEditor modality', () => {
+  it('reflects a stored declaration and writes through the seam', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({ api, input: ['text', 'image'] }))
+    const boxes = checkboxes(container)
+    expect(boxes[7].checked).toBe(true)
+    expect(container.textContent).not.toContain(t('modalityInherit'))
+    // Unchecking image narrows the declaration to text-only.
+    await act(async () => { boxes[7].click() })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', undefined, undefined, ['text'])
+  })
+
+  it('clearing the declaration writes the durable unset', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({ api, input: ['text'] }))
+    await act(async () => { buttonByText(container, t('clearDeclaration')).click() })
+    expect(container.textContent).toContain(t('modalityInherit'))
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', undefined, undefined, null)
+  })
+
+  it('an undeclared row stays untouched by an effort-only apply', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({ api }))
+    expect(container.textContent).toContain(t('modalityInherit'))
+    await act(async () => { checkboxes(container)[4].click() })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    // The modality intent is null only when the user cleared a declaration;
+    // an untouched row omits the intent entirely.
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, null)
+  })
+
+  it('auto-adapt renders the zoned reference block and provenance hints', async () => {
+    const api = baseApi()
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
+        matched: true,
+        source: 'deepseek-v4',
+        confidence: 'high',
+        input: ['text'],
+        inputSource: 'endpoint',
+        contextWindow: 1048576,
+        maxTokens: 128000,
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({ api }))
+
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+
+    const reference = container.querySelector('.bre-reference')
+    expect(reference?.textContent).toContain(t('referenceTitle'))
+    expect(reference?.textContent).toContain('1,048,576')
+    expect(reference?.textContent).toContain('128,000')
+    expect(container.textContent).toContain(t('contextWindowLabel'))
+    expect(container.textContent).toContain(t('maxTokensLabel'))
+    expect(container.textContent).toContain(t('inputHintEndpoint'))
+    // The suggestion's text-only advice disarms the image toggle.
+    expect(checkboxes(container)[7].checked).toBe(false)
+  })
+
+  it('heuristic modality advice surfaces the verify hint and arms the toggle', async () => {
+    const api = baseApi()
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { low: 'low' },
+        matched: false,
+        source: 'protocol:openai-completions',
+        confidence: 'low',
+        input: ['text', 'image'],
+        inputSource: 'heuristic',
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({ api }))
+
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+
+    expect(container.textContent).toContain(t('inputHintHeuristic'))
+    expect(checkboxes(container)[7].checked).toBe(true)
+    // No capacities in the suggestion -- no reference block at all.
+    expect(container.querySelector('.bre-reference')).toBeNull()
   })
 })

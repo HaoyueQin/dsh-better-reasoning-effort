@@ -1,7 +1,7 @@
 /**
- * Client-side reasoning-effort write seam over `settings.mutate`, plus the
- * knowledge-base / protocol suggestions. Pure logic —
- * no React, no DOM — so it stays unit-testable in isolation.
+ * Client-side declaration write seam over 'settings.mutate', plus the
+ * knowledge-base / protocol suggestions. Pure logic --
+ * no React, no DOM -- so it stays unit-testable in isolation.
  *
  * @module dsh-better-reasoning-effort/client/ops
  */
@@ -9,13 +9,15 @@
 import {
   suggestEfforts,
   type CompatSuggestion,
+  type InputModalities,
   type ReasoningEfforts,
 } from '../knowledge.js'
-import { PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
+import { INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
 import { isRecord, routeFactsOf } from '../shared.js'
 import type {
   EffortEditorApi,
+  InputIntent,
   RemoteApi,
   SettingsJoin,
   SettingsNamespaceView,
@@ -46,6 +48,14 @@ export function effortsOf(models: Record<string, unknown>[], modelId: string): f
   return undefined
 }
 
+/** The input-modality declaration of one model in a route's models. */
+export function inputOf(models: Record<string, unknown>[], modelId: string): InputModalities | undefined {
+  const entry = models.find(model => model['id'] === modelId)
+  const input = entry?.['input']
+  if (!Array.isArray(input)) return undefined
+  return input.filter((item): item is (typeof input)[number] => typeof item === 'string')
+}
+
 /** The display name of one model in a route's models. */
 export function nameOf(models: Record<string, unknown>[], modelId: string): string | undefined {
   const entry = models.find(model => model['id'] === modelId)
@@ -54,11 +64,11 @@ export function nameOf(models: Record<string, unknown>[], modelId: string): stri
 }
 
 /**
- * Ask the host's same-origin probe route for this model's raw-listing
- * reasoning signal. Any failure — route absent, endpoint unreachable, listing
- * shape unexpected — degrades to an explicit 'unknown' signal ("asked, no
- * answer"), never to a thrown error: suggestions must not break because the
- * endpoint would not talk.
+ * Ask the host's same-origin probe route for this model's raw-listing facts
+ * (reasoning signal, modality disclosure, context length). Any failure --
+ * route absent, endpoint unreachable, listing shape unexpected -- degrades to
+ * an unanswered signal ("asked, no answer"), never to a thrown error:
+ * suggestions must not break because the endpoint would not talk.
  */
 async function probeEndpoint(route: string, modelId: string): Promise<EndpointSignal> {
   try {
@@ -87,6 +97,7 @@ export function createEditorApi(
     modelId: string,
     efforts: ReasoningEfforts | false | undefined,
     compat?: CompatSuggestion,
+    input?: InputModalities,
   ) => void,
 ): EffortEditorApi {
   return {
@@ -102,8 +113,8 @@ export function createEditorApi(
       }
       // L1 first: the endpoint's own word about this model. The fusion in
       // suggestEfforts keeps wire values knowledge-base-only. A route the
-      // settings document does not hold (a create card) cannot be probed —
-      // the host resolves routes from settings — so skip the doomed round
+      // settings document does not hold (a create card) cannot be probed --
+      // the host resolves routes from settings -- so skip the doomed round
       // trip and leave the signal absent until the route is saved.
       const endpoint = providers[route] === undefined ? undefined : await probeEndpoint(route, modelId)
       const suggestion = suggestEfforts(modelId, facts, endpoint)
@@ -118,6 +129,10 @@ export function createEditorApi(
           // is what makes off/thinking dispatch work on deepseek/qwen/zai
           // endpoints.)
           ...(suggestion.compat === undefined ? {} : { compat: suggestion.compat }),
+          ...(suggestion.input === undefined ? {} : { input: suggestion.input }),
+          ...(suggestion.inputSource === undefined ? {} : { inputSource: suggestion.inputSource }),
+          ...(suggestion.contextWindow === undefined ? {} : { contextWindow: suggestion.contextWindow }),
+          ...(suggestion.maxTokens === undefined ? {} : { maxTokens: suggestion.maxTokens }),
           matched: suggestion.matched,
           source: suggestion.source,
           confidence: suggestion.confidence,
@@ -125,10 +140,10 @@ export function createEditorApi(
         },
       }
     },
-    stageEfforts(route, modelId, efforts, compat) {
-      stage?.(route, modelId, efforts, compat)
+    stageEfforts(route, modelId, efforts, compat, input) {
+      stage?.(route, modelId, efforts, compat, input)
     },
-    async writeEfforts(route, modelId, efforts, compat) {
+    async writeEfforts(route, modelId, efforts, compat, input) {
       // Retry once on a revision conflict: a concurrent writer (this plugin's
       // own autofill, or the official page) moved the namespace between our
       // describe and mutate. Re-reading and retrying with the fresh revision
@@ -154,7 +169,7 @@ export function createEditorApi(
             if (efforts === undefined) {
               // Unset the declaration durably: the marker records the absence
               // as a decision, so the host's auto-fill never reads it back as
-              // a gap to fill — not now, and not after the next restart.
+              // a gap to fill -- not now, and not after the next restart.
               delete copy['reasoningEfforts']
               copy[UNSET_MARKER] = true
             } else {
@@ -170,6 +185,18 @@ export function createEditorApi(
                 if (compat !== undefined) copy['compat'] = { ...compat }
               }
             }
+            // The modality part rides the same mutate. An omitted intent
+            // touches nothing (a staged flush must not strip declarations it
+            // never carried); null unsets durably through the marker.
+            if (input !== undefined) {
+              if (input === null) {
+                delete copy['input']
+                copy[INPUT_UNSET_MARKER] = true
+              } else {
+                delete copy[INPUT_UNSET_MARKER]
+                copy['input'] = [...input]
+              }
+            }
             return copy
           })
           const response = await api.settings.mutate({
@@ -180,8 +207,8 @@ export function createEditorApi(
           if (!response.result.ok) {
             // The stable wire code, not the message prose: 'settings-conflict'
             // means a concurrent writer moved the namespace between our describe
-            // and mutate. Re-reading and retrying with the fresh revision is the
-            // same recovery the official settings form uses; anything else
+            // and mutate. Re-reading and retrying with the fresh revision is
+            // the same recovery the official settings form uses; anything else
             // surfaces as-is.
             if (attempt === 0 && response.result.error.code === 'settings-conflict') continue
             return { ok: false, error: response.result.error.message }

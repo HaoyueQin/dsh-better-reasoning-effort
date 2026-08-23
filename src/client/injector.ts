@@ -23,11 +23,11 @@
  * @module dsh-better-reasoning-effort/injector
  */
 
-import { PLUGIN_ID, UNSET_MARKER } from '../constants.js'
-import type { CompatSuggestion, ReasoningEfforts } from '../knowledge.js'
+import { INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../constants.js'
+import type { CompatSuggestion, InputModalities, ReasoningEfforts } from '../knowledge.js'
 import { modelsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
-import { createEditorApi, describeNamespace, effortsOf, nameOf, providersOf } from './ops.js'
+import { createEditorApi, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
 import type { EffortEditorApi, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
@@ -99,6 +99,8 @@ export interface EditorMountProps {
   modelName?: string
   /** The model's current reasoningEfforts declaration. */
   efforts?: false | ReasoningEfforts
+  /** The model's current input-modality declaration. */
+  input?: InputModalities
   /** Row ordinal among the models found in this scan (for aria labels). */
   index: number
   /** True on a create card: Apply stages the declaration instead of writing. */
@@ -123,10 +125,11 @@ export interface ScanState {
   pending: Map<string, Map<string, StagedDeclaration>>
 }
 
-/** One staged declaration: the level set plus the suggestion's compat block. */
+/** One staged declaration: the level set plus the suggestion's compat block and modalities. */
 export interface StagedDeclaration {
   efforts: ReasoningEfforts | false
   compat?: CompatSuggestion
+  input?: InputModalities
 }
 
 export function createScanState(): ScanState {
@@ -143,6 +146,7 @@ export function stageEffortsInto(
   modelId: string,
   efforts: ReasoningEfforts | false | undefined,
   compat?: CompatSuggestion,
+  input?: InputModalities,
 ): void {
   const models = state.pending.get(route)
   if (efforts === undefined) {
@@ -154,6 +158,7 @@ export function stageEffortsInto(
   state.pending.set(route, (models ?? new Map()).set(modelId, {
     efforts,
     ...(compat === undefined ? {} : { compat }),
+    ...(input === undefined ? {} : { input }),
   }))
 }
 
@@ -177,7 +182,12 @@ async function flushRoute(
     const join = await deps.describeNamespace()
     const providers = providersOf(join.namespace)
     const current = modelsOf(providers, route).find(model => model['id'] === modelId)
-    if (current === undefined || current['reasoningEfforts'] !== undefined || current[UNSET_MARKER] === true) {
+    const alreadyDeclared =
+      current === undefined
+      || current['reasoningEfforts'] !== undefined
+      || current[UNSET_MARKER] === true
+      || current[INPUT_UNSET_MARKER] === true
+    if (alreadyDeclared) {
       stageEffortsInto(state, route, modelId, undefined)
       continue
     }
@@ -193,7 +203,7 @@ async function flushRoute(
       }
       return describeNamespace(deps.api)
     })
-    const reply = await seededApi.writeEfforts(route, modelId, declaration.efforts, declaration.compat)
+    const reply = await seededApi.writeEfforts(route, modelId, declaration.efforts, declaration.compat, declaration.input)
     if (reply.ok || reply.error === 'model-not-found') {
       stageEffortsInto(state, route, modelId, undefined)
     }
@@ -257,6 +267,15 @@ function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
     // participates in the diff like any other prop.
     && a.staged === b.staged
     && sameEfforts(a.efforts, b.efforts)
+    && sameInput(a.input, b.input)
+}
+
+/** Semantic equality of two modality declarations (order-insensitive). */
+function sameInput(a: InputModalities | undefined, b: InputModalities | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  const setA = new Set(a)
+  return a.length === b.length && b.every(item => setA.has(item))
 }
 
 /** Whether the card carries any input/select labeled with one of the labels. */
@@ -395,6 +414,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       const efforts = staged
         ? state.pending.get(route)?.get(target.modelId)?.efforts
         : effortsOf(models, target.modelId)
+      const input = staged
+        ? state.pending.get(route)?.get(target.modelId)?.input
+        : inputOf(models, target.modelId)
       const modelName = staged ? undefined : nameOf(models, target.modelId)
       const typedApi = staged ? inputValueByLabel(target.card, API_PROTOCOL_ARIA) : ''
       const typedBaseURL = staged ? inputValueByLabel(target.card, BASE_URL_ARIA) : ''
@@ -416,9 +438,10 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         modelId: target.modelId,
         ...modelName === undefined ? {} : { modelName },
         ...efforts === undefined ? {} : { efforts },
+        ...input === undefined ? {} : { input },
         index,
         staged,
-        api: createEditorApi(deps.api, undefined, (r, m, e, c) => { stageEffortsInto(state, r, m, e, c) }),
+        api: createEditorApi(deps.api, undefined, (r, m, e, c, i) => { stageEffortsInto(state, r, m, e, c, i) }),
         readOnly: join.writable !== true,
         t: deps.t,
       }

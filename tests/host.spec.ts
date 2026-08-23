@@ -112,9 +112,9 @@ describe('apply() autofill', () => {
     expect(settings.updates[0]!.expectedRevision).toBe(3)
   })
 
-  it('does nothing when every model already declares efforts', async () => {
+  it('does nothing when every model already declares efforts and modalities', async () => {
     const declared = {
-      aliyun: { api: 'openai-completions', models: [{ id: 'qwen-max', reasoningEfforts: false }] },
+      aliyun: { api: 'openai-completions', models: [{ id: 'qwen-max', reasoningEfforts: false, input: ['text'] }] },
     }
     const settings = fakeSettings(declared)
     const { ctx } = fakeHost(settings)
@@ -154,12 +154,12 @@ describe('apply() autofill', () => {
       aliyun: {
         displayName: 'Aliyun',
         api: 'openai-completions',
-        models: [{ id: 'qwen-max', name: 'Qwen Max', reasoningEffortsUnset: true }],
+        models: [{ id: 'qwen-max', name: 'Qwen Max', reasoningEffortsUnset: true, inputUnset: true }],
       },
     })
     emitUpdated('llm-pi-ai')
     await new Promise(resolve => setTimeout(resolve, 20))
-    // No second write: the unset survives the very next autofill pass (and,
+    // No second write: the unsets survive the very next autofill pass (and,
     // being persisted in the document, every later boot).
     expect(settings.updates).toHaveLength(1)
   })
@@ -531,5 +531,52 @@ describe('apply() probe route', () => {
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string> }]
     expect(init.headers['authorization']).toBeUndefined()
     vi.unstubAllGlobals()
+  })
+
+  describe('modality autofill', () => {
+    it('fills only the missing modality for an effort-declared model', async () => {
+      const settings = fakeSettings({
+        aliyun: { api: 'openai-completions', models: [{ id: 'qwen-max', reasoningEfforts: false }] },
+      })
+      const { ctx } = fakeHost(settings)
+      const { apply } = await import('../src/index.js')
+      apply(ctx)
+      await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
+      const patch = settings.updates[0].patch as {
+        providers: Record<string, { models: Array<Record<string, unknown>> }>
+      }
+      const model = patch.providers.aliyun.models[0]
+      expect(model.reasoningEfforts).toBe(false)
+      expect(model.input).toEqual(['text'])
+    })
+
+    it('honors modalityAutofill:false by never filling modalities', async () => {
+      const settings = fakeSettings({
+        aliyun: { api: 'openai-completions', models: [{ id: 'qwen-max', reasoningEfforts: false }] },
+      })
+      const { ctx } = fakeHost(settings)
+      const { apply } = await import('../src/index.js')
+      apply(ctx, { modalityAutofill: false })
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(settings.updates).toHaveLength(0)
+    })
+
+    it('respects a deliberate inputUnset marker while still filling efforts', async () => {
+      const settings = fakeSettings({
+        aliyun: { api: 'openai-completions', models: [{ id: 'qwen-max', inputUnset: true }] },
+      })
+      const { ctx } = fakeHost(settings)
+      const { apply } = await import('../src/index.js')
+      apply(ctx)
+      await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
+      const patch = settings.updates[0].patch as {
+        providers: Record<string, { models: Array<Record<string, unknown>> }>
+      }
+      const model = patch.providers.aliyun.models[0]
+      expect(model.reasoningEfforts).toBeDefined()
+      expect(model.input).toBeUndefined()
+      // The marker survives: the absence stays a decision.
+      expect(model.inputUnset).toBe(true)
+    })
   })
 })

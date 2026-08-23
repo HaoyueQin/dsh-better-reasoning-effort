@@ -158,11 +158,11 @@ describe('createEditorApi', () => {
     const sink = vi.fn()
     const staging = createEditorApi(api, undefined, sink)
     staging.stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
-    expect(sink).toHaveBeenCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, undefined)
+    expect(sink).toHaveBeenCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, undefined, undefined)
     // The suggestion's compat rides the same seam.
     const compat = { thinkingFormat: 'deepseek' as const, supportsReasoningEffort: true }
     staging.stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat)
-    expect(sink).toHaveBeenLastCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat)
+    expect(sink).toHaveBeenLastCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat, undefined)
     // An edit-card seam (no sink) is a no-op, not a crash.
     createEditorApi(api).stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
   })
@@ -384,5 +384,63 @@ describe('createEditorApi', () => {
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+
+  describe('modality writes', () => {
+    it('writes modalities in the same mutate and clears an earlier marker', async () => {
+      const seeded = {
+        providers: {
+          aliyun: {
+            displayName: 'Aliyun',
+            api: 'openai-completions',
+            models: [{ id: 'qwen-max', inputUnset: true }],
+          },
+        },
+      }
+      const { api, mutates } = fakeApi(seeded)
+      const editor = createEditorApi(api)
+      const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' }, undefined, ['text', 'image'])
+      expect(reply).toEqual({ ok: true })
+      const models = mutates[0].ops[0].value as Array<Record<string, unknown>>
+      expect(models[0].input).toEqual(['text', 'image'])
+      expect(models[0].inputUnset).toBeUndefined()
+    })
+
+    it('null unsets the modality declaration durably', async () => {
+      const seeded = {
+        providers: {
+          aliyun: {
+            displayName: 'Aliyun',
+            api: 'openai-completions',
+            models: [{ id: 'qwen-max', input: ['text', 'image'] }],
+          },
+        },
+      }
+      const { api, mutates } = fakeApi(seeded)
+      const editor = createEditorApi(api)
+      await editor.writeEfforts('aliyun', 'qwen-max', undefined, undefined, null)
+      const models = mutates[0].ops[0].value as Array<Record<string, unknown>>
+      expect(models[0].input).toBeUndefined()
+      expect(models[0].inputUnset).toBe(true)
+    })
+
+    it('an omitted intent leaves the stored declaration untouched', async () => {
+      const seeded = {
+        providers: {
+          aliyun: {
+            displayName: 'Aliyun',
+            api: 'openai-completions',
+            models: [{ id: 'qwen-max', input: ['text', 'image'], reasoningEfforts: { high: 'high' } }],
+          },
+        },
+      }
+      const { api, mutates } = fakeApi(seeded)
+      const editor = createEditorApi(api)
+      // Only the effort ladder is re-declared; no input intent travels.
+      await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+      const models = mutates[0].ops[0].value as Array<Record<string, unknown>>
+      expect(models[0].input).toEqual(['text', 'image'])
+      expect(models[0].reasoningEfforts).toEqual({ high: 'high' })
+    })
   })
 })

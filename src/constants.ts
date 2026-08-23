@@ -22,5 +22,12 @@ export const PI_AI_NS = 'llm-pi-ai'
  */
 export const UNSET_MARKER = 'reasoningEffortsUnset'
 
+/**
+ * Model-level marker for a deliberately unset input-modality declaration,
+ * mirroring {@link UNSET_MARKER}: auto-fill must respect the absence of
+ * `input` as a decision (the route default applies), not as a gap to fill.
+ */
+export const INPUT_UNSET_MARKER = 'inputUnset'
+
 /** Locale dictionary namespace for the browser half's copy (not a settings namespace). */
 export const STORE_NS = PLUGIN_ID

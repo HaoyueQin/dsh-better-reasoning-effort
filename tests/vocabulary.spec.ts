@@ -16,6 +16,7 @@
 
 import { describe, expect, it } from 'vitest'
 import {
+  INPUT_MODALITIES,
   KNOWLEDGE_BASE,
   PROTOCOL_INFERENCE,
   suggestEfforts,
@@ -128,6 +129,31 @@ describe('knowledge base vocabulary grid', () => {
       // Every key must be either a real protocol or the deepseek URL dialect.
       expect([...PI_AI_PROTOCOLS, 'deepseek'], `inference key "${key}"`).toContain(key)
       assertEffortsShape(efforts)
+    }
+  })
+
+  it('declares only pi-ai request modalities, always including text', () => {
+    // Pinned from llm-pi-ai's MODALITY_GATE (src/catalog.ts): the drift gate
+    // grows this set exactly when pi-ai's Model['input'] does, so this pin
+    // fails HERE the moment the vocabulary moves -- before a bad declaration
+    // reaches a user's settings.yaml.
+    expect([...INPUT_MODALITIES]).toEqual(['text', 'image'])
+    for (const entry of KNOWLEDGE_BASE) {
+      if (entry.input === undefined) continue
+      expect(entry.input.length, entry.id).toBeGreaterThan(0)
+      expect(entry.input, entry.id).toContain('text')
+      for (const modality of entry.input) {
+        expect([...INPUT_MODALITIES], entry.id + ': "' + modality + '"').toContain(modality)
+      }
+    }
+  })
+
+  it('never suggests a modality outside the vocabulary', () => {
+    for (const entry of KNOWLEDGE_BASE) {
+      const suggestion = suggestEfforts(entry.patterns[0]!, {})
+      for (const modality of suggestion.input ?? []) {
+        expect([...INPUT_MODALITIES], entry.id + ': "' + modality + '"').toContain(modality)
+      }
     }
   })
 })

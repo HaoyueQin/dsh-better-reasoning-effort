@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   GENERIC_OPENAI_EFFORTS,
   KNOWLEDGE_BASE,
+  inferModalitiesFromName,
   inferProtocol,
   matchKnowledgeBase,
   suggestEfforts,
@@ -24,7 +25,9 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('deepseek-v4-flash')?.id).toBe('deepseek-v4')
     expect(matchKnowledgeBase('deepseek-v4-flash-free')?.id).toBe('deepseek-v4')
     expect(matchKnowledgeBase('deepseek-v4-pro')?.id).toBe('deepseek-v4')
-    expect(matchKnowledgeBase('deepseek-v4-flash-vision-exp')?.id).toBe('deepseek-v4')
+    // The vision experiment keys its own (strictly longer) entry, so the
+    // base stem never claims images for it -- and vice versa.
+    expect(matchKnowledgeBase('deepseek-v4-flash-vision-exp')?.id).toBe('deepseek-v4-vision')
     const entry = KNOWLEDGE_BASE.find(candidate => candidate.id === 'deepseek-v4')
     // The off spelling is a non-null placeholder: it arms the deepseek
     // format's `thinking: disabled` branch (pi-ai sends nothing when null,
@@ -66,11 +69,15 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('glm-5.3')?.id).toBe('glm-5-3')
     expect(matchKnowledgeBase('glm-5.2')?.id).toBe('glm-5-2')
     expect(matchKnowledgeBase('kimi-k3')?.id).toBe('kimi-k3')
-    expect(matchKnowledgeBase('kimi-k2.6')?.id).toBe('kimi')
+    // kimi-k2.6 belongs to the vision-capable K2.5+ generation.
+    expect(matchKnowledgeBase('kimi-k2.6')?.id).toBe('kimi-k2-vision')
+    expect(matchKnowledgeBase('kimi-k2-thinking')?.id).toBe('kimi')
     expect(matchKnowledgeBase('hy3-preview')?.id).toBe('hunyuan-hy3')
-    expect(matchKnowledgeBase('step-3.7-flash')?.id).toBe('step')
-    expect(matchKnowledgeBase('magistral-medium-1.2')?.id).toBe('mistral-reasoning')
-    expect(matchKnowledgeBase('mistral-medium-3.5')?.id).toBe('mistral-reasoning')
+    // The 3.6/3.7 vision generation keys its own entry.
+    expect(matchKnowledgeBase('step-3.7-flash')?.id).toBe('step-3-7')
+    expect(matchKnowledgeBase('step-3.5-flash')?.id).toBe('step')
+    expect(matchKnowledgeBase('magistral-medium-1.2')?.id).toBe('mistral-magistral')
+    expect(matchKnowledgeBase('mistral-medium-3.5')?.id).toBe('mistral-medium-3')
     // MiniMax deliberately carries no entry: its official API takes no
     // reasoning_effort, and a made-up ladder would be worse than the honest
     // low-confidence generic suggestion.
@@ -199,5 +206,69 @@ describe('suggestEfforts', () => {
     const suggestion = suggestEfforts('mystery-model', {})
     expect(suggestion.efforts).toEqual(GENERIC_OPENAI_EFFORTS)
     expect(suggestion.compat).toBeUndefined()
+  })
+})
+
+describe('modality + capacity fusion', () => {
+  const silent = { reasoning: 'unknown' as const, source: null }
+
+  it('carries knowledge-base modalities and reference capacities', () => {
+    const s = suggestEfforts('deepseek-v4-flash', {})
+    expect(s.input).toEqual(['text'])
+    expect(s.inputSource).toBe('knowledge')
+    expect(s.contextWindow).toBe(1048576)
+    expect(s.maxTokens).toBe(128000)
+    expect(s.confidence).toBe('high')
+  })
+
+  it('keys the vision experiment to image input', () => {
+    expect(suggestEfforts('deepseek-v4-flash-vision-exp', {}).input).toEqual(['text', 'image'])
+  })
+
+  it('an endpoint disclosure outranks the knowledge base and drops unmappable members', () => {
+    const s = suggestEfforts('deepseek-v4-flash', {}, { ...silent, input: ['text', 'image', 'pdf'] })
+    expect(s.input).toEqual(['text', 'image'])
+    expect(s.inputSource).toBe('endpoint')
+  })
+
+  it('an explicit text-only listing strips an image claim', () => {
+    const s = suggestEfforts('deepseek-v4-flash-vision-exp', {}, { ...silent, input: ['text'] })
+    expect(s.input).toEqual(['text'])
+    expect(s.inputSource).toBe('endpoint')
+  })
+
+  it('a disclosure outside the core vocabulary is silence, not text-only', () => {
+    const s = suggestEfforts('mystery-model', {}, { ...silent, input: ['audio'] })
+    expect(s.input).toBeUndefined()
+    expect(s.inputSource).toBeUndefined()
+  })
+
+  it('a disclosed context length replaces the reference value', () => {
+    const s = suggestEfforts('deepseek-v4-flash', {}, { ...silent, contextLength: 65536 })
+    expect(s.contextWindow).toBe(65536)
+    expect(s.maxTokens).toBe(128000)
+  })
+
+  it('keeps modality parts when the endpoint refuses reasoning', () => {
+    const s = suggestEfforts('deepseek-v4-flash', {}, { reasoning: false, source: 'supports_reasoning' })
+    expect(s.efforts).toBe(false)
+    expect(s.input).toEqual(['text'])
+    expect(s.inputSource).toBe('knowledge')
+  })
+
+  it('unknown ids fall back to the name heuristic at low confidence', () => {
+    const s = suggestEfforts('mystery-vl-7b', {})
+    expect(s.input).toEqual(['text', 'image'])
+    expect(s.inputSource).toBe('heuristic')
+    expect(s.confidence).toBe('low')
+    // Capacities are knowledge-base-only: heuristics never invent numbers.
+    expect(s.contextWindow).toBeUndefined()
+    expect(s.maxTokens).toBeUndefined()
+  })
+
+  it('heuristic tokens respect word boundaries', () => {
+    expect(inferModalitiesFromName('svelte-latest')).toBeUndefined()
+    expect(inferModalitiesFromName('eval-pro')).toBeUndefined()
+    expect(inferModalitiesFromName('qwen2.5-vl-72b')).toEqual(['text', 'image'])
   })
 })

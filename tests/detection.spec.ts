@@ -80,3 +80,38 @@ describe('detectModelSignal', () => {
     expect(detectModelSignal('junk', 'x').found).toBe(false)
   })
 })
+
+describe('modality + capacity disclosures', () => {
+  it('reads OpenRouter architecture.input_modalities and context_length', () => {
+    const s = analyzeListingEntry({
+      id: 'x',
+      architecture: { input_modalities: ['Text', 'Image'] },
+      context_length: 131072,
+    })
+    expect(s.input).toEqual(['text', 'image'])
+    expect(s.contextLength).toBe(131072)
+  })
+
+  it('reads top-level input_modalities and models.dev-style nesting', () => {
+    expect(analyzeListingEntry({ input_modalities: ['text'] }).input).toEqual(['text'])
+    expect(analyzeListingEntry({ modalities: { input: ['image', 'text'] } }).input).toEqual(['image', 'text'])
+  })
+
+  it('maps vision feature flags in every convention', () => {
+    expect(analyzeListingEntry({ supported_features: ['vision'] }).input).toEqual(['image'])
+    expect(analyzeListingEntry({ capabilities: ['completion', 'vision'] }).input).toEqual(['image'])
+    // An explicit refusal is an empty disclosure -- distinct from silence.
+    expect(analyzeListingEntry({ supports_vision: false }).input).toEqual([])
+    expect(analyzeListingEntry({ supportsVision: true }).input).toEqual(['image'])
+  })
+
+  it('reads the nested top_provider.context_length too', () => {
+    expect(analyzeListingEntry({ top_provider: { context_length: 200000 } }).contextLength).toBe(200000)
+  })
+
+  it('silence stays absent -- never an implicit text-only', () => {
+    const s = analyzeListingEntry({ id: 'x', object: 'model' })
+    expect(s.input).toBeUndefined()
+    expect(s.contextLength).toBeUndefined()
+  })
+})
