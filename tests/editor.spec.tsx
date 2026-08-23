@@ -256,10 +256,12 @@ describe('EffortEditor modality', () => {
     const boxes = checkboxes(container)
     expect(boxes[7].checked).toBe(true)
     expect(container.textContent).not.toContain(t('modalityInherit'))
-    // Unchecking image narrows the declaration to text-only.
+    // Unchecking image narrows the declaration to text-only. The ladder was
+    // never declared, so the effort part must travel as 'keep' -- NOT as the
+    // unset intent, which would stamp a durable marker onto nothing.
     await act(async () => { boxes[7].click() })
     await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', undefined, undefined, ['text'])
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, ['text'])
   })
 
   it('clearing the declaration writes the durable unset', async () => {
@@ -268,7 +270,7 @@ describe('EffortEditor modality', () => {
     await act(async () => { buttonByText(container, t('clearDeclaration')).click() })
     expect(container.textContent).toContain(t('modalityInherit'))
     await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', undefined, undefined, null)
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, null)
   })
 
   it('an undeclared row stays untouched by an effort-only apply', async () => {
@@ -277,9 +279,9 @@ describe('EffortEditor modality', () => {
     expect(container.textContent).toContain(t('modalityInherit'))
     await act(async () => { checkboxes(container)[4].click() })
     await act(async () => { buttonByText(container, t('apply')).click() })
-    // The modality intent is null only when the user cleared a declaration;
-    // an untouched row omits the intent entirely.
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, null)
+    // An untouched modality row omits the intent entirely -- an effort-only
+    // apply must never stamp inputUnset onto a decision the user never made.
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined)
   })
 
   it('auto-adapt renders the zoned reference block and provenance hints', async () => {

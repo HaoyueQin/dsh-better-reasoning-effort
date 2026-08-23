@@ -17,6 +17,7 @@ import { detectModelSignal, type EndpointSignal } from '../detection.js'
 import { isRecord, routeFactsOf } from '../shared.js'
 import type {
   EffortEditorApi,
+  EffortWriteIntent,
   InputIntent,
   RemoteApi,
   SettingsJoin,
@@ -95,7 +96,7 @@ export function createEditorApi(
   stage?: (
     route: string,
     modelId: string,
-    efforts: ReasoningEfforts | false | undefined,
+    efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
     input?: InputModalities,
   ) => void,
@@ -143,7 +144,13 @@ export function createEditorApi(
     stageEfforts(route, modelId, efforts, compat, input) {
       stage?.(route, modelId, efforts, compat, input)
     },
-    async writeEfforts(route, modelId, efforts, compat, input) {
+    async writeEfforts(route, modelId, rawEfforts, compat, input) {
+      // 'keep' means the ladder part of the edit is a no-op: a modality-only
+      // apply must never fall through to the unset branch (which would stamp
+      // the durable marker onto a never-declared ladder and silence host
+      // auto-fill for it forever).
+      const efforts = rawEfforts === 'keep' ? undefined : rawEfforts;
+      const touchEfforts = rawEfforts !== 'keep';
       // Retry once on a revision conflict: a concurrent writer (this plugin's
       // own autofill, or the official page) moved the namespace between our
       // describe and mutate. Re-reading and retrying with the fresh revision
@@ -166,7 +173,9 @@ export function createEditorApi(
           const nextModels = models.map((model, at) => {
             if (at !== index) return model
             const copy = { ...model }
-            if (efforts === undefined) {
+            if (!touchEfforts) {
+              // Ladder untouched by this edit: no delete, no marker.
+            } else if (efforts === undefined) {
               // Unset the declaration durably: the marker records the absence
               // as a decision, so the host's auto-fill never reads it back as
               // a gap to fill -- not now, and not after the next restart.

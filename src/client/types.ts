@@ -86,6 +86,15 @@ export interface StagedRouteFacts {
  */
 export type InputIntent = InputModalities | null | undefined
 
+/**
+ * The effort-ladder part of a write intent. Undefined unsets the declaration
+ * durably (the marker records the absence); the 'keep' sentinel leaves
+ * whatever the document holds completely untouched -- what a modality-only
+ * edit must send, so applying an image toggle never marks a never-declared
+ * ladder as deliberately unset.
+ */
+export type EffortWriteIntent = ReasoningEfforts | false | undefined | 'keep'
+
 /** The write seam the effort editor needs. */
 export interface EffortEditorApi {
   /** Ask for a knowledge-base / protocol suggestion for one model. */
@@ -96,16 +105,16 @@ export interface EffortEditorApi {
     stagedFacts?: StagedRouteFacts,
   ): Promise<SuggestReply>
   /**
-   * Write one model's reasoningEfforts (unset, disabled, or a dict) and,
-   * when an input intent is supplied, its input-modality declaration in the
-   * same mutate. A compat block is written only when one is supplied
+   * Write one model's reasoningEfforts (unset, disabled, a dict -- or 'keep'
+   * to leave it completely untouched) and, when an input intent is supplied,
+   * its input-modality declaration in the same mutate. A compat block is written only when one is supplied
    * alongside a dict declaration -- an omitted compat leaves whatever the
    * document already holds untouched.
    */
   writeEfforts(
     route: string,
     modelId: string,
-    efforts: ReasoningEfforts | false | undefined,
+    efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
     input?: InputIntent,
   ): Promise<WriteEffortsReply>
@@ -117,7 +126,7 @@ export interface EffortEditorApi {
   stageEfforts(
     route: string,
     modelId: string,
-    efforts: ReasoningEfforts | false | undefined,
+    efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
     input?: InputModalities,
   ): void

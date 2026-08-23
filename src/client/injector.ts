@@ -28,7 +28,7 @@ import type { CompatSuggestion, InputModalities, ReasoningEfforts } from '../kno
 import { modelsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
 import { createEditorApi, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
-import type { EffortEditorApi, RemoteApi, SettingsJoin } from './types.js'
+import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
 
@@ -125,9 +125,9 @@ export interface ScanState {
   pending: Map<string, Map<string, StagedDeclaration>>
 }
 
-/** One staged declaration: the level set plus the suggestion's compat block and modalities. */
+/** One staged declaration: the level set plus the suggestion's compat block and modalities. A 'keep' effort travels untouched to the flush write. */
 export interface StagedDeclaration {
-  efforts: ReasoningEfforts | false
+  efforts: Exclude<EffortWriteIntent, undefined>
   compat?: CompatSuggestion
   input?: InputModalities
 }
@@ -144,7 +144,7 @@ export function stageEffortsInto(
   state: ScanState,
   route: string,
   modelId: string,
-  efforts: ReasoningEfforts | false | undefined,
+  efforts: EffortWriteIntent,
   compat?: CompatSuggestion,
   input?: InputModalities,
 ): void {
@@ -155,6 +155,8 @@ export function stageEffortsInto(
     if (models.size === 0) state.pending.delete(route)
     return
   }
+  // 'keep' is storable: a modality-only staging must survive the flush as a
+  // declaration that touches everything EXCEPT the ladder.
   state.pending.set(route, (models ?? new Map()).set(modelId, {
     efforts,
     ...(compat === undefined ? {} : { compat }),
@@ -411,8 +413,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       // holds nothing for the route yet); the create card's typed protocol
       // and endpoint stand in for the stored profile facts, both for the
       // editor's display and for suggestion inference.
+      const stagedEfforts = staged ? state.pending.get(route)?.get(target.modelId)?.efforts : undefined
       const efforts = staged
-        ? state.pending.get(route)?.get(target.modelId)?.efforts
+        ? (stagedEfforts === 'keep' ? undefined : stagedEfforts)
         : effortsOf(models, target.modelId)
       const input = staged
         ? state.pending.get(route)?.get(target.modelId)?.input

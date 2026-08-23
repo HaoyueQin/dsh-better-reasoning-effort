@@ -259,7 +259,15 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
 
   const save = async (): Promise<void> => {
     const next = buildIntent(draft)
-    const nextInput = buildModalityIntent(modality)
+    // The modality part travels ONLY when this edit actually changed it: an
+    // untouched row must omit the intent entirely -- sending the unset-null
+    // here would stamp the durable inputUnset marker onto modalities the
+    // user never made any decision about.
+    const nextInput = sameModality(modality, initialInput) ? undefined : buildModalityIntent(modality)
+    // Nothing armed AND nothing stored: the ladder part of this edit is a
+    // no-op, NOT an unset -- sending undefined here would stamp the durable
+    // unset marker onto a never-declared model and silence host auto-fill.
+    const effortsIntent = next === undefined && initialEfforts === undefined ? 'keep' as const : next
     setBusy(true)
     setMessage(undefined)
     try {
@@ -267,12 +275,12 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       // route id; the settings write happens when the injector sees the
       // saved route appear.
       if (staged) {
-        api.stageEfforts(route, modelId, next, suggestedCompat, nextInput ?? undefined)
+        api.stageEfforts(route, modelId, effortsIntent, suggestedCompat, nextInput ?? undefined)
         dirtyRef.current = false
         setMessage({ kind: 'success', text: t('staged') })
         return
       }
-      const reply = await api.writeEfforts(route, modelId, next, suggestedCompat, nextInput)
+      const reply = await api.writeEfforts(route, modelId, effortsIntent, suggestedCompat, nextInput)
       if (!reply.ok) {
         setMessage({ kind: 'error', text: reply.error === 'invalid-models' ? t('invalidModels') : reply.error })
         return

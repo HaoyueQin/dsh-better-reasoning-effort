@@ -442,5 +442,45 @@ describe('createEditorApi', () => {
       expect(models[0].input).toEqual(['text', 'image'])
       expect(models[0].reasoningEfforts).toEqual({ high: 'high' })
     })
+
+    it("'keep' narrows modalities without touching a never-declared ladder", async () => {
+      const seeded = {
+        providers: {
+          aliyun: {
+            displayName: 'Aliyun',
+            api: 'openai-completions',
+            models: [{ id: 'qwen-max' }],
+          },
+        },
+      }
+      const { api, mutates } = fakeApi(seeded)
+      const editor = createEditorApi(api)
+      // The modality-only apply: the ladder must stay exactly as-was -- no
+      // declaration written AND no durable unset marker stamped.
+      const reply = await editor.writeEfforts('aliyun', 'qwen-max', 'keep', undefined, ['text'])
+      expect(reply).toEqual({ ok: true })
+      const models = mutates[0].ops[0].value as Array<Record<string, unknown>>
+      expect(models[0].reasoningEfforts).toBeUndefined()
+      expect(models[0].reasoningEffortsUnset).toBeUndefined()
+      expect(models[0].input).toEqual(['text'])
+    })
+
+    it("'keep' with no modality intent is a pure no-op on both parts", async () => {
+      const seeded = {
+        providers: {
+          aliyun: {
+            displayName: 'Aliyun',
+            api: 'openai-completions',
+            models: [{ id: 'qwen-max', reasoningEfforts: false, input: ['text', 'image'] }],
+          },
+        },
+      }
+      const { api, mutates } = fakeApi(seeded)
+      const editor = createEditorApi(api)
+      await editor.writeEfforts('aliyun', 'qwen-max', 'keep')
+      const models = mutates[0].ops[0].value as Array<Record<string, unknown>>
+      expect(models[0].reasoningEfforts).toBe(false)
+      expect(models[0].input).toEqual(['text', 'image'])
+    })
   })
 })
