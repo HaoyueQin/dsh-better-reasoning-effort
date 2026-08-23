@@ -13,7 +13,7 @@ import {
 } from '../knowledge.js'
 import { PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
-import { modelsOf, routeFactsOf } from '../shared.js'
+import { isRecord, routeFactsOf } from '../shared.js'
 import type {
   EffortEditorApi,
   RemoteApi,
@@ -138,7 +138,13 @@ export function createEditorApi(
           const join = await describe()
           if (join.namespace === undefined) return { ok: false, error: 'no-namespace' }
           const providers = providersOf(join.namespace)
-          const models = modelsOf(providers, route)
+          // The write rebuilds the models array verbatim; a row this code
+          // cannot represent must refuse the write rather than silently
+          // drop the row.
+          const rawModels = providers[route]?.['models']
+          if (!Array.isArray(rawModels)) return { ok: false, error: 'model-not-found' }
+          if (!rawModels.every(isRecord)) return { ok: false, error: 'invalid-models' }
+          const models = rawModels as Record<string, unknown>[]
           const index = models.findIndex(model => model['id'] === modelId)
           if (index < 0) return { ok: false, error: 'model-not-found' }
           const nextModels = models.map((model, at) => {

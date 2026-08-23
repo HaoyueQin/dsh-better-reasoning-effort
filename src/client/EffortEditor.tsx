@@ -192,7 +192,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       }
       const reply = await api.writeEfforts(route, modelId, next, suggestedCompat)
       if (!reply.ok) {
-        setMessage({ kind: 'error', text: reply.error })
+        setMessage({ kind: 'error', text: reply.error === 'invalid-models' ? t('invalidModels') : reply.error })
         return
       }
       dirtyRef.current = false

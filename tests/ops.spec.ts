@@ -247,6 +247,23 @@ describe('createEditorApi', () => {
     expect(models[0].reasoningEffortsUnset).toBeUndefined()
   })
 
+  it('refuses to rewrite a route whose model list carries a malformed row', async () => {
+    const malformed = {
+      providers: {
+        aliyun: {
+          displayName: 'Aliyun',
+          api: 'openai-completions',
+          models: [{ id: 'qwen-max' }, 'broken'],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(malformed)
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: false, error: 'invalid-models' })
+    expect(mutates).toHaveLength(0)
+  })
+
   it('fails cleanly when the model does not exist', async () => {
     const { api } = fakeApi(initialValue)
     const editor = createEditorApi(api)

@@ -151,6 +151,15 @@ describe('EffortEditor', () => {
     expect(alert?.textContent).toContain('boom')
   })
 
+  it('localizes the malformed-model-list write refusal', async () => {
+    const api = baseApi()
+    api.writeEfforts.mockResolvedValue({ ok: false, error: 'invalid-models' } satisfies WriteEffortsReply)
+    const { container } = await renderEditor(baseProps({ api }))
+    await act(async () => { checkboxes(container)[4]!.click() })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(t('invalidModels'))
+  })
+
   it('disables the actions while a suggestion is in flight', async () => {
     let resolveSuggest!: (reply: SuggestReply) => void
     const api = baseApi()

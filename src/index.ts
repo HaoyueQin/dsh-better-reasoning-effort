@@ -24,7 +24,7 @@ import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
 import { PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
 import { suggestEfforts } from './knowledge.js'
-import { isRecord, modelsOf, routeFactsOf } from './shared.js'
+import { isRecord, routeFactsOf } from './shared.js'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
 export const name = PLUGIN_ID
@@ -52,8 +52,14 @@ export function buildAutofillPatch(
   const patchRoutes: JsonObject = {}
   for (const route of Object.keys(providers)) {
     if (!routeFilter(route)) continue
-    const models = modelsOf(providers, route)
-    if (models.length === 0) continue
+    // Read the RAW models array: this builder rebuilds the array verbatim,
+    // so a route carrying a row it cannot represent (non-record) is left
+    // alone — a filtered rebuild would silently DELETE that row.
+    const profile = providers[route]
+    const rawModels = isRecord(profile) && Array.isArray(profile['models']) ? profile['models'] : undefined
+    if (rawModels === undefined || rawModels.length === 0) continue
+    if (!rawModels.every(isRecord)) continue
+    const models = rawModels as Record<string, unknown>[]
     const nextModels: JsonObject[] = []
     let changed = false
     for (const model of models) {

@@ -101,4 +101,22 @@ describe('buildAutofillPatch', () => {
     const patch = buildAutofillPatch({ route: { models: [{ name: 'no id' }] } })
     expect(patch).toBeUndefined()
   })
+
+  it('leaves routes with malformed model rows untouched', () => {
+    // The patch rebuilds the models array verbatim; a route carrying a
+    // row this builder cannot represent must be skipped, never silently
+    // stripped.
+    const malformed = { route: { models: [{ id: 'a' }, 'not-an-object'] } }
+    expect(buildAutofillPatch(malformed)).toBeUndefined()
+    // A healthy sibling route still fills while the malformed one waits.
+    const mixed = {
+      bad: { models: [{ id: 'x' }, 42] },
+      good: { models: [{ id: 'qwen-max' }] },
+    }
+    const patch = buildAutofillPatch(mixed)
+    expect(patch).toBeDefined()
+    const routes = patch!.providers as Record<string, unknown>
+    expect(routes.bad).toBeUndefined()
+    expect(routes.good).toBeDefined()
+  })
 })
