@@ -5,7 +5,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { RpcId, RpcResponse } from '@deepseek-ai/dsh-api-remotes/client'
-import { createEditorApi, effortsOf, providersOf } from '../src/client/ops.js'
+import { createEditorApi, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
 
 /** Wrap a result in an RpcResponse with a branded fake rpcId. */
 const fakeRpc = <T>(result: RpcResponse<T>['result']): RpcResponse<T> => ({
@@ -481,6 +481,18 @@ describe('createEditorApi', () => {
       const models = mutates[0].ops[0].value as Array<Record<string, unknown>>
       expect(models[0].reasoningEfforts).toBe(false)
       expect(models[0].input).toEqual(['text', 'image'])
+    })
+
+    it('inputOf maps the resolved-layer empty array to undefined (inherit)', async () => {
+      // The settings descriptor hands the client the RESOLVED layer, where
+      // schemastery materializes absent arrays as [] -- llm-pi-ai's own
+      // declaredInput reads that as "no answer here". The client must agree,
+      // or every undeclared model renders as a phantom text-only declaration.
+      expect(inputOf([{ id: 'x', input: [] }], 'x')).toBeUndefined()
+      expect(inputOf([{ id: 'x' }], 'x')).toBeUndefined()
+      expect(inputOf([{ id: 'x', input: 'garbage' }], 'x')).toBeUndefined()
+      expect(inputOf([{ id: 'x', input: ['text'] }], 'x')).toEqual(['text'])
+      expect(inputOf([{ id: 'x', input: ['image', 'text'] }], 'x')).toEqual(['image', 'text'])
     })
   })
 })

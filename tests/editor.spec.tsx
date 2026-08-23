@@ -273,6 +273,16 @@ describe('EffortEditor modality', () => {
     expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, null)
   })
 
+  it('renders a resolved-layer empty input array as inheriting', async () => {
+    // Production descriptors materialize absent arrays as []; that shape must
+    // read as undeclared -- inherit note visible, no Clear-declaration button.
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({ api, input: [] }))
+    expect(container.textContent).toContain(t('modalityInherit'))
+    expect(hasButton(container, t('clearDeclaration'))).toBe(false)
+    expect(checkboxes(container)[7].checked).toBe(false)
+  })
+
   it('an undeclared row stays untouched by an effort-only apply', async () => {
     const api = baseApi()
     const { container } = await renderEditor(baseProps({ api }))

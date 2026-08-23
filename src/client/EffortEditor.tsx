@@ -96,9 +96,11 @@ interface DraftModality {
   image: boolean
 }
 
-/** Read the stored declaration into a draft. */
+/** Read the stored declaration into a draft. Empty mirrors undefined: the
+ * resolved settings layer materializes absent arrays as [], and core reads
+ * that as "no answer here" -- never as a phantom text-only declaration. */
 function modalityFrom(input: InputModalities | undefined): DraftModality {
-  if (input === undefined) return { declared: false, image: false }
+  if (input === undefined || input.length === 0) return { declared: false, image: false }
   return { declared: true, image: input.includes('image') }
 }
 

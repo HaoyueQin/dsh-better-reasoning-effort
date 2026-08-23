@@ -49,12 +49,19 @@ export function effortsOf(models: Record<string, unknown>[], modelId: string): f
   return undefined
 }
 
-/** The input-modality declaration of one model in a route's models. */
+/** The input-modality declaration of one model in a route's models. Empty
+ * mirrors undefined -- the resolved settings layer materializes absent arrays
+ * as [] (schemastery), and llm-pi-ai's own declaredInput reads that as "no
+ * answer here": an empty list must stay inheritable, never a phantom
+ * text-only declaration. */
 export function inputOf(models: Record<string, unknown>[], modelId: string): InputModalities | undefined {
   const entry = models.find(model => model['id'] === modelId)
   const input = entry?.['input']
   if (!Array.isArray(input)) return undefined
-  return input.filter((item): item is (typeof input)[number] => typeof item === 'string')
+  const members = input.filter((member): member is string => typeof member === 'string')
+  // Members originate from the core schema's vocabulary; the cast only
+  // recovers that guarantee the index signature erased.
+  return (members.length > 0 ? members : undefined) as InputModalities | undefined
 }
 
 /** The display name of one model in a route's models. */

@@ -165,12 +165,52 @@ export function stageEffortsInto(
 }
 
 /**
+ * The write intents one staged declaration survives against the SAVED row,
+ * decided PER PART: staging never overwrites what the document already says,
+ * but a part the document took over must not silence its sibling. Returns
+ * null when nothing is left to write (the model vanished from the card, or
+ * every part was taken over / is a keep) -- the caller withdraws the staging.
+ */
+export interface EffectiveStagedIntents {
+  efforts: EffortWriteIntent
+  compat?: CompatSuggestion
+  input?: InputModalities
+}
+
+export function effectiveStagedIntents(
+  declaration: StagedDeclaration,
+  current: Record<string, unknown> | undefined,
+): EffectiveStagedIntents | null {
+  if (current === undefined) return null
+  // Ladder part: a declaration or a deliberate-unset marker on the row owns
+  // it (including one this plugin's own autofill wrote in the route-creation
+  // window); 'keep' means the staging never carried the ladder anyway.
+  const ladderTaken =
+    current['reasoningEfforts'] !== undefined
+    || current[UNSET_MARKER] === true
+    || declaration.efforts === 'keep'
+  // Modality part: a real declaration or the durable unset marker owns it.
+  const inputTaken =
+    (Array.isArray(current['input']) && current['input'].length > 0)
+    || current[INPUT_UNSET_MARKER] === true
+  const efforts: EffortWriteIntent = ladderTaken ? 'keep' : declaration.efforts
+  const input = inputTaken ? undefined : declaration.input
+  if (efforts === 'keep' && input === undefined) return null
+  return {
+    efforts,
+    ...(declaration.compat === undefined ? {} : { compat: declaration.compat }),
+    ...(input === undefined ? {} : { input }),
+  }
+}
+
+/**
  * Flush staged declarations for routes that now exist, writing each model's
  * declaration through the live write seam. A model the saved profile does not
- * carry is dropped (the create card's final rows are the truth); a model with
- * a declaration already present — or an unset marker — is skipped: staging
- * never overwrites what the document already says. A write that still fails
- * (conflict retry exhausted) stays staged; the write's own document-updated
+ * carry is dropped (the create card's final rows are the truth); each PART is
+ * decided against the saved row via {@link effectiveStagedIntents} -- staging
+ * never overwrites what the document already says, and a part the document
+ * took over never silences its sibling. A write that still fails (conflict
+ * retry exhausted) stays staged; the write's own document-updated
  * invalidation re-scans and re-flushes it.
  */
 async function flushRoute(
@@ -184,12 +224,8 @@ async function flushRoute(
     const join = await deps.describeNamespace()
     const providers = providersOf(join.namespace)
     const current = modelsOf(providers, route).find(model => model['id'] === modelId)
-    const alreadyDeclared =
-      current === undefined
-      || current['reasoningEfforts'] !== undefined
-      || current[UNSET_MARKER] === true
-      || current[INPUT_UNSET_MARKER] === true
-    if (alreadyDeclared) {
+    const effective = effectiveStagedIntents(declaration, current)
+    if (effective === null) {
       stageEffortsInto(state, route, modelId, undefined)
       continue
     }
@@ -205,7 +241,7 @@ async function flushRoute(
       }
       return describeNamespace(deps.api)
     })
-    const reply = await seededApi.writeEfforts(route, modelId, declaration.efforts, declaration.compat, declaration.input)
+    const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input)
     if (reply.ok || reply.error === 'model-not-found') {
       stageEffortsInto(state, route, modelId, undefined)
     }

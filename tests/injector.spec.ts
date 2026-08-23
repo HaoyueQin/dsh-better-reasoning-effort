@@ -7,7 +7,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
+import { createScanState, effectiveStagedIntents, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
 import type { RemoteApi } from '../src/client/types.js'
 
 /** Build an approximation of the official models page section. */
@@ -617,5 +617,50 @@ describe('reconcile', () => {
     await Promise.resolve()
     expect(deps.mutate).not.toHaveBeenCalled()
     expect(state.pending.size).toBe(0)
+  })
+})
+
+describe('effectiveStagedIntents (per-part flush decisions)', () => {
+  it('keeps the modality part alive when the ladder was taken over mid-window', () => {
+    // The realistic race: this plugin's own autofill declares the ladder on
+    // the route-creation update -- the staged image toggle must survive it.
+    const effective = effectiveStagedIntents(
+      { efforts: 'keep', input: ['text', 'image'] },
+      { id: 'x', reasoningEfforts: { high: 'high' } },
+    )
+    expect(effective).toEqual({ efforts: 'keep', input: ['text', 'image'] })
+  })
+
+  it('keeps the ladder part alive when modalities were deliberately unset', () => {
+    const effective = effectiveStagedIntents(
+      { efforts: { high: 'high' }, input: ['text'] },
+      { id: 'x', inputUnset: true },
+    )
+    expect(effective).toEqual({ efforts: { high: 'high' } })
+  })
+
+  it('returns null when the model vanished from the saved card', () => {
+    expect(effectiveStagedIntents({ efforts: 'keep', input: ['text'] }, undefined)).toBeNull()
+  })
+
+  it('returns null when every part was taken over or is a keep', () => {
+    expect(
+      effectiveStagedIntents(
+        { efforts: 'keep', input: ['text'] },
+        { id: 'x', reasoningEfforts: false, input: ['text'] },
+      ),
+    ).toBeNull()
+  })
+
+  it('passes a full staged declaration through untouched on a bare row', () => {
+    const effective = effectiveStagedIntents(
+      { efforts: { high: 'high' }, compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true }, input: ['text', 'image'] },
+      { id: 'x' },
+    )
+    expect(effective).toEqual({
+      efforts: { high: 'high' },
+      compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
+      input: ['text', 'image'],
+    })
   })
 })
