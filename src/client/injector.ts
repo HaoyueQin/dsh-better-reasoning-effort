@@ -32,6 +32,16 @@ import type { EffortEditorApi, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
 
+/**
+ * Own-property membership over the providers dict. Plain `in` would answer
+ * true for inherited names ('constructor', 'toString', '__proto__'…), so a
+ * route typed as one of those in the create card would resolve against
+ * prototype members instead of being treated as unsaved.
+ */
+function hasOwn(object: Record<string, unknown>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(object, key)
+}
+
 /** Localized aria-labels that identify the official disclosure buttons. */
 const CAPACITY_ARIA = ['Capacities', '容量']
 
@@ -221,6 +231,10 @@ function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
     && a.modelName === b.modelName
     && a.index === b.index
     && a.readOnly === b.readOnly
+    // A create card's container surviving its own save must flip the editor
+    // to write mode: staged changes the Apply button's whole contract, so it
+    // participates in the diff like any other prop.
+    && a.staged === b.staged
     && sameEfforts(a.efforts, b.efforts)
 }
 
@@ -245,10 +259,10 @@ function routeOfCard(
   providers: Record<string, Record<string, unknown>>,
 ): { route: string; staged: boolean } | undefined {
   const key = card.querySelector<HTMLElement>('[class*="editorRoute"]')?.textContent?.trim()
-  if (key !== undefined && key.length > 0 && key in providers) return { route: key, staged: false }
+  if (key !== undefined && key.length > 0 && hasOwn(providers, key)) return { route: key, staged: false }
   if (hasLabeledInput(card, ROUTE_ID_ARIA)) {
     const typed = inputValueByLabel(card, ROUTE_ID_ARIA)
-    return typed.length > 0 && !(typed in providers) ? { route: typed, staged: true } : undefined
+    return typed.length > 0 && !hasOwn(providers, typed) ? { route: typed, staged: true } : undefined
   }
   const title = card.querySelector<HTMLElement>('[class*="editorTitle"], [class*="rowName"]')?.textContent?.trim()
   if (title === undefined || title.length === 0) return undefined
@@ -286,7 +300,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     // second pass sees the first pass's declaration and skips.
     if (join.writable === true) {
       for (const [route, models] of state.pending) {
-        if (models.size === 0 || !(route in providers)) continue
+        if (models.size === 0 || !hasOwn(providers, route)) continue
         void flushRoute(deps, state, route, models)
       }
     }

@@ -473,6 +473,53 @@ describe('reconcile', () => {
     expect(state.pending.size).toBe(0)
   })
 
+  it('flips a mounted staged editor to write mode once its route is saved', async () => {
+    // A create card whose disclosure container survives the save transition
+    // must not keep its editor in staging mode: sameProps compares `staged`
+    // so the refresh swaps fresh props (and the Apply contract) in place.
+    let saved = false
+    const describe = vi.fn(async (): Promise<SettingsJoin> => {
+      if (!saved) return join
+      const local = structuredClone(join)
+      ;(local.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+        displayName: 'acme-gateway',
+        api: 'openai-completions',
+        models: [{ id: 'deepseek-v4-flash-free' }],
+      }
+      return local
+    })
+    const deps = makeDeps({ describeNamespace: describe })
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { high: 'high' })
+    const root = buildCreateDom('acme-gateway')
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).toHaveBeenCalledTimes(1)
+    expect((vi.mocked(deps.mount).mock.calls[0]![1] as EditorMountProps).staged).toBe(true)
+    expect(deps.editors[0]!.render).not.toHaveBeenCalled()
+
+    // The save lands under the SAME container and the card morphs into its
+    // edit view (the Provider ID input is replaced by the printed route tag):
+    // the next scan must re-render with staged=false even though every other
+    // prop is identical.
+    saved = true
+    const providerField = Array.from(root.querySelectorAll('.field'))
+      .find(field => field.querySelector('input[aria-label="Provider ID"]'))
+    providerField?.remove()
+    root.querySelector('.editorHeader')?.insertAdjacentHTML('beforeend', '<span class="editorRoute">acme-gateway</span>')
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    await Promise.resolve()
+    await Promise.resolve()
+    // Not remounted — refreshed in place, out of staging mode.
+    expect(deps.mount).toHaveBeenCalledTimes(1)
+    expect(deps.editors[0]!.render).toHaveBeenCalledTimes(1)
+    const refreshed = vi.mocked(deps.editors[0]!.render).mock.calls[0]![0] as EditorMountProps
+    expect(refreshed.staged).toBe(false)
+    expect(refreshed.route).toBe('acme-gateway')
+    // The staged declaration flushed to the document during the transition.
+    expect(deps.mutate).toHaveBeenCalled()
+  })
+
   it('drops a staged declaration the saved profile already answers', async () => {
     // "Never silently overwrite": a model carrying a declaration (or an unset
     // marker) when its route appears keeps what the document says.

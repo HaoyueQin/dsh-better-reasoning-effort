@@ -37,7 +37,7 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 安装
 
-需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`）。
+需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`，亦接受 `^0.1.0-rc.8`）。线协议契约已对照 `0.1.1-rc.2` 验证。
 
 ### 从 npm
 
@@ -113,6 +113,7 @@ npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 ## 已知限制
 
 - 注入依赖官方 Models 页当前 DOM（aria-label/class）。官方升级若改结构，注入自动停用，需要跟进适配；停用期间官方页不受影响。
+- 「自动适配」的探测路由只应答 **loopback 与 IP 字面量 Host**——采用核心 `/api` 栅栏同款 Host 白名单纪律，但暂无其 `trustedHosts` 出口（DNS rebinding 页面的 Host 必然是攻击者域名，因此域名宿主一律拒绝）。以域名对外提供 GUI 的局域网部署，仅此一条探测路由会得到 403（IP 字面量宿主不受影响），其余功能照常。
 - `reasoningEfforts` 声明是建议值：网关实际接受哪些档位/取值以端点文档为准，可在 UI 里逐个修改。
 - 知识库覆盖面有限——各家上新后拼写会漂移，不吃 effort 档的家族则完全无条目；未收录的模型走协议推断 + 通用档位，可手动调整。
 

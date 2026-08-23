@@ -338,7 +338,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // enabled/disabled/auto switch; the reasoning_effort ladder on
     // seed-2.x has community evidence (chatbox/compshare) but no first-
     // party doc yet — kept as the conventional ladder, verify per gateway.
-    patterns: ['doubao', 'doubao-seed', 'seed'],
+    // 'doubao' already covers every doubao-* spelling; the bare 'seed' token
+    // (boundary-checked) catches seed-first ids some gateways serve.
+    patterns: ['doubao', 'seed'],
     efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     note: '豆包档位（待官方确认）：Off / Low / Medium / High。',
@@ -544,7 +546,8 @@ export function suggestEfforts(
   if (endpoint?.reasoning === true) {
     return {
       efforts: { ...ENDPOINT_CONFIRMED_LADDER },
-      ...compatForRoute(compat, route) === undefined ? {} : { compat },
+      // compat was already gated to the protocol above; no second gate.
+      ...compat === undefined ? {} : { compat },
       matched: false,
       source: `endpoint:${endpoint.source ?? 'listing'}`,
       confidence: 'medium',

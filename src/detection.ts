@@ -85,7 +85,12 @@ export function analyzeListingEntry(entry: unknown): EndpointSignal {
   if (hasBoolean(entry, 'reasoning')) {
     return { reasoning: entry['reasoning'] as boolean, source: 'reasoning' }
   }
-  if (entry['reasoning_effort'] !== undefined || entry['supports_reasoning_effort'] === true) {
+  // A present, meaningful effort field signals support; a null placeholder
+  // says nothing and must stay 'unknown' (tri-state discipline).
+  if (
+    (entry['reasoning_effort'] !== undefined && entry['reasoning_effort'] !== null) ||
+    entry['supports_reasoning_effort'] === true
+  ) {
     return { reasoning: true, source: 'reasoning_effort' }
   }
   return { reasoning: 'unknown', source: null }

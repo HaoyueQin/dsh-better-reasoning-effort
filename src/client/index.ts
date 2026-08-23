@@ -43,7 +43,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Render-failure boundary: surfaces the cause instead of an empty root. */
-class EffortBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+class EffortBoundary extends Component<{ children?: ReactNode; fallbackText: string }, { error: string | null }> {
   state: { error: string | null } = { error: null }
   static getDerivedStateFromError(error: unknown): { error: string } {
     return { error: error instanceof Error ? error.message : String(error) }
@@ -56,7 +56,7 @@ class EffortBoundary extends Component<{ children: ReactNode }, { error: string 
       return createElement(
         'div',
         { style: { color: '#c00', fontSize: '11px', whiteSpace: 'pre-wrap', padding: '6px' } },
-        `思考强度渲染失败: ${this.state.error}`,
+        `${this.props.fallbackText}: ${this.state.error}`,
       )
     }
     return this.props.children
@@ -126,8 +126,7 @@ export function apply(ctx: ClientContext): void {
           const renderEditor = (p: typeof props): void => {
             reactRoot.render(createElement(
               EffortBoundary,
-              null,
-              createElement(EffortEditor, p),
+              { fallbackText: t('renderFailed'), children: createElement(EffortEditor, p) },
             ))
           }
           renderEditor(props)

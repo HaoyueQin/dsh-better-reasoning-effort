@@ -19,9 +19,13 @@ function fakeSettings(providers: Record<string, unknown> | undefined) {
     get(ns: string): unknown {
       return ns === 'llm-pi-ai' && current !== undefined ? { providers: current } : undefined
     },
-    describe(): Array<{ ns: string; revision: number }> {
+    describe(): Array<{ ns: string; revision: number; value?: unknown; user?: unknown }> {
       // Registered namespaces only: before llm-pi-ai registers, the list is empty.
-      return current === undefined ? [] : [{ ns: 'llm-pi-ai', revision }]
+      // The descriptor carries the raw USER layer too — the autofill builds its
+      // patch from it, never from the resolved view.
+      return current === undefined
+        ? []
+        : [{ ns: 'llm-pi-ai', revision, value: { providers: current }, user: { providers: current } }]
     },
     async update(ns: string, patch: object, expectedRevision?: number): Promise<void> {
       if (expectedRevision !== undefined && expectedRevision !== revision) {
@@ -50,6 +54,9 @@ function fakeHost(
   const listeners: Array<(ns: unknown) => void> = []
   const routes = new Map<string, (req: unknown, res: unknown) => Promise<void>>()
   const ctx = {
+    // apply reads the settings service directly (module-level inject already
+    // guarantees it); the inner inject remains for webServer only.
+    settings,
     inject(deps: string[], cb: (injected: Record<string, unknown>) => void): void {
       const injected: Record<string, unknown> = {}
       if (deps.includes('settings')) injected['settings'] = settings
@@ -317,7 +324,32 @@ describe('apply() probe route', () => {
     vi.unstubAllGlobals()
   })
 
-  it('refuses a non-loopback Host with no browser trust signal at all', async () => {
+  it('admits an IP-literal LAN Host with no browser trust signal (core parity)', async () => {
+    // Core parity: a deployment serving on 0.0.0.0 trusts its derived LAN IP
+    // literals; a browser cannot produce an IP Host via DNS rebinding, so the
+    // fence admits it and the request fails later on the missing route.
+    const settings = fakeSettings({})
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler(fakeReq({
+      headers: { host: '10.0.0.5:3080' },
+      url: '?route=missing',
+    }), res)
+    expect(out().status).toBe(400)
+    expect(String(out().body['error'])).toContain('no llm-pi-ai provider route')
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses a domain-named non-loopback Host outright', async () => {
+    // The Host fence is THE rebinding defense: a rebound page always names
+    // the attacker's domain here even though the socket lands on this
+    // server. Unlike loopback/IP-literal hosts, named hosts are never
+    // answered — there is no trustedHosts escape hatch yet.
     const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com', models: [] } })
     const { ctx, routes } = fakeHost(settings)
     const { apply } = await import('../src/index.js')
@@ -326,9 +358,32 @@ describe('apply() probe route', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const { res, out } = fakeRes()
-    // A plain non-browser client (curl): no Origin, no Sec-Fetch-Site. The
-    // loopback exemption does not cover a LAN-addressed Host.
-    await handler(fakeReq({ headers: { host: '10.0.0.5:3080' } }), res)
+    // Plain curl against a LAN hostname.
+    await handler(fakeReq({ headers: { host: 'harness.lan:3080' } }), res)
+    expect(out().status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses a TRUE rebound host whose Origin matches and markers look same-origin', async () => {
+    // The real rebinding shape: evil.example re-resolves to this server, so
+    // Origin == Host == evil.example and sec-fetch-site is same-origin —
+    // every string comparison passes. Only the Host fence stops it.
+    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com/v1', apiKeyEnv: 'ALIYUN_KEY', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler(fakeReq({
+      headers: {
+        host: 'evil.example:3080',
+        origin: 'http://evil.example:3080',
+        'sec-fetch-site': 'same-origin',
+      },
+    }), res)
     expect(out().status).toBe(403)
     expect(fetchMock).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
@@ -350,6 +405,39 @@ describe('apply() probe route', () => {
     }), res)
     expect(out().status).toBe(400)
     expect(String(out().body['error'])).toContain('no llm-pi-ai provider route')
+  })
+
+  it('admits a same-site browser caller on an IP-literal LAN Host', async () => {
+    // Same-site (sibling-port) tabs are legitimate GUI deployments too.
+    const settings = fakeSettings({})
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const { res, out } = fakeRes()
+    await handler(fakeReq({
+      headers: { host: '10.0.0.5:3080', 'sec-fetch-site': 'same-site' },
+      url: '?route=missing',
+    }), res)
+    expect(out().status).toBe(400)
+    expect(String(out().body['error'])).toContain('no llm-pi-ai provider route')
+  })
+
+  it('refuses an opaque "null" Origin (sandboxed iframe / file: page)', async () => {
+    const settings = fakeSettings(PROVIDERS)
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler(fakeReq({
+      headers: { host: '127.0.0.1:3080', origin: 'null' },
+    }), res)
+    expect(out().status).toBe(403)
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
   })
 
   it('answers only GET', async () => {

@@ -94,8 +94,13 @@ export function buildAutofillPatch(
  * namespace is not up yet at boot, retry on this bounded schedule before
  * leaving the rest to the next `settings/updated`.
  */
-const BOOT_RETRY_MS = 1000
-const BOOT_RETRY_MAX = 5
+/**
+ * Exponential backoff for the boot fill: llm-pi-ai may register its namespace
+ * well after this plugin on a slow start, and registration emits no event of
+ * its own — the schedule must outlast a realistically slow profile instead of
+ * giving up after a few flat seconds.
+ */
+const BOOT_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000] as const
 
 /** Probe fetch budget: a gateway that cannot answer /models in 15s will not answer the composer either. */
 const PROBE_TIMEOUT_MS = 15_000
@@ -105,34 +110,69 @@ interface CredentialsService {
 }
 
 function isLoopbackHostname(hostname: string): boolean {
-  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]'
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
+}
+
+/** WHATWG-parse a Host/Origin authority (`host` or `host:port`). */
+function parseAuthority(authority: string): URL | undefined {
+  try {
+    // http: is a WHATWG special scheme: parsing yields a hostname or throws,
+    // and normalizes away IPv6 brackets and casing the raw header keeps.
+    return new URL(`http://${authority}`)
+  } catch {
+    return undefined
+  }
 }
 
 /**
- * Browser trust fence for the probe route, mirroring the /api route's
- * semantics: reject declared cross-site requests, reject mismatched Origins,
- * and require some same-origin/same-site browser signal before a non-loopback
- * Host is answered. The route proxies only endpoints the user's own settings
- * already name, but it does so with the stored credential attached — so it
- * must not be callable from elsewhere.
+ * Whether a parsed hostname is an IP literal (IPv4 dotted quad, or IPv6 whose
+ * brackets URL parsing already stripped). A browser fills Host from the URL it
+ * believes it is talking to, so a DNS-rebound page ALWAYS carries the
+ * attacker's domain here — it can never produce an IP-literal Host short of
+ * the user genuinely navigating to that IP.
+ */
+function isIpLiteralHostname(hostname: string): boolean {
+  return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname) || hostname.includes(':')
+}
+
+/**
+ * Browser trust fence for the probe route. It mirrors the core /api fence's
+ * DEFENSE (packages/client/connection/src/api-request-trust.ts) minus one
+ * feature: there is no `trustedHosts` escape hatch yet.
+ *
+ *   - Cross-site requests are refused outright; a same-origin/same-site
+ *     marker never ADMITS anything by itself.
+ *   - An attached Origin must name exactly this authority; the literal
+ *     `null` (sandboxed iframe, file: page) is refused.
+ *   - The Host fence binds every request and is the rebinding defense:
+ *     only loopback names and IP literals are answered. A rebound page
+ *     names the attacker's DOMAIN in Host even though the socket lands on
+ *     this server, so named hosts are always 403.
+ *
+ * The route proxies only endpoints the user's own settings already name, but
+ * it does so with the stored credential attached — so it must not be callable
+ * from elsewhere. LAN deployments serving the GUI under a DOMAIN name get 403
+ * here by design (IP-literal LAN hosts keep working); see README known
+ * limitations until a trustedHosts seam exists.
  */
 function isTrustedRequest(req: IncomingMessage): boolean {
   const host = req.headers.host
   if (typeof host !== 'string' || host.length === 0) return false
+  const hostUrl = parseAuthority(host)
+  if (hostUrl === undefined) return false
   const secFetchSite = req.headers['sec-fetch-site']
   if (secFetchSite === 'cross-site') return false
   const origin = req.headers.origin
   if (typeof origin === 'string') {
+    if (origin === 'null') return false
     try {
-      if (new URL(origin).host !== host) return false
+      if (new URL(origin).host !== hostUrl.host) return false
     } catch {
       return false
     }
   }
-  const hostname = host.split(':')[0]!.toLowerCase()
-  if (isLoopbackHostname(hostname)) return true
-  if (secFetchSite === 'same-origin' || secFetchSite === 'same-site') return true
-  return typeof origin === 'string'
+  const hostname = hostUrl.hostname.toLowerCase()
+  return isLoopbackHostname(hostname) || isIpLiteralHostname(hostname)
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
@@ -147,19 +187,31 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
  * @param ctx - host context.
  */
 export function apply(ctx: Context): void {
-  // The probe route (registered below, possibly before the settings injection
-  // runs) reads the pi-ai section through this closure slot.
-  let piSection: unknown = undefined
+  // Module-level `inject` already guarantees the settings service; using it
+  // directly (instead of a redundant inner ctx.inject) keeps one dependency
+  // declaration as the single source of truth.
+  const settings = ctx.settings
 
-  ctx.inject(['settings'], (settingsCtx) => {
-    const settings = settingsCtx.settings
-    piSection = () => settings.get(PI_NS)
+  // The probe route (registered below) reads the pi-ai section through this
+  // closure slot.
+  const piSection: unknown = () => settings.get(PI_NS)
 
+  {
     /** One autofill pass; resolves false while the pi-ai namespace is unregistered. */
     const autofillOnce = async (): Promise<boolean> => {
       const value = settings.get(PI_NS)
       if (!isRecord(value)) return false
-      const patch = buildAutofillPatch(value['providers'])
+      // Build the patch from the RAW USER layer, never the resolved value:
+      // the fill merges into the user document, and building from the
+      // resolved view would materialize schema defaults / composition-base
+      // models into it wholesale the moment pi-ai grows such layers for its
+      // profile. A namespace whose user section holds no providers has
+      // nothing this plugin may fill.
+      const descriptor = settings.describe().find(entry => entry.ns === PI_NS)
+      const user = descriptor?.user
+      const userProviders = isRecord(user) && isRecord(user['providers']) ? user['providers'] : undefined
+      if (userProviders === undefined) return true
+      const patch = buildAutofillPatch(userProviders)
       if (patch === undefined) return true
       // Optimistic lock: only write while the namespace has not moved past
       // this read. The fill is a background suggestion — losing the race to a
@@ -167,8 +219,7 @@ export function apply(ctx: Context): void {
       // the lock, every fill bumps the revision and invalidates the revision
       // the settings page read, surfacing as SettingsConflictError on the
       // next user save.
-      const revision = settings.describe().find(entry => entry.ns === PI_NS)?.revision
-      await settings.update(PI_NS, patch, revision)
+      await settings.update(PI_NS, patch, descriptor?.revision)
       return true
     }
 
@@ -185,14 +236,15 @@ export function apply(ctx: Context): void {
       timers.clear()
     }, 'dsh-better-reasoning-effort: boot-fill retries')
 
-    // Fill once at boot for models declared before this plugin was installed.
+    // Fill once at boot for models declared before this plugin was installed,
+    // backing off exponentially while llm-pi-ai has not registered yet.
     const bootFill = (attempt: number): void => {
       void autofillOnce().then((ready) => {
-        if (ready || attempt >= BOOT_RETRY_MAX) return
+        if (ready || attempt >= BOOT_RETRY_DELAYS_MS.length) return
         const timer = setTimeout(() => {
           timers.delete(timer)
           bootFill(attempt + 1)
-        }, BOOT_RETRY_MS)
+        }, BOOT_RETRY_DELAYS_MS[attempt])
         timers.add(timer)
       }, logFailure)
     }
@@ -202,7 +254,7 @@ export function apply(ctx: Context): void {
     ctx.on('settings/updated', (ns) => {
       if (ns === PI_NS) void autofillOnce().catch(logFailure)
     })
-  })
+  }
 
   // Same-origin probe route: the browser half's Auto-adapt asks the endpoint's
   // RAW /models listing through here, because the sanctioned llm wire call

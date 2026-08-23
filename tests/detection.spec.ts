@@ -36,6 +36,8 @@ describe('analyzeListingEntry', () => {
       reasoning: true,
       source: 'reasoning_effort',
     })
+    // A null placeholder says nothing — tri-state discipline keeps it unknown.
+    expect(analyzeListingEntry({ reasoning_effort: null })).toEqual({ reasoning: 'unknown', source: null })
   })
 
   it('keeps "no signal" distinct from "explicitly unsupported"', () => {
