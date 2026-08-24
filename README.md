@@ -7,6 +7,7 @@
 ![dsh-plugin](https://img.shields.io/badge/dsh--plugin-ecosystem-4d6bfe)
 ![Version](https://img.shields.io/badge/version-0.2.0-4d6bfe)
 ![Docs](https://img.shields.io/badge/docs-EN%20%7C%20ZH-4d6bfe)
+[![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 
 **English** | [中文](README.zh.md)
 
