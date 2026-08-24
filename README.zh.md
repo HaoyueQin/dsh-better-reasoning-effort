@@ -119,14 +119,6 @@ host 侧接受可选的配置项（以下是默认值）：
 - **写入**：`src/client/ops.ts` 的 `createEditorApi()`，`settings.mutate` 按路径改写 `providers.<route>.models[i].reasoningEfforts`——有模态意图时一并改写 `.input`——保留行内其他字段；冲突时自动重读重试一次（与官方设置表单相同的恢复策略）。
 - **共享常量**：`src/constants.ts` 承载插件 id、设置命名空间、DOM 标记，host 与浏览器共用。
 
-## 与同类插件的区别
-
-| | better-model-provider | dsh-reasoning-effort-autofill | HanaAyane/dsh-reasoning-effort | 本插件 |
-|---|---|---|---|---|
-| 编辑入口 | 独立设置页 | 无 UI（静默填充） | 独立设置页（粘贴 YAML） | **官方模型编辑卡内** |
-| 自动适配 | 无 | 写死 OpenAI 档位 | 诊断 + 粘贴 | **知识库 + 协议推断**，一键填入 |
-| 官方页融合 | 否 | 否 | 否 | **是**（DOM 注入） |
-
 ## 开发
 
 ```bash

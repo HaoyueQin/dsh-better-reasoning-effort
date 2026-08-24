@@ -121,14 +121,6 @@ Browser (lib/client.js)                  Host (lib/index.js)
 - **Writing**: `createEditorApi()` in `src/client/ops.ts` rewrites `providers.<route>.models[i].reasoningEfforts` — and, when an intent travels, `.input` — via `settings.mutate`, preserving every other row field; on a revision conflict it re-reads and retries once (the same recovery the official settings form uses).
 - **Shared constants**: `src/constants.ts` carries the plugin id, settings namespace, and DOM marker used by both halves.
 
-## Comparison
-
-| | better-model-provider | dsh-reasoning-effort-autofill | HanaAyane/dsh-reasoning-effort | This plugin |
-|---|---|---|---|---|
-| Edit entry | separate settings page | no UI (silent fill) | separate settings page (paste YAML) | **inside the official model editor card** |
-| Auto-adapt | none | hard-coded OpenAI levels | diagnose + paste | **knowledge base + protocol inference**, one click |
-| Official page fusion | no | no | no | **yes** (DOM injection) |
-
 ## Development
 
 ```bash
