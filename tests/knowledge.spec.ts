@@ -64,7 +64,8 @@ describe('matchKnowledgeBase', () => {
   it('matches the 2026 families this update added', () => {
     expect(matchKnowledgeBase('gemini-3.7-flash')?.id).toBe('google-gemini')
     expect(matchKnowledgeBase('gemini-2.5-pro')?.id).toBe('google-gemini')
-    expect(matchKnowledgeBase('grok-4.7')?.id).toBe('xai-grok-high')
+    // grok-4.7 does not exist upstream (404, re-checked 2026-08-24) and
+    // was removed from the entry patterns.
     expect(matchKnowledgeBase('grok-4.6')?.id).toBe('xai-grok-high')
     expect(matchKnowledgeBase('grok-4.5')?.id).toBe('xai-grok-4-5')
     expect(matchKnowledgeBase('grok-4.3')?.id).toBe('xai-grok-4-3')
@@ -83,10 +84,17 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('step-3.5-flash')?.id).toBe('step-3-5')
     expect(matchKnowledgeBase('magistral-medium-1.2')?.id).toBe('mistral-magistral')
     expect(matchKnowledgeBase('mistral-medium-3.5')?.id).toBe('mistral-medium-3')
-    // MiniMax deliberately carries no entry: its official API takes no
-    // reasoning_effort, and a made-up ladder would be worse than the honest
-    // low-confidence generic suggestion.
-    expect(matchKnowledgeBase('MiniMax-M3')).toBeUndefined()
+    // MiniMax-M3: official README declares a thinking parameter with
+    // enabled/adaptive/disabled -- no effort ladder, but a REAL toggle that
+    // the deepseek-shaped declaration expresses honestly.
+    expect(matchKnowledgeBase('MiniMax-M3')?.id).toBe('minimax-m3')
+    expect(matchKnowledgeBase('gpt-5.4-pro')?.id).toBe('openai-gpt-5-4')
+    expect(matchKnowledgeBase('gpt-5.3-codex')?.id).toBe('openai-gpt-5-3')
+    expect(matchKnowledgeBase('gpt-5.2-chat')?.id).toBe('openai-chat')
+    expect(matchKnowledgeBase('gpt-chat-latest')?.id).toBe('openai-chat')
+    expect(matchKnowledgeBase('gpt-oss-120b')?.id).toBe('openai-gpt-oss')
+    expect(matchKnowledgeBase('kimi-k2.7-code')?.id).toBe('kimi-k27-code')
+    expect(matchKnowledgeBase('kimi-k2.5')?.id).toBe('kimi-k2-vision')
   })
 })
 
@@ -204,7 +212,7 @@ describe('suggestEfforts', () => {
 
   it('infers deepseek levels on a deepseek route', () => {
     const suggestion = suggestEfforts('mystery-model', { baseURL: 'https://api.deepseek.com' })
-    expect(suggestion.efforts).toEqual({ off: null, high: 'high', max: 'max' })
+    expect(suggestion.efforts).toEqual({ off: 'off', low: 'low', high: 'high', max: 'max' })
   })
 
   it('does not write a compat block for a route with no explicit protocol clues', () => {
