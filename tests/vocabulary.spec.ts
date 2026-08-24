@@ -113,6 +113,8 @@ describe('knowledge base vocabulary grid', () => {
 
   it('keeps every efforts dict inside pi-ai resolution rules', () => {
     for (const entry of KNOWLEDGE_BASE) {
+      // `false` entries (non-reasoning generations) have no ladder to pin.
+      if (entry.efforts === false) continue
       assertEffortsShape(entry.efforts)
     }
   })
@@ -135,8 +137,10 @@ describe('knowledge base vocabulary grid', () => {
         const suggestion = suggestEfforts(probe, { api })
         const efforts = suggestion.efforts
         expect(efforts, `${entry.id} x ${api}`).toBeDefined()
-        // Knowledge-base entries always carry a dict here; the `false` arm
-        // of the union only exists for explicit endpoint refusals.
+        // `false` is the honest "this family does not reason" suggestion
+        // (non-reasoning generations like GPT-4o); nothing else to grid.
+        if (efforts === false) continue
+        expect(efforts, `${entry.id} x ${api}`).toBeDefined()
         assertEffortsShape(efforts as ReasoningEfforts)
         for (const field of Object.keys(suggestion.compat ?? {})) {
           expect(

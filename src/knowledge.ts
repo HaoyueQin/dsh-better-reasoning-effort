@@ -65,8 +65,13 @@ export interface KnowledgeEntry {
   id: string
   /** Model id/name patterns (lowercase substring match). */
   patterns: readonly string[]
-  /** Level set + wire spellings to declare. */
-  efforts: ReasoningEfforts
+  /**
+   * Level set + wire spellings to declare. `false` marks a family the
+   * official catalog serves WITHOUT any reasoning control (GPT-4o / GPT-4
+   * generations): suggesting a ladder there would have the composer send
+   * reasoning_effort and get a 400 from the real endpoint.
+   */
+  efforts: ReasoningEfforts | false
   /** Optional compat block to declare alongside the efforts. */
   compat?: CompatSuggestion
   /**
@@ -173,7 +178,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     efforts: { off: 'off', low: 'low', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
     input: ['text', 'image'],
-    contextWindow: 1_000_000,
+    contextWindow: 1_048_576,
     maxTokens: 384_000,
     note: 'DeepSeek V4 视觉实验版：官方目录标注图片输入。',
   },
@@ -190,8 +195,8 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 1_048_576,
-    maxTokens: 128_000,
-    note: 'DeepSeek V4 官方档位：Off / Low / High / Max。容量取 flash 官方值（pro 略低）；vision 实验版见单独条目。',
+    maxTokens: 384_000,
+    note: 'DeepSeek V4 官方档位：Off / Low / High / Max。官方容量通栏 1M / 384K；vision 实验版见单独条目。',
   },
   {
     id: 'deepseek-v3',
@@ -230,6 +235,31 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     contextWindow: 400_000,
     maxTokens: 128_000,
     note: 'GPT-5.2 档位：None / Low / Medium / High / XHigh（默认 None）。官方另支持 PDF 输入（核心词表暂不含）。',
+  },
+  {
+    id: 'openai-gpt-5-6',
+    patterns: ['gpt-5.6'],
+    // gpt-5.6 spans the full modern ladder including max; the sol/luna/terra
+    // variants share it (official reasoning guide: values "can include none
+    // minimal low medium high xhigh, and max").
+    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    note: 'GPT-5.6 档位：None / Low / Medium / High / XHigh / Max；sol/luna/terra 变体同档。',
+  },
+  {
+    id: 'openai-gpt-5-5',
+    patterns: ['gpt-5.5'],
+    // gpt-5.5 defaults to medium (official reasoning guide) and tops out at
+    // xhigh; the -pro variant drops none/low (medium/high/xhigh only).
+    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    note: 'GPT-5.5 档位：None / Low / Medium / High / XHigh（默认 Medium）。pro 变体仅 Medium/High/XHigh，按需删档。',
   },
   {
     id: 'openai-gpt-5-1',
@@ -277,20 +307,23 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // generation needs its own entry. gpt-4.1 keeps the base entry (its
     // nano variant is text-only; tune by hand).
     patterns: ['gpt-4o'],
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
-    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    // GPT-4o is not a reasoning model (official catalog lists no reasoning,
+    // the API refuses reasoning_effort): suggest `false` so the editor
+    // marks the row "does not reason" instead of wiring a rejected ladder.
+    efforts: false,
     input: ['text', 'image'],
     contextWindow: 128_000,
     maxTokens: 16_384,
-    note: 'GPT-4o 代际：图片输入全系标配（PDF 另支持）。',
+    note: 'GPT-4o 代际：非推理模型，不支持 effort 参数（勿勾思考档）；图片输入全系标配。',
   },
   {
     id: 'openai-gpt',
     patterns: ['gpt-4', 'gpt-3.5'],
-    efforts: { off: null, low: 'low', medium: 'medium', high: 'high' },
-    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    // Same reasoning as gpt-4o above: the GPT-4/3.5 generations take no
+    // reasoning_effort -- suggest `false` rather than a rejected ladder.
+    efforts: false,
     input: ['text'],
-    note: 'OpenAI 通用档位（gpt-4 系不思考，发档位可能被忽略）；gpt-4-turbo 起支持图片，按需手勾。',
+    note: 'GPT-4/3.5 代际：非推理模型，不支持 effort 参数（勿勾思考档）；gpt-4-turbo/4.1 起支持图片，按需手勾。',
   },
   {
     id: 'anthropic-claude-5',
@@ -310,6 +343,30 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     note: 'Claude 5 代档位（经 OpenAI 兼容层）：Low / Medium / High / XHigh / Max。官方支持 PDF 输入（核心词表暂不含）。',
   },
   {
+    id: 'anthropic-claude-opus-4-high',
+    patterns: ['claude-opus-4-8', 'claude-opus-4-7'],
+    // Official effort page: Opus 4.7/4.8 take the full ladder including
+    // xhigh and max (xhigh is the recommended coding start on 4.7).
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    compat: { supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    note: 'Claude Opus 4.7/4.8 档位（经 OpenAI 兼容层）：Low / Medium / High / XHigh / Max。',
+  },
+  {
+    id: 'anthropic-claude-4-6',
+    patterns: ['claude-opus-4-6', 'claude-sonnet-4-6'],
+    // Official effort page: the 4.6 generation supports max but NOT xhigh
+    // ("some models that support max don't support xhigh").
+    efforts: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
+    compat: { supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    note: 'Claude 4.6 代档位（经 OpenAI 兼容层）：Low / Medium / High / Max（无 XHigh）。',
+  },
+  {
     id: 'anthropic-claude',
     // 4.x generation through OpenAI-compatible gateways. Every current
     // model takes low/medium/high; xhigh/max arrive with 4.6+/5 (see the
@@ -319,8 +376,8 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     compat: { supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 200_000,
-    maxTokens: 32_000,
-    note: 'Claude 4.x 档位（经 OpenAI 兼容层）：Low / Medium / High。',
+    maxTokens: 64_000,
+    note: 'Claude 4.x 档位（经 OpenAI 兼容层）：Low / Medium / High。4.5 代走 budget_tokens 无 effort 档；4.6 代与 Opus 4.7+ 见单独条目。',
   },
   {
     id: 'google-gemini',
@@ -333,7 +390,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_048_576,
-    maxTokens: 64_000,
+    maxTokens: 65_536,
     note: 'Gemini 3.x 档位：Minimal / Low / Medium / High，无关闭档。官方另收音频/视频/PDF（核心词表暂不含）。',
   },
   {
@@ -347,6 +404,30 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     contextWindow: 500_000,
     maxTokens: 500_000,
     note: 'Grok 4.6/4.7 档位：Low / Medium / High / XHigh，无关闭档。官方另支持 PDF 输入（4.7 容量待核实）。',
+  },
+  {
+    id: 'xai-grok-4-5',
+    // grok-4.5 keeps the three-step ladder but gained image input and
+    // 500K/500K capacities (official listing).
+    patterns: ['grok-4.5'],
+    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 500_000,
+    maxTokens: 500_000,
+    note: 'Grok 4.5 档位：Low / Medium / High（带视觉）。',
+  },
+  {
+    id: 'xai-grok-4-3',
+    // grok-4.3 (official listing): none reappears as the no-thinking value,
+    // 1M context with a 30K output cap.
+    patterns: ['grok-4.3'],
+    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 30_000,
+    note: 'Grok 4.3 档位：None / Low / Medium / High（带视觉）。',
   },
   {
     id: 'xai-grok',
@@ -375,13 +456,16 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
   },
   {
     id: 'mistral-medium-3',
-    patterns: ['mistral-medium-3'],
-    efforts: { low: 'low', medium: 'medium', high: 'high' },
+    // The 2603/2604 generation (Small 2603, Medium 3.5) collapsed
+    // reasoning_effort to none/high in the official listing; older Medium
+    // builds (2505/2508) do not reason at all.
+    patterns: ['mistral-medium-3', 'mistral-medium-2604', 'mistral-small-2603'],
+    efforts: { off: 'none', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 262_144,
-    maxTokens: 32_768,
-    note: 'Mistral Medium 3.x 档位：Low / Medium / High（带视觉）。',
+    maxTokens: 262_144,
+    note: 'Mistral Small 2603 / Medium 3.5 档位：None / High（带视觉）。更早的 Medium 2508 非推理。',
   },
   {
     id: 'qwen-vision',
@@ -393,7 +477,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     efforts: { off: null, high: 'high' },
     compat: { thinkingFormat: 'qwen' },
     input: ['text', 'image'],
-    contextWindow: 128_000,
+    contextWindow: 131_072,
     maxTokens: 8_192,
     note: '通义视觉线（Qwen-VL/QvQ）：enable_thinking 开关（开=High），收图。qwen3-vl 容量更大，按需上调。',
   },
@@ -408,15 +492,17 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     efforts: { off: null, high: 'high' },
     compat: { thinkingFormat: 'qwen' },
     input: ['text'],
-    contextWindow: 262_144,
+    contextWindow: 1_000_000,
     maxTokens: 65_536,
-    note: '通义千问：enable_thinking 开关（无 effort 档），开=High。视觉线见 qwen-vision 条目。',
+    note: '通义千问：enable_thinking 开关（无 effort 档），开=High。容量取 qwen-plus/max 现役值，各代不一。视觉线见 qwen-vision 条目。',
   },
   {
     id: 'glm-vision',
     // Zhipu's vision lines: glm-4v / glm-4.6v / glm-5v. Longer than the
     // plain 'glm' patterns, so they win for those ids.
-    patterns: ['glm-4v', 'glm-46v', 'glm-5v'],
+    // 'glm-4-6v' (not 'glm-46v'): normalization folds 'glm-4.6v' to
+    // 'glm 4 6v', so the pattern must carry the same inner separator.
+    patterns: ['glm-4v', 'glm-4-6v', 'glm-5v'],
     efforts: { off: null, high: 'high' },
     compat: { thinkingFormat: 'zai' },
     input: ['text', 'image'],
@@ -432,7 +518,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     efforts: { low: 'low', high: 'high', max: 'max' },
     compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
     input: ['text'],
-    note: 'GLM-5.3 档位：Low / High / Max（强制思考）。',
+    contextWindow: 1_048_576,
+    maxTokens: 131_072,
+    note: 'GLM-5.3 档位：Low / High / Max（强制思考，其余值报错）。官方容量 1M / 128K。',
   },
   {
     id: 'glm-5-2',
@@ -445,7 +533,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     input: ['text'],
     contextWindow: 1_048_576,
     maxTokens: 131_072,
-    note: 'GLM-5.2 档位：None / Minimal / Low / Medium / High / XHigh / Max。视觉线见 glm-vision 条目。',
+    // Official capability page: none/minimal stop thinking, low/medium map
+    // to high, xhigh maps to max -- all seven spellings are accepted.
+    note: 'GLM-5.2 档位：None / Minimal / Low / Medium / High / XHigh / Max（官方映射：Low·Medium→High、XHigh→Max、None·Minimal=停止思考）。视觉线见 glm-vision 条目。',
   },
   {
     id: 'glm',
@@ -472,15 +562,16 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
   },
   {
     id: 'kimi-k2-vision',
-    // K2.5/K2.6/K2.7 gained image input (K2.5 adds video per some catalogs);
-    // longer patterns beat the plain 'kimi' stem below.
-    patterns: ['kimi-k2.5', 'kimi-k2.6', 'kimi-k2.7'],
+    // K2.6/K2.7 gained image input (the official listing marks K2.5
+    // text-only; K2.7 Code is documented as multi-modal); longer patterns
+    // beat the plain 'kimi' stem below.
+    patterns: ['kimi-k2.6', 'kimi-k2.7'],
     efforts: { off: null, high: 'high' },
     compat: { thinkingFormat: 'deepseek' },
     input: ['text', 'image'],
     contextWindow: 256_000,
     maxTokens: 256_000,
-    note: 'Kimi K2.5+ 视觉代：thinking 开关（开=High），收图。',
+    note: 'Kimi K2.6/2.7 视觉代：thinking 开关（开=High），收图。K2.5 无图，见 kimi 通用条目。',
   },
   {
     id: 'kimi',
@@ -493,8 +584,8 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     compat: { thinkingFormat: 'deepseek' },
     input: ['text'],
     contextWindow: 262_144,
-    maxTokens: 131_072,
-    note: 'Kimi K2.x：thinking 开关（无 effort 档），开=High。视觉代见 kimi-k2-vision 条目。',
+    maxTokens: 262_144,
+    note: 'Kimi K2.x（含 K2.5）：thinking 开关（无 effort 档），开=High。视觉代见 kimi-k2-vision 条目。',
   },
   {
     id: 'hunyuan-hy3',
@@ -516,9 +607,20 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     efforts: { low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
-    contextWindow: 262_144,
+    contextWindow: 256_000,
     maxTokens: 256_000,
     note: '阶跃 Step-3.6/3.7 档位：Low / Medium / High（带视觉）。',
+  },
+  {
+    id: 'step-3-5',
+    // step-3.5-flash (official listing): only low/high, text-only.
+    patterns: ['step-3.5'],
+    efforts: { low: 'low', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text'],
+    contextWindow: 256_000,
+    maxTokens: 256_000,
+    note: '阶跃 Step-3.5 档位：Low / High（纯文本）。',
   },
   {
     id: 'step',

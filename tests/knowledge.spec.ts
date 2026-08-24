@@ -38,6 +38,10 @@ describe('matchKnowledgeBase', () => {
   it('matches OpenAI reasoning models by generation', () => {
     expect(matchKnowledgeBase('o3-mini')?.id).toBe('openai-o')
     expect(matchKnowledgeBase('gpt-5.2')?.id).toBe('openai-gpt-5-2')
+    expect(matchKnowledgeBase('gpt-5.6')?.id).toBe('openai-gpt-5-6')
+    expect(matchKnowledgeBase('gpt-5.5')?.id).toBe('openai-gpt-5-5')
+    expect(matchKnowledgeBase('claude-opus-4.7')?.id).toBe('anthropic-claude-opus-4-high')
+    expect(matchKnowledgeBase('claude-sonnet-4.6')?.id).toBe('anthropic-claude-4-6')
     expect(matchKnowledgeBase('gpt-5.1-codex')?.id).toBe('openai-gpt-5-1')
     expect(matchKnowledgeBase('gpt-5-mini')?.id).toBe('openai-gpt-5')
   })
@@ -62,7 +66,8 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('gemini-2.5-pro')?.id).toBe('google-gemini')
     expect(matchKnowledgeBase('grok-4.7')?.id).toBe('xai-grok-high')
     expect(matchKnowledgeBase('grok-4.6')?.id).toBe('xai-grok-high')
-    expect(matchKnowledgeBase('grok-4.5')?.id).toBe('xai-grok')
+    expect(matchKnowledgeBase('grok-4.5')?.id).toBe('xai-grok-4-5')
+    expect(matchKnowledgeBase('grok-4.3')?.id).toBe('xai-grok-4-3')
     expect(matchKnowledgeBase('claude-fable-5')?.id).toBe('anthropic-claude-5')
     expect(matchKnowledgeBase('claude-opus-5')?.id).toBe('anthropic-claude-5')
     expect(matchKnowledgeBase('claude-sonnet-4.5')?.id).toBe('anthropic-claude')
@@ -75,7 +80,7 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('hy3-preview')?.id).toBe('hunyuan-hy3')
     // The 3.6/3.7 vision generation keys its own entry.
     expect(matchKnowledgeBase('step-3.7-flash')?.id).toBe('step-3-7')
-    expect(matchKnowledgeBase('step-3.5-flash')?.id).toBe('step')
+    expect(matchKnowledgeBase('step-3.5-flash')?.id).toBe('step-3-5')
     expect(matchKnowledgeBase('magistral-medium-1.2')?.id).toBe('mistral-magistral')
     expect(matchKnowledgeBase('mistral-medium-3.5')?.id).toBe('mistral-medium-3')
     // MiniMax deliberately carries no entry: its official API takes no
@@ -217,7 +222,7 @@ describe('modality + capacity fusion', () => {
     expect(s.input).toEqual(['text'])
     expect(s.inputSource).toBe('knowledge')
     expect(s.contextWindow).toBe(1048576)
-    expect(s.maxTokens).toBe(128000)
+    expect(s.maxTokens).toBe(384000)
     expect(s.confidence).toBe('high')
   })
 
@@ -246,7 +251,7 @@ describe('modality + capacity fusion', () => {
   it('a disclosed context length replaces the reference value', () => {
     const s = suggestEfforts('deepseek-v4-flash', {}, { ...silent, contextLength: 65536 })
     expect(s.contextWindow).toBe(65536)
-    expect(s.maxTokens).toBe(128000)
+    expect(s.maxTokens).toBe(384000)
   })
 
   it('keeps modality parts when the endpoint refuses reasoning', () => {
