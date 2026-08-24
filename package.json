@@ -1,6 +1,6 @@
 {
   "name": "dsh-better-reasoning-effort",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Third-party provider reasoning-effort AND input-modality settings for DeepSeek Harness: thinking levels and image-input support declared per model, auto-adapted from a model knowledge base + wire-protocol inference, edited right inside the official Models page card.",
   "license": "MIT",
   "repository": {
