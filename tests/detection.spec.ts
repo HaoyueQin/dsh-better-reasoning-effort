@@ -38,6 +38,8 @@ describe('analyzeListingEntry', () => {
     })
     // A null placeholder says nothing — tri-state discipline keeps it unknown.
     expect(analyzeListingEntry({ reasoning_effort: null })).toEqual({ reasoning: 'unknown', source: null })
+    // So does an empty-string filler some gateways emit.
+    expect(analyzeListingEntry({ reasoning_effort: '' })).toEqual({ reasoning: 'unknown', source: null })
   })
 
   it('keeps "no signal" distinct from "explicitly unsupported"', () => {

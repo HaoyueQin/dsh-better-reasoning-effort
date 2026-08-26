@@ -100,10 +100,12 @@ export function analyzeListingEntry(entry: unknown): EndpointSignal {
   if (hasBoolean(entry, 'reasoning')) {
     return { ...signalParts(entry), reasoning: entry['reasoning'] as boolean, source: 'reasoning' }
   }
-  // A present, meaningful effort field signals support; a null placeholder
-  // says nothing and must stay 'unknown' (tri-state discipline).
+  // A present, meaningful effort field signals support; a null placeholder —
+  // or an empty string, which some gateways emit as a filler — says nothing
+  // and must stay 'unknown' (tri-state discipline).
+  const effortField = entry['reasoning_effort']
   if (
-    (entry['reasoning_effort'] !== undefined && entry['reasoning_effort'] !== null) ||
+    (effortField !== undefined && effortField !== null && !(typeof effortField === 'string' && effortField.trim().length === 0)) ||
     entry['supports_reasoning_effort'] === true
   ) {
     return { ...signalParts(entry), reasoning: true, source: 'reasoning_effort' }
