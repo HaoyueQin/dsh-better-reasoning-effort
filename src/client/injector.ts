@@ -24,8 +24,8 @@
  */
 
 import { INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../constants.js'
-import type { CompatSuggestion, InputModalities, ReasoningEfforts } from '../knowledge.js'
-import { modelsOf } from '../shared.js'
+import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../knowledge.js'
+import { modelsOf, routeFactsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
 import { createEditorApi, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
 import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from './types.js'
@@ -103,7 +103,9 @@ export interface EditorMountProps {
   input?: InputModalities
   /** Row ordinal among the models found in this scan (for aria labels). */
   index: number
-  /** True on a create card: Apply stages the declaration instead of writing. */
+  /** True while the row is unsaved (a create card's draft route, or a new
+   * model row on a saved route): Apply stages the declaration instead of
+   * writing, and the injector lands it once the row is saved. */
   staged?: boolean
   api: EffortEditorApi
   readOnly: boolean
@@ -180,19 +182,35 @@ export interface EffectiveStagedIntents {
 export function effectiveStagedIntents(
   declaration: StagedDeclaration,
   current: Record<string, unknown> | undefined,
+  autofill?: AutofillFootprint,
 ): EffectiveStagedIntents | null {
   if (current === undefined) return null
   // Ladder part: a declaration or a deliberate-unset marker on the row owns
-  // it (including one this plugin's own autofill wrote in the route-creation
-  // window); 'keep' means the staging never carried the ladder anyway.
-  const ladderTaken =
-    current['reasoningEfforts'] !== undefined
-    || current[UNSET_MARKER] === true
-    || declaration.efforts === 'keep'
-  // Modality part: a real declaration or the durable unset marker owns it.
-  const inputTaken =
-    (Array.isArray(current['input']) && current['input'].length > 0)
-    || current[INPUT_UNSET_MARKER] === true
+  // it — EXCEPT when the declaration is byte-identical to what this plugin's
+  // own host autofill writes for the model (the knowledge base proposal it
+  // lays down in the route-creation window). Those bytes are a suggestion,
+  // not a user decision, so a staged intent outranks them; anything else
+  // (a hand-tuned ladder, a marker) is a real takeover. 'keep' means the
+  // staging never carried the ladder anyway.
+  const ladderAutofilled =
+    current[UNSET_MARKER] !== true
+    && autofill?.efforts !== undefined
+    && sameEffortsValue(current['reasoningEfforts'], autofill.efforts)
+  const ladderTaken = ladderAutofilled
+    ? false
+    : current['reasoningEfforts'] !== undefined
+      || current[UNSET_MARKER] === true
+      || declaration.efforts === 'keep'
+  // Modality part: same rule — the autofill's knowledge-base disclosure does
+  // not answer over a staged choice; a hand-made or differing one does.
+  const inputAutofilled =
+    current[INPUT_UNSET_MARKER] !== true
+    && autofill?.input !== undefined
+    && sameInputList(current['input'], autofill.input)
+  const inputTaken = inputAutofilled
+    ? false
+    : (Array.isArray(current['input']) && current['input'].length > 0)
+      || current[INPUT_UNSET_MARKER] === true
   const efforts: EffortWriteIntent = ladderTaken ? 'keep' : declaration.efforts
   const input = inputTaken ? undefined : declaration.input
   if (efforts === 'keep' && input === undefined) return null
@@ -203,15 +221,44 @@ export function effectiveStagedIntents(
   }
 }
 
+/** What this plugin's host autofill would write for one model, as the flush compares it. */
+export interface AutofillFootprint {
+  efforts?: ReasoningEfforts | false
+  input?: InputModalities
+}
+
+/** Semantic equality of two reasoningEfforts dict values (key set + wire strings). */
+function sameEffortsValue(a: unknown, b: ReasoningEfforts | false): boolean {
+  if (a === b) return true
+  if (!isRecordValue(a) || typeof b !== 'object' || b === null || Array.isArray(b)) return false
+  const keys = Object.keys(b)
+  if (Object.keys(a).length !== keys.length) return false
+  return keys.every(key => (a as Record<string, unknown>)[key] === (b as Record<string, unknown>)[key])
+}
+
+/** Semantic equality of a raw input value with a modality list (order-insensitive). */
+function sameInputList(a: unknown, b: InputModalities): boolean {
+  if (!Array.isArray(a) || a.length !== b.length) return false
+  const set = new Set<string>(b)
+  return a.every(member => typeof member === 'string' && set.has(member))
+}
+
+/** Plain-object guard local to this module (shared.ts's isRecord stays host/client-neutral). */
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 /**
  * Flush staged declarations for routes that now exist, writing each model's
  * declaration through the live write seam. A model the saved profile does not
- * carry is dropped (the create card's final rows are the truth); each PART is
- * decided against the saved row via {@link effectiveStagedIntents} -- staging
- * never overwrites what the document already says, and a part the document
- * took over never silences its sibling. A write that still fails (conflict
- * retry exhausted) stays staged; the write's own document-updated
- * invalidation re-scans and re-flushes it.
+ * carry yet keeps its staging (the row may still be mid-creation -- the user
+ * edits the card after staging -- and the declaration lands whenever the row
+ * first appears); each PART is decided against the saved row via
+ * {@link effectiveStagedIntents}, with the host autofill's knowledge-base
+ * footprint passed in so the plugin's own proposal never outranks a staged
+ * user intent. A write that still fails (conflict retry exhausted) stays
+ * staged; the write's own document-updated invalidation re-scans and
+ * re-flushes it.
  */
 async function flushRoute(
   deps: InjectorDeps,
@@ -224,7 +271,20 @@ async function flushRoute(
     const join = await deps.describeNamespace()
     const providers = providersOf(join.namespace)
     const current = modelsOf(providers, route).find(model => model['id'] === modelId)
-    const effective = effectiveStagedIntents(declaration, current)
+    // The row is not saved yet (mid-edit card, or the user renamed it):
+    // keep the staging instead of dropping it -- it lands when a row with
+    // this id first appears.
+    if (current === undefined) continue
+    // Mirror the host autofill's suggestion for this exact row (same facts,
+    // same knowledge base) so {@link effectiveStagedIntents} can tell the
+    // plugin's own proposal apart from a user decision.
+    const routeInfo = routeFactsOf(providers, route)
+    const name = typeof current['name'] === 'string' ? current['name'] : undefined
+    const suggestion = suggestEfforts(modelId, name === undefined ? routeInfo : { ...routeInfo, displayName: name })
+    const effective = effectiveStagedIntents(declaration, current, {
+      ...(suggestion.efforts === undefined ? {} : { efforts: suggestion.efforts }),
+      ...(suggestion.input === undefined ? {} : { input: suggestion.input }),
+    })
     if (effective === null) {
       stageEffortsInto(state, route, modelId, undefined)
       continue
@@ -442,11 +502,16 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     found.forEach((target, index) => {
       const resolved = routeOfCard(target.card, providers)
       if (resolved === undefined) return
-      const { route, staged } = resolved
+      const { route, staged: routeStaged } = resolved
       const profile = providers[route] ?? {}
       const models = modelsOf(providers, route)
+      // Staged covers TWO unsaved shapes: the create card's draft route, and
+      // a typed-but-unsaved model row on a SAVED route. Writing the latter
+      // would bounce model-not-found (the row is not in the document yet);
+      // staging rides the same flush-on-save path as the create card.
+      const staged = routeStaged || !models.some(model => model['id'] === target.modelId)
       // A staged row's baseline is the pending store (the settings document
-      // holds nothing for the route yet); the create card's typed protocol
+      // holds nothing for the model yet); the create card's typed protocol
       // and endpoint stand in for the stored profile facts, both for the
       // editor's display and for suggestion inference.
       const stagedEfforts = staged ? state.pending.get(route)?.get(target.modelId)?.efforts : undefined
@@ -457,12 +522,12 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ? state.pending.get(route)?.get(target.modelId)?.input
         : inputOf(models, target.modelId)
       const modelName = staged ? undefined : nameOf(models, target.modelId)
-      const typedApi = staged ? inputValueByLabel(target.card, API_PROTOCOL_ARIA) : ''
-      const typedBaseURL = staged ? inputValueByLabel(target.card, BASE_URL_ARIA) : ''
-      const routeApi = staged && typedApi.length > 0
+      const typedApi = routeStaged ? inputValueByLabel(target.card, API_PROTOCOL_ARIA) : ''
+      const typedBaseURL = routeStaged ? inputValueByLabel(target.card, BASE_URL_ARIA) : ''
+      const routeApi = routeStaged && typedApi.length > 0
         ? typedApi
         : typeof profile['api'] === 'string' ? profile['api'] as string : undefined
-      const routeBaseURL = staged && typedBaseURL.length > 0
+      const routeBaseURL = routeStaged && typedBaseURL.length > 0
         ? typedBaseURL
         : typeof profile['baseURL'] === 'string' ? profile['baseURL'] as string : undefined
       // The editor's write seam reads the namespace LIVE through its own
@@ -471,7 +536,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       // into this scan state's pending store instead of writing settings.
       const next: EditorMountProps = {
         route,
-        routeDisplayName: staged ? route : typeof profile['displayName'] === 'string' ? profile['displayName'] as string : route,
+        routeDisplayName: routeStaged ? route : typeof profile['displayName'] === 'string' ? profile['displayName'] as string : route,
         ...routeApi === undefined ? {} : { routeApi },
         ...routeBaseURL === undefined ? {} : { routeBaseURL },
         modelId: target.modelId,

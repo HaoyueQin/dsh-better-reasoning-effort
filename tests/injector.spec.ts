@@ -8,6 +8,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createScanState, effectiveStagedIntents, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
+import { suggestEfforts, type ReasoningEfforts } from '../src/knowledge.js'
 import type { RemoteApi } from '../src/client/types.js'
 
 /** Build an approximation of the official models page section. */
@@ -662,5 +663,123 @@ describe('effectiveStagedIntents (per-part flush decisions)', () => {
       compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
       input: ['text', 'image'],
     })
+  })
+
+  it('treats a declaration equal to the autofill footprint as not taken over', () => {
+    // The host autofill writes the knowledge base's own suggestion in the
+    // route-creation window; those bytes are this plugin's PROPOSAL, not a
+    // user decision, so a staged intent must outrank them instead of being
+    // withdrawn as "already answered".
+    const kb: ReasoningEfforts = { off: 'none', low: 'low', high: 'high', max: 'max' }
+    const effective = effectiveStagedIntents(
+      { efforts: 'keep', input: ['text', 'image'] },
+      { id: 'x', reasoningEfforts: { ...kb }, input: ['text'] },
+      { efforts: kb, input: ['text'] },
+    )
+    expect(effective).toEqual({ efforts: 'keep', input: ['text', 'image'] })
+  })
+
+  it('still yields to a hand-tuned declaration that differs from the footprint', () => {
+    const effective = effectiveStagedIntents(
+      { efforts: { low: 'low' }, input: ['text', 'image'] },
+      { id: 'x', reasoningEfforts: { high: 'high' }, input: ['text'] },
+      { efforts: { off: 'none', low: 'low', high: 'high', max: 'max' }, input: ['text'] },
+    )
+    expect(effective).toEqual({ efforts: 'keep', input: ['text', 'image'] })
+  })
+})
+
+describe('unsaved model rows on a saved route (the model-not-found flow)', () => {
+  it('mounts a staged editor for a typed-but-unsaved model row on a saved route', async () => {
+    // Adding a model to an EXISTING provider: the row is not in the document
+    // yet, so a direct write bounces model-not-found. The editor must stage
+    // instead, exactly like the create card, and the flush lands the
+    // declaration once the row is saved.
+    let saved = false
+    const describe = vi.fn(async (): Promise<SettingsJoin> => {
+      const local = structuredClone(join)
+      if (saved) {
+        ;(local.namespace!.value as { providers: { aliyun: { models: Array<Record<string, unknown>> } } })
+          .providers.aliyun.models.push({ id: 'qwen-new' })
+      }
+      return local
+    })
+    const deps = makeDeps({ describeNamespace: describe })
+    const state = createScanState()
+    const root = buildModelsDom()
+    const row = [
+      '<div class="modelEntry">',
+      '  <div class="modelRow">',
+      '    <input aria-label="Model ID" value="qwen-new" />',
+      '    <button aria-label="Capacities 3"></button>',
+      '  </div>',
+      '  <div class="modelAdvanced" style="display:block"><label><span>Context window</span><input /></label></div>',
+      '</div>',
+    ].join('\n')
+    root.querySelector('.modelCatalog')?.insertAdjacentHTML('beforeend', row)
+    await settle(() => reconcile(root, deps, state), state)
+    const props = vi.mocked(deps.mount).mock.calls.map(call => call[1] as EditorMountProps)
+    const unsaved = props.find(candidate => candidate.modelId === 'qwen-new')
+    expect(unsaved?.staged).toBe(true)
+
+    // The user clicks Apply: the declaration stages; no settings write yet.
+    stageEffortsInto(state, 'aliyun', 'qwen-new', { low: 'low' }, undefined, ['text', 'image'])
+    // An intermediate scan (the user still editing the card) must NOT
+    // withdraw the staging just because the row is not saved yet.
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.pending.get('aliyun')?.has('qwen-new')).toBe(true)
+
+    // The official save lands the row: the next scan flushes the staged parts.
+    saved = true
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    const op = deps.mutate.mock.calls[0]![0].ops[0]
+    const flushed = (op.value as Array<Record<string, unknown>>).find(model => model['id'] === 'qwen-new')
+    expect(flushed!['reasoningEfforts']).toEqual({ low: 'low' })
+    expect(flushed!['input']).toEqual(['text', 'image'])
+    expect(state.pending.size).toBe(0)
+  })
+
+  it("lets a staged modality choice overwrite the plugin's own autofill footprint", async () => {
+    // The realistic loss behind the disappearing image toggle: the host
+    // autofill fills the fresh row with the knowledge base's text-only
+    // declaration within the route-creation window, and the staged image
+    // choice used to be withdrawn as "already answered" a moment later.
+    const suggestion = suggestEfforts('deepseek-v4-flash-free', { api: 'openai-completions' })
+    expect(suggestion.input).toEqual(['text'])
+    const autofilled: SettingsJoin = structuredClone(join)
+    ;(autofilled.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+      api: 'openai-completions',
+      models: [{
+        id: 'deepseek-v4-flash-free',
+        reasoningEfforts: suggestion.efforts,
+        input: suggestion.input,
+        compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
+      }],
+    }
+    const deps = makeDeps({ describeNamespace: async () => autofilled })
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', 'keep', undefined, ['text', 'image'])
+    const root = buildCreateDom('acme-gateway')
+    await settle(() => reconcile(root, deps, state), state)
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    const op = deps.mutate.mock.calls[0]![0].ops[0]
+    const flushed = (op.value as Array<Record<string, unknown>>)[0]!
+    // The staged image choice overwrote the autofill's text-only input...
+    expect(flushed['input']).toEqual(['text', 'image'])
+    // ...while the 'keep' ladder left the autofilled declaration untouched.
+    expect(flushed['reasoningEfforts']).toEqual(suggestion.efforts)
+    expect(state.pending.size).toBe(0)
   })
 })

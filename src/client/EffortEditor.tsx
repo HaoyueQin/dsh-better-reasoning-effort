@@ -77,9 +77,10 @@ export interface EffortEditorProps {
   /** Model row index (for aria labels). */
   index: number
   /**
-   * The route is a create card's draft: not saved yet. Apply then stages the
-   * declaration instead of writing settings; the injector applies staged
-   * declarations automatically once the route is created.
+   * The model row is not saved yet (a create card's draft route, or a new
+   * model row on a saved route). Apply then stages the declaration instead
+   * of writing settings; the injector applies staged declarations
+   * automatically once the row is saved.
    */
   staged?: boolean
   /** The write seam (settings.mutate plus the suggestion engine). */
