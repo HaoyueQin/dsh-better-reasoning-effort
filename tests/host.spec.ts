@@ -42,6 +42,9 @@ function fakeSettings(providers: Record<string, unknown> | undefined) {
   }
 }
 
+/** Disposers collected from every fakeHost effect(), run after each test. */
+const hostCleanups: Array<() => void> = []
+
 /** Minimal cordis context face capturing what apply() touches. */
 function fakeHost(
   settings: ReturnType<typeof fakeSettings>,
@@ -71,7 +74,11 @@ function fakeHost(
       cb(injected)
     },
     effect(setup: () => () => void, _name?: string): void {
-      setup()
+      // Collect the disposer like the real cordis fiber does: the boot-fill
+      // retry timers must be cleared with the test instead of firing into the
+      // next test's world (previously the cleanup was silently dropped).
+      const disposer = setup()
+      if (typeof disposer === 'function') hostCleanups.push(disposer)
     },
     on(event: string, cb: (ns: unknown) => void): void {
       if (event === 'settings/updated') listeners.push(cb)
@@ -97,6 +104,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  for (const cleanup of hostCleanups.splice(0)) cleanup()
 })
 
 describe('apply() autofill', () => {
