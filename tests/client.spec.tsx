@@ -232,10 +232,10 @@ describe('client apply()', () => {
       join = makeJoin(providers)
       h.emitLocal('connection/reset')
       await waitFor(() => {
-        // The disabled banner appears once the editor re-renders over the
-        // false declaration.
+        // The no-effort-control banner appears once the editor re-renders
+        // over the false declaration.
         const notes = Array.from(document.querySelectorAll('.bre-effort-note'))
-        return notes.some(note => note.textContent?.includes('(false)'))
+        return notes.some(note => note.textContent?.includes('No reasoning-effort control'))
       })
       expect(api.describeSpy.mock.calls.length).toBeGreaterThan(initialDescribes)
     } finally {
