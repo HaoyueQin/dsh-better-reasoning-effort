@@ -122,7 +122,7 @@ describe('createEditorApi', () => {
     if (reply.ok) {
       expect(reply.suggestion.matched).toBe(true)
       expect(reply.suggestion.source).toBe('deepseek-v4')
-      expect(reply.suggestion.efforts).toEqual({ off: 'off', low: 'low', high: 'high', max: 'max' })
+      expect(reply.suggestion.efforts).toEqual({ off: 'none', low: 'low', high: 'high', max: 'max' })
     }
   })
 

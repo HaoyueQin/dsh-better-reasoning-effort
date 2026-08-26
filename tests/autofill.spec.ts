@@ -30,7 +30,7 @@ describe('buildAutofillPatch', () => {
     // The explicitly-disabled model is untouched.
     expect(aliyun.models[1].reasoningEfforts).toBe(false)
     const deepseek = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).deepseek
-    expect(deepseek.models[0].reasoningEfforts).toEqual({ off: 'off', high: 'high', max: 'max' })
+    expect(deepseek.models[0].reasoningEfforts).toEqual({ off: 'none', high: 'high', max: 'max' })
     // Routes with no models produce no patch entry.
     expect((patch!.providers as Record<string, unknown>).empty).toBeUndefined()
   })

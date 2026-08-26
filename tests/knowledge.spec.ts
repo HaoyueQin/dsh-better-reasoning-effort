@@ -30,9 +30,11 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('deepseek-v4-flash-vision-exp')?.id).toBe('deepseek-v4-vision')
     const entry = KNOWLEDGE_BASE.find(candidate => candidate.id === 'deepseek-v4')
     // The off spelling is a non-null placeholder: it arms the deepseek
-    // format's `thinking: disabled` branch (pi-ai sends nothing when null,
-    // which would leave DeepSeek's default thinking on).
-    expect(entry?.efforts).toEqual({ off: 'off', low: 'low', high: 'high', max: 'max' })
+    // format's thinking:disabled branch (pi-ai sends nothing when null,
+    // which would leave DeepSeek's default thinking on) -- and spells
+    // 'none' so the same map is a legal reasoning.effort value on the
+    // Responses API.
+    expect(entry?.efforts).toEqual({ off: 'none', low: 'low', high: 'high', max: 'max' })
   })
 
   it('matches OpenAI reasoning models by generation', () => {
@@ -42,7 +44,7 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('gpt-5.5')?.id).toBe('openai-gpt-5-5')
     expect(matchKnowledgeBase('claude-opus-4.7')?.id).toBe('anthropic-claude-opus-4-high')
     expect(matchKnowledgeBase('claude-sonnet-4.6')?.id).toBe('anthropic-claude-4-6')
-    expect(matchKnowledgeBase('gpt-5.1-codex')?.id).toBe('openai-gpt-5-1')
+    expect(matchKnowledgeBase('gpt-5.1-codex')?.id).toBe('openai-gpt-5-1-codex')
     expect(matchKnowledgeBase('gpt-5-mini')?.id).toBe('openai-gpt-5')
   })
 
@@ -96,6 +98,64 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('kimi-k2.7-code')?.id).toBe('kimi-k27-code')
     expect(matchKnowledgeBase('kimi-k2.5')?.id).toBe('kimi-k2-vision')
   })
+
+  it('keeps verified 2026-08 corrections and additions', () => {
+    // gpt-5.2-codex: official page names low/medium/high/xhigh only -- no
+    // none -- so it must NOT inherit the plain gpt-5.2 entry's off.
+    const codex = matchKnowledgeBase('gpt-5.2-codex')
+    expect(codex?.id).toBe('openai-gpt-5-2-codex')
+    expect(codex?.efforts).toEqual({ low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' })
+    expect(codex?.efforts).not.toHaveProperty('off')
+    // The plain 5.2 keeps its none.
+    expect(matchKnowledgeBase('gpt-5.2')?.id).toBe('openai-gpt-5-2')
+    // gpt-4.1 (and every variant) is text+image, non-reasoning -- the old
+    // "nano text-only" reading was wrong.
+    const g41 = matchKnowledgeBase('gpt-4.1')
+    expect(g41?.id).toBe('openai-gpt-4-1')
+    expect(g41?.efforts).toBe(false)
+    expect(g41?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('gpt-4.1-nano')?.id).toBe('openai-gpt-4-1')
+    // gpt-4-turbo takes images; the preview snapshot stays text-only.
+    expect(matchKnowledgeBase('gpt-4-turbo')?.id).toBe('openai-gpt-4-turbo')
+    expect(matchKnowledgeBase('gpt-4-turbo-preview')?.id).toBe('openai-gpt-4-turbo-preview')
+    expect(matchKnowledgeBase('gpt-4-turbo-preview')?.input).toEqual(['text'])
+    // chat snapshots carry images per official model pages.
+    expect(matchKnowledgeBase('gpt-5.2-chat-latest')?.id).toBe('openai-chat')
+    expect(matchKnowledgeBase('gpt-5.2-chat-latest')?.input).toEqual(['text', 'image'])
+    // claude: mythos-preview lacks xhigh; opus-4-5 tops at high; the rest of
+    // the 3.x/4.5 line declares no effort control.
+    expect(matchKnowledgeBase('claude-mythos-preview')?.id).toBe('anthropic-claude-mythos-preview')
+    expect(matchKnowledgeBase('claude-mythos-preview')?.efforts).not.toHaveProperty('xhigh')
+    expect(matchKnowledgeBase('claude-opus-4-5')?.id).toBe('anthropic-claude-opus-4-5')
+    expect(matchKnowledgeBase('claude-sonnet-4-5')?.id).toBe('anthropic-claude')
+    expect(matchKnowledgeBase('claude-sonnet-4-5')?.efforts).toBe(false)
+    expect(matchKnowledgeBase('claude-sonnet-5')?.id).toBe('anthropic-claude-5')
+    // grok-4.3 documents four levels including none.
+    expect(matchKnowledgeBase('grok-4.3')?.efforts).toEqual({ off: 'none', low: 'low', medium: 'medium', high: 'high' })
+    // qwen3.8-max is multimodal per Alibaba's catalog; mistral-small-2603
+    // (Mistral Small 4) is the reasoning_effort model; GLM-4.5V is a vision
+    // line member; hy3's 256K is on the official README.
+    expect(matchKnowledgeBase('qwen3.8-max')?.id).toBe('qwen-3-8')
+    expect(matchKnowledgeBase('qwen3.8-max')?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('mistral-small-2603')?.id).toBe('mistral-medium-3')
+    expect(matchKnowledgeBase('mistral-medium-3-5')?.id).toBe('mistral-medium-3')
+    expect(matchKnowledgeBase('mistral-medium-3.1')?.id).toBeUndefined()
+    expect(matchKnowledgeBase('glm-4.5v')?.id).toBe('glm-vision')
+    expect(matchKnowledgeBase('hy3-preview')?.id).toBe('hunyuan-hy3')
+    expect(KNOWLEDGE_BASE.find(c => c.id === 'hunyuan-hy3')?.contextWindow).toBe(262_144)
+    // Baidu ERNIE: no reasoning_effort on the official surface.
+    expect(matchKnowledgeBase('ernie-5.0-thinking-preview')?.id).toBe('baidu-ernie')
+    expect(matchKnowledgeBase('ernie-4.5-turbo')?.efforts).toBe(false)
+    // Moonshot V1 vision variants declare images (the generic 'moonshot'
+    // pattern stays text-only for the plain V1 generation line).
+    expect(matchKnowledgeBase('moonshot-v1-128k-vision-preview')?.id).toBe('kimi-moonshot-v1-vision')
+    expect(matchKnowledgeBase('moonshot-v1-128k-vision-preview')?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('moonshot-v1-128k')?.id).toBe('kimi')
+    // abstract 5.1-codex spin-offs split from the plain 5.1 entry.
+    expect(matchKnowledgeBase('gpt-5.1-codex')?.id).toBe('openai-gpt-5-1-codex')
+    expect(matchKnowledgeBase('gpt-5.1-codex-max')?.id).toBe('openai-gpt-5-1-codex')
+    expect(matchKnowledgeBase('gpt-5.1-codex-mini')?.id).toBe('openai-gpt-5-1-codex')
+  })
 })
 
 describe('inferProtocol', () => {
@@ -114,6 +174,9 @@ describe('inferProtocol', () => {
     expect(inferProtocol({ baseURL: 'https://gw.example.com/deepseek/v1' })).toBe('openai-completions')
     expect(inferProtocol({ baseURL: 'https://deepseek.fake-gateway.com/v1' })).toBe('openai-completions')
     expect(inferProtocol({ baseURL: 'https://api.deepseek.com/v1' })).toBe('deepseek')
+    // 'deepseek.ai' resolves to a Vercel-hosted site (76.76.21.21), not
+    // DeepSeek infrastructure -- nothing warrants the native dialect.
+    expect(inferProtocol({ baseURL: 'https://deepseek.ai/v1' })).toBe('openai-completions')
   })
 
   it('defaults unknown endpoints to the OpenAI-compatible protocol', () => {
@@ -131,7 +194,7 @@ describe('suggestEfforts', () => {
     const suggestion = suggestEfforts('deepseek-chat', {})
     expect(suggestion.matched).toBe(true)
     expect(suggestion.entryId).toBe('deepseek-v3')
-    expect(suggestion.efforts).toEqual({ off: 'off', high: 'high', max: 'max' })
+    expect(suggestion.efforts).toEqual({ off: 'none', high: 'high', max: 'max' })
     // No compat without a route protocol: compat is gated per protocol.
     expect(suggestion.compat).toBeUndefined()
   })
@@ -146,6 +209,22 @@ describe('suggestEfforts', () => {
     const anthropic = suggestEfforts('claude-3-5-sonnet', { api: 'anthropic-messages' })
     expect(anthropic.matched).toBe(true)
     expect(anthropic.compat).toBeUndefined()
+  })
+
+  it('pins forceAdaptiveThinking on anthropic-messages routes for adaptive families only', () => {
+    // Adaptive-thinking models declared on the anthropic-messages protocol
+    // get the compat that makes pi-ai dispatch efforts as output_config.effort.
+    const claude5 = suggestEfforts('claude-sonnet-5', { api: 'anthropic-messages' })
+    expect(claude5.compat).toEqual({ forceAdaptiveThinking: true })
+    // The same entry on openai-completions keeps its openai-shaped compat.
+    const viaOpenai = suggestEfforts('claude-sonnet-5', { api: 'openai-completions' })
+    expect(viaOpenai.compat).toEqual({ supportsReasoningEffort: true })
+    // Extended-thinking-only families (no effort ladder entry) get nothing.
+    const opus45 = suggestEfforts('claude-opus-4-5', { api: 'anthropic-messages' })
+    expect(opus45.compat).toBeUndefined()
+    // Non-ladder families carry no anthropicAdaptive and stay compat-free.
+    const classic = suggestEfforts('claude-3-5-sonnet', { api: 'anthropic-messages' })
+    expect(classic.compat).toBeUndefined()
   })
 
   it('never suggests a thinkingFormat outside pi-ai vocabulary', () => {
@@ -212,7 +291,7 @@ describe('suggestEfforts', () => {
 
   it('infers deepseek levels on a deepseek route', () => {
     const suggestion = suggestEfforts('mystery-model', { baseURL: 'https://api.deepseek.com' })
-    expect(suggestion.efforts).toEqual({ off: 'off', low: 'low', high: 'high', max: 'max' })
+    expect(suggestion.efforts).toEqual({ off: 'none', low: 'low', high: 'high', max: 'max' })
   })
 
   it('does not write a compat block for a route with no explicit protocol clues', () => {
@@ -221,6 +300,42 @@ describe('suggestEfforts', () => {
     expect(suggestion.compat).toBeUndefined()
   })
 })
+
+describe('knowledge base hygiene', () => {
+  it('never declares the same normalized pattern twice across entries', () => {
+    const seen = new Map<string, string>()
+    for (const entry of KNOWLEDGE_BASE) {
+      for (const pattern of entry.patterns) {
+        const key = normalizePattern(pattern)
+        const prior = seen.get(key)
+        expect(prior, `pattern "${pattern}" owned by both "${prior}" and "${entry.id}"`).toBeUndefined()
+        seen.set(key, entry.id)
+      }
+    }
+  })
+
+  it('declares off only with a valid wire spelling (null or non-empty string)', () => {
+    for (const entry of KNOWLEDGE_BASE) {
+      if (entry.efforts === false) continue
+      const off = entry.efforts.off
+      if (off === undefined) continue
+      if (off === null) continue
+      expect(typeof off, `${entry.id} off spelling must be a string`).toBe('string')
+      expect((off as string).length, `${entry.id} off spelling must not be empty`).toBeGreaterThan(0)
+    }
+  })
+
+  it('wires anthropicAdaptive only on families that declare a real ladder', () => {
+    for (const entry of KNOWLEDGE_BASE) {
+      if (entry.anthropicAdaptive !== true) continue
+      expect(entry.efforts, `${entry.id} declares adaptive thinking without an effort ladder`).not.toBe(false)
+    }
+  })
+})
+
+function normalizePattern(pattern: string): string {
+  return pattern.toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+}
 
 describe('modality + capacity fusion', () => {
   const silent = { reasoning: 'unknown' as const, source: null }
