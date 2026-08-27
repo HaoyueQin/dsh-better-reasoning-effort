@@ -17,3 +17,6 @@ Thumbs.db
 
 # Local tooling state
 .reasonix/
+
+# Scratch release notes / packed artifacts working area
+.tmp-rel/
