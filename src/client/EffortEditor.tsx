@@ -131,10 +131,13 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   const [suggested, setSuggested] = useState<ReasoningEfforts | false | undefined>(undefined)
   const [suggestedSource, setSuggestedSource] = useState('')
   const [suggestedConfidence, setSuggestedConfidence] = useState<'high' | 'medium' | 'low'>('low')
-  // The compat block the applied suggestion carries. Survives level tweaks
-  // (it describes the wire format, not the level set) so Apply writes the
-  // same bytes the host autofill would have written.
-  const [suggestedCompat, setSuggestedCompat] = useState<CompatSuggestion | undefined>(undefined)
+  // The compat block the applied suggestion carries, kept in a REF on purpose:
+  // it describes the wire format, not the level set, so level/image tweaks must
+  // NOT clear it -- markDirty() resets the user-facing draft context, and a
+  // state here would wipe the very bytes Apply/stage needs to reproduce what
+  // the host autofill writes. Only a fresh Auto-adapt replaces it; Reset
+  // discards it along with everything else.
+  const appliedCompatRef = useRef<CompatSuggestion | undefined>(undefined)
   // Modality + capacity parts of the applied suggestion. Capacities are
   // DISPLAY-ONLY: they render in the reference block and never touch the
   // official capacity inputs.
@@ -171,10 +174,11 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggested(undefined)
     setSuggestedSource('')
     setSuggestedConfidence('low')
-    setSuggestedCompat(undefined)
     setSuggestedInput(undefined)
     setSuggestedInputSource(undefined)
-    // Reference capacities SURVIVE tweaks: they are read-only context about
+    // appliedCompatRef deliberately SURVIVES this (see its declaration) --
+    // Apply/stage must still write the applied suggestion's compat bytes.
+    // Reference capacities SURVIVE tweaks too: they are read-only context about
     // the model, not part of the applied suggestion -- only Reset or a fresh
     // Auto-adapt replaces them.
   }
@@ -228,7 +232,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggested(parts.efforts)
     setSuggestedSource(parts.source)
     setSuggestedConfidence(parts.confidence)
-    setSuggestedCompat(parts.compat)
+    appliedCompatRef.current = parts.compat
     setSuggestedInput(parts.input)
     setSuggestedInputSource(parts.inputSource)
     setReferenceContext(parts.contextWindow)
@@ -278,14 +282,21 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       // route id; the settings write happens when the injector sees the
       // saved route appear.
       if (staged) {
-        api.stageEfforts(route, modelId, effortsIntent, suggestedCompat, nextInput ?? undefined)
+        api.stageEfforts(route, modelId, effortsIntent, appliedCompatRef.current, nextInput ?? undefined)
         dirtyRef.current = false
         setMessage({ kind: 'success', text: t('staged') })
         return
       }
-      const reply = await api.writeEfforts(route, modelId, effortsIntent, suggestedCompat, nextInput)
+      const reply = await api.writeEfforts(route, modelId, effortsIntent, appliedCompatRef.current, nextInput)
       if (!reply.ok) {
-        setMessage({ kind: 'error', text: reply.error === 'invalid-models' ? t('invalidModels') : reply.error })
+        setMessage({
+          kind: 'error',
+          text: reply.error === 'invalid-models'
+            ? t('invalidModels')
+            : reply.error === 'conflict'
+              ? t('conflict')
+              : reply.error,
+        })
         return
       }
       dirtyRef.current = false
@@ -307,7 +318,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggested(undefined)
     setSuggestedSource('')
     setSuggestedConfidence('low')
-    setSuggestedCompat(undefined)
+    appliedCompatRef.current = undefined
     setSuggestedInput(undefined)
     setSuggestedInputSource(undefined)
     setReferenceContext(undefined)

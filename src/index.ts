@@ -105,15 +105,16 @@ export function buildAutofillPatch(
       // Capacities are never filled here: contextWindow / maxTokens are
       // display-only reference values in the browser half, and writing them
       // host-side would silently override the route defaults.
+      // Reaching this branch means neither part was declared and no durable
+      // unset marker stands on the row -- so there is no stale marker inside
+      // `fill` to scrub; the guards above already excluded it.
       if (!effortsDeclared && fillEfforts) {
         touched = true
-        if (suggestion.efforts !== false) delete fill[UNSET_MARKER]
         fill['reasoningEfforts'] = suggestion.efforts as JsonObject
         if (suggestion.compat !== undefined) fill['compat'] = suggestion.compat as JsonObject
       }
       if (!inputDeclared && fillModalities && suggestion.input !== undefined) {
         touched = true
-        delete fill[INPUT_UNSET_MARKER]
         fill['input'] = [...suggestion.input]
       }
       if (!touched) {

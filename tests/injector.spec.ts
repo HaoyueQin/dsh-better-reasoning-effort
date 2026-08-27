@@ -711,6 +711,7 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
       '<div class="modelEntry">',
       '  <div class="modelRow">',
       '    <input aria-label="Model ID" value="qwen-new" />',
+      '    <input aria-label="Display name" value="Qwen New Display" />',
       '    <button aria-label="Capacities 3"></button>',
       '  </div>',
       '  <div class="modelAdvanced" style="display:block"><label><span>Context window</span><input /></label></div>',
@@ -721,6 +722,9 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
     const props = vi.mocked(deps.mount).mock.calls.map(call => call[1] as EditorMountProps)
     const unsaved = props.find(candidate => candidate.modelId === 'qwen-new')
     expect(unsaved?.staged).toBe(true)
+    // The typed Display name rides along: suggestion inference (knowledge-base
+    // matching + heuristics) reads it even before the row is saved.
+    expect(unsaved?.modelName).toBe('Qwen New Display')
 
     // The user clicks Apply: the declaration stages; no settings write yet.
     stageEffortsInto(state, 'aliyun', 'qwen-new', { low: 'low' }, undefined, ['text', 'image'])
@@ -781,5 +785,61 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
     // ...while the 'keep' ladder left the autofilled declaration untouched.
     expect(flushed['reasoningEfforts']).toEqual(suggestion.efforts)
     expect(state.pending.size).toBe(0)
+  })
+})
+
+describe('ghosted staging recycling', () => {
+  it('withdraws staging whose saved-route row disappeared for two consecutive scans', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    root.querySelector('.modelCatalog')?.insertAdjacentHTML('beforeend', [
+      '<div class="modelEntry">',
+      '  <div class="modelRow">',
+      '    <input aria-label="Model ID" value="qwen-new" />',
+      '    <button aria-label="Capacities 3"></button>',
+      '  </div>',
+      '  <div class="modelAdvanced" style="display:block"><label><span>Context window</span><input /></label></div>',
+      '</div>',
+    ].join('\n'))
+    stageEffortsInto(state, 'aliyun', 'qwen-new', { low: 'low' }, undefined, ['text'])
+
+    // Scan 1 -- the row is still on the page: no miss, and no flush write
+    // (the settings document does not carry the row yet).
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.pending.get('aliyun')?.has('qwen-new')).toBe(true)
+
+    // Scan 2 -- FIRST missing scan (the row was removed from the page): the
+    // grace round keeps the staging against transient re-render gaps.
+    ;(root.querySelectorAll('.modelEntry')[2] as HTMLElement).remove()
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    expect(state.pending.get('aliyun')?.has('qwen-new')).toBe(true)
+    expect(deps.mutate).not.toHaveBeenCalled()
+
+    // Scan 3 -- SECOND consecutive missing scan: the ghost is withdrawn,
+    // silently and without any wire write behind it.
+    state.describePromise = undefined
+    await settle(() => reconcile(root, deps, state), state)
+    expect(state.pending.get('aliyun')).toBeUndefined()
+    expect(deps.mutate).not.toHaveBeenCalled()
+  })
+
+  it('never recycles staging on routes that do not exist yet (an open create card)', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildCreateDom('acme-gateway')
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { low: 'low' }, undefined, undefined)
+
+    // Three scans pass while the create card sits mid-edit: its route is not
+    // in the document yet, so every scan "misses" it -- but only SAVED routes
+    // are eligible for ghost recycling.
+    for (let i = 0; i < 3; i++) {
+      await settle(() => reconcile(root, deps, state), state)
+      state.describePromise = undefined
+    }
+    expect(state.pending.get('acme-gateway')?.has('deepseek-v4-flash-free')).toBe(true)
+    expect(deps.mutate).not.toHaveBeenCalled()
   })
 })

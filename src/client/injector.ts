@@ -48,6 +48,9 @@ const CAPACITY_ARIA = ['Capacities', '容量']
 /** Official aria-labels of the model-id input, in both locales. */
 const MODEL_ID_ARIA = ['Model ID', '模型 ID']
 
+/** Official aria-labels of the per-row model display-name input, in both locales. */
+const MODEL_NAME_ARIA = ['Display name', '显示名称']
+
 /** Official aria-label of the create card's route-id input (same in both locales). */
 const ROUTE_ID_ARIA = ['Provider ID']
 
@@ -59,6 +62,8 @@ const API_PROTOCOL_ARIA = ['API protocol', 'API 协议']
 interface FoundModel {
   /** The official disclosure container that holds the capacity fields. */
   container: HTMLElement
+  /** The trigger's OWN model row element (row-scoped input reads). */
+  row: HTMLElement
   /** The model id read from the row's "Model ID" input. */
   modelId: string
   /** The nearest card element (for route resolution). */
@@ -125,9 +130,25 @@ export interface ScanState {
    * dies with the plugin fiber.
    */
   pending: Map<string, Map<string, StagedDeclaration>>
+  /**
+   * Staged models that looked ghosted on the last scan (their route is saved,
+   * but no matching row exists on the page anymore). Withdrawn once they miss
+   * TWO consecutive scans, so one transient re-render gap cannot drop real
+   * mid-edit staging. Mirrors {@link pending}'s key shape.
+   */
+  missedScans: Map<string, Set<string>>
 }
 
-/** One staged declaration: the level set plus the suggestion's compat block and modalities. A 'keep' effort travels untouched to the flush write. */
+/**
+ * One staged declaration: the level set plus the suggestion's compat block and
+ * modalities. A 'keep' effort travels untouched to the flush write.
+ *
+ * Design note: staging cannot express a deliberate UNSET. An all-clear draft
+ * stages `keep`/no-input, whose flush resolves to null and withdraws the
+ * whole staging -- host autofill then fills its suggestion back in. To record
+ * "declare nothing" durably, save the row first and apply an all-clear write
+ * through the saved-row seam (the durable unset marker).
+ */
 export interface StagedDeclaration {
   efforts: Exclude<EffortWriteIntent, undefined>
   compat?: CompatSuggestion
@@ -135,7 +156,12 @@ export interface StagedDeclaration {
 }
 
 export function createScanState(): ScanState {
-  return { mounted: new Map(), describePromise: undefined, pending: new Map() }
+  return {
+    mounted: new Map(),
+    describePromise: undefined,
+    pending: new Map(),
+    missedScans: new Map(),
+  }
 }
 
 /**
@@ -273,8 +299,13 @@ async function flushRoute(
     const current = modelsOf(providers, route).find(model => model['id'] === modelId)
     // The row is not saved yet (mid-edit card, or the user renamed it):
     // keep the staging instead of dropping it -- it lands when a row with
-    // this id first appears.
+    // this id first appears; the scan's ghost pass withdraws staging whose
+    // row is provably gone.
     if (current === undefined) continue
+    // A concurrent scan may have withdrawn this staging while our describe
+    // was in flight (the two-scan ghost pass): writing it anyway would
+    // resurrect a declaration nothing on the page owns anymore.
+    if (state.pending.get(route)?.get(modelId) !== declaration) continue
     // Mirror the host autofill's suggestion for this exact row (same facts,
     // same knowledge base) so {@link effectiveStagedIntents} can tell the
     // plugin's own proposal apart from a user decision.
@@ -304,6 +335,10 @@ async function flushRoute(
     const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input)
     if (reply.ok || reply.error === 'model-not-found') {
       stageEffortsInto(state, route, modelId, undefined)
+    } else {
+      // Anything else keeps the staging (the next scan retries it), but a
+      // silent keep is unobservable -- surface the failure for diagnostics.
+      console.error(`[bre] staged flush write failed for "${route}"/"${modelId}": ${reply.error}`)
     }
   }
 }
@@ -487,7 +522,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         const row = trigger.closest<HTMLElement>('[class*="modelEntry"]') ?? card
         const modelId = inputValueByLabel(row, MODEL_ID_ARIA)
         if (modelId.length === 0) continue
-        found.push({ container, modelId, card })
+        found.push({ container, row, modelId, card })
       }
     }
 
@@ -497,6 +532,39 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         entry.editor.unmount()
         state.mounted.delete(key)
       }
+    }
+
+    // Ghosted staging: the route IS saved but its staged model row is no
+    // longer anywhere on the page (renamed away, or the row/card deleted).
+    // One missing scan can be a transient re-render gap, so staging is
+    // withdrawn only after missing TWO consecutive scans; routes that do not
+    // exist yet are never touched here -- an open create card still owns those.
+    if (state.pending.size > 0) {
+      const onPage = new Map<string, Set<string>>()
+      for (const target of found) {
+        const resolved = routeOfCard(target.card, providers)
+        if (resolved === undefined) continue
+        let ids = onPage.get(resolved.route)
+        if (ids === undefined) onPage.set(resolved.route, ids = new Set())
+        ids.add(target.modelId)
+      }
+      const missing = new Map<string, Set<string>>()
+      for (const [route, models] of state.pending) {
+        if (!hasOwn(providers, route)) continue
+        const present = onPage.get(route)
+        const stale = [...models.keys()].filter(id => !present?.has(id))
+        if (stale.length > 0) missing.set(route, new Set(stale))
+      }
+      for (const [route, ids] of missing) {
+        const prior = state.missedScans.get(route)
+        if (prior === undefined) continue
+        for (const id of ids) {
+          if (!prior.has(id)) continue
+          stageEffortsInto(state, route, id, undefined)
+          prior.delete(id)
+        }
+      }
+      state.missedScans = missing
     }
 
     found.forEach((target, index) => {
@@ -521,7 +589,12 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       const input = staged
         ? state.pending.get(route)?.get(target.modelId)?.input
         : inputOf(models, target.modelId)
-      const modelName = staged ? undefined : nameOf(models, target.modelId)
+      // An unsaved row has no stored declaration to name it, but the user may
+      // have typed a Display name on the row already -- suggestion inference
+      // and knowledge-base matching lose that signal without it. The read is
+      // ROW-scoped (the same multi-row trap the model id above avoids).
+      const typedName = staged ? inputValueByLabel(target.row, MODEL_NAME_ARIA) : ''
+      const modelName = staged ? (typedName.length > 0 ? typedName : undefined) : nameOf(models, target.modelId)
       const typedApi = routeStaged ? inputValueByLabel(target.card, API_PROTOCOL_ARIA) : ''
       const typedBaseURL = routeStaged ? inputValueByLabel(target.card, BASE_URL_ARIA) : ''
       const routeApi = routeStaged && typedApi.length > 0

@@ -247,6 +247,93 @@ describe('EffortEditor', () => {
       undefined,
     )
   })
+
+  it('staged: auto-adapt then checking image input keeps the suggestion compat', async () => {
+    // Regression: markDirty() used to clear the applied suggestion's compat
+    // block, so staging after ANY tweak lost thinkingFormat -- precisely on
+    // the auto-adapt-then-check-image path this editor exists for. The compat
+    // describes the wire format and must survive draft tweaks; only Reset or
+    // a fresh Auto-adapt replaces it.
+    const api = baseApi()
+    const compat = { thinkingFormat: 'deepseek' as const, supportsReasoningEffort: true }
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { off: null, low: 'low', high: 'high', max: 'max' },
+        compat,
+        matched: true,
+        source: 'deepseek-v4',
+        confidence: 'high',
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({ api, staged: true, route: 'acme-gateway' }))
+
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+    await act(async () => { checkboxes(container)[7]!.click() })
+    await act(async () => { buttonByText(container, t('stage')).click() })
+
+    expect(api.stageEfforts).toHaveBeenCalledWith(
+      'acme-gateway',
+      'qwen-max',
+      { off: null, low: 'low', high: 'high', max: 'max' },
+      compat,
+      ['text', 'image'],
+    )
+  })
+
+  it('staged: auto-adapt then tuning levels keeps the suggestion compat', async () => {
+    const api = baseApi()
+    const compat = { thinkingFormat: 'deepseek' as const, supportsReasoningEffort: true }
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { off: null, low: 'low', high: 'high', max: 'max' },
+        compat,
+        matched: true,
+        source: 'deepseek-v4',
+        confidence: 'high',
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({ api, staged: true, route: 'acme-gateway' }))
+
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+    // Disarm the "high" level (index 4 in LEVEL_ORDER)...
+    await act(async () => { checkboxes(container)[4]!.click() })
+    await act(async () => { buttonByText(container, t('stage')).click() })
+
+    expect(api.stageEfforts).toHaveBeenCalledWith(
+      'acme-gateway',
+      'qwen-max',
+      { off: null, low: 'low', max: 'max' },
+      compat,
+      undefined,
+    )
+  })
+
+  it('reset discards the applied suggestion compat for later applies', async () => {
+    const api = baseApi()
+    const compat = { thinkingFormat: 'deepseek' as const, supportsReasoningEffort: true }
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { off: null, low: 'low', high: 'high', max: 'max' },
+        compat,
+        matched: true,
+        source: 'deepseek-v4',
+        confidence: 'high',
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({ api }))
+
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+    await act(async () => { buttonByText(container, t('reset')).click() })
+    // Re-arm one level by hand: this Apply is the user's own declaration and
+    // must travel WITHOUT the discarded suggestion's compat.
+    await act(async () => { checkboxes(container)[4]!.click() })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined)
+  })
 })
 
 describe('EffortEditor modality', () => {
