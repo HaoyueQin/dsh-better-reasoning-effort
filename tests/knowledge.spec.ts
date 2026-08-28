@@ -59,6 +59,23 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('doubao-seed-1.6')?.id).toBe('doubao')
   })
 
+  it('matches the 2026-09 additions by their strictly longer patterns', () => {
+    // Each new entry keys a pattern strictly longer than the family stem it
+    // refines, so the family entry never overrides it (longest-boundary-hit
+    // wins regardless of entry order).
+    expect(matchKnowledgeBase('glm-5.3-flash')?.id).toBe('glm-5-3-flash')
+    expect(matchKnowledgeBase('glm-5.3')?.id).toBe('glm-5-3')
+    expect(matchKnowledgeBase('qwen3.8-27b')?.id).toBe('qwen-3-8-27b')
+    // The org-qualified spelling (Qwen/Qwen3.8-Flash-Next) must still land
+    // on the flash-next entry, not the family or flash stems.
+    expect(matchKnowledgeBase('Qwen/Qwen3.8-Flash-Next')?.id).toBe('qwen-3-8-flash-next')
+    expect(matchKnowledgeBase('qwen3.8-flash')?.id).toBe('qwen-3-8')
+    expect(matchKnowledgeBase('qwen3.8-max')?.id).toBe('qwen-3-8')
+    expect(matchKnowledgeBase('hy4-preview')?.id).toBe('hunyuan-hy4')
+    expect(matchKnowledgeBase('hy-4-preview')?.id).toBe('hunyuan-hy4')
+    expect(matchKnowledgeBase('hy3')?.id).toBe('hunyuan-hy3')
+  })
+
   it('returns undefined for unknown models', () => {
     expect(matchKnowledgeBase('some-random-model')).toBeUndefined()
   })

@@ -692,16 +692,51 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
   },
   {
     id: 'qwen-3-8',
-    // qwen3.8-max (and the open-weight qwen3.8-2.4t-a95b) is the current
-    // flagship: Alibaba's product page states 1M context tokens, and the
-    // Model Studio catalog lists it under image/video understanding, so the
-    // plain qwen entry's text-only declaration must not claim it.
+    // The 3.8 generation moved from the bare enable_thinking switch to an
+    // official reasoning_effort ladder: the Qwen3.8 README ("Flexible
+    // Thinking Control"), the Qwen3.8-27B model card, the Qwen3.8-Flash-Next
+    // card and the qwen.ai Flash-Next blog all document reasoning_effort
+    // with xhigh as the DEFAULT (xhigh/medium/low), alongside the
+    // per-request enable_thinking toggle (chat_template_kwargs on
+    // open-weight serving). qwen3.8-max stays the current flagship (1M
+    // context; Model Studio lists it under image/video understanding), so
+    // the plain qwen entry's text-only declaration must not claim it.
     patterns: ['qwen3.8'],
-    efforts: { off: null, high: 'high' },
-    compat: { thinkingFormat: 'qwen' },
+    efforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' },
+    compat: { thinkingFormat: 'qwen', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_000_000,
-    note: 'Qwen 3.8 系：enable_thinking 开关（默认开），官方 1M 上下文；qwen3.8-max 支持图像/视频理解（视频未入核心词表，按需手勾）。',
+    note: 'Qwen 3.8 系：官方 reasoning_effort 档位 XHigh(默认) / Medium / Low，thinking 默认开、可按请求关闭；原生多模态（qwen3.8-max 图像/视频理解，视频未入核心词表）。1M 档上下文。27B 与 Flash-Next 开源款见单独条目。',
+  },
+  {
+    id: 'qwen-3-8-27b',
+    // Open-weight dense release (2026-08-14, HF Qwen/Qwen3.8-27B model
+    // card): "native vision-language model", 262,144 context natively
+    // "extensible up to 1,000,000 tokens", reasoning_effort xhigh (default)
+    // / medium / low with per-request thinking disable. Longer than the
+    // bare 'qwen3.8' pattern, so it wins for -27B ids.
+    patterns: ['qwen3.8-27b'],
+    efforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' },
+    compat: { thinkingFormat: 'qwen', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 262_144,
+    note: 'Qwen3.8-27B（dense，2026-08-14 开源）：官方 reasoning_effort 档位 XHigh(默认) / Medium / Low，thinking 默认开、可按请求关；原生图像+视频理解（视频未入核心词表）。262,144 原生上下文、官方声明可扩至 1M。来源：HF Qwen/Qwen3.8-27B 模型卡。',
+  },
+  {
+    id: 'qwen-3-8-flash-next',
+    // Open-weight experimental architecture preview (HF
+    // Qwen/Qwen3.8-Flash-Next card + the qwen.ai blog): the
+    // Qwen4-underpinning hybrid (QSA, n-gram embedding; 125B with 6B
+    // activated), native vision encoder, 262,144 context natively
+    // extensible to 1M. Thinking control identical to the 3.8 generation:
+    // enable_thinking toggle plus reasoning_effort xhigh (default) /
+    // medium / low. Longest pattern, so it wins for -flash-next ids.
+    patterns: ['qwen3.8-flash-next'],
+    efforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' },
+    compat: { thinkingFormat: 'qwen', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 262_144,
+    note: 'Qwen3.8-Flash-Next（125B-A6B 实验架构，Qwen4 前身）：官方 reasoning_effort 档位 XHigh(默认) / Medium / Low + enable_thinking 开关；原生视觉（Vision Encoder）。262,144 原生上下文、可扩至 1M。来源：HF 模型卡与 qwen.ai 官方博客。',
   },
   {
     id: 'qwen',
@@ -732,6 +767,23 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     contextWindow: 131_072,
     maxTokens: 32_768,
     note: '智谱视觉线（GLM-4V/4.5V/4.6V/5V）：thinking 开关（开=High），收图。GLM-4.5V 为强制思考（传 disabled 报错，请手动删 Off 档）。',
+  },
+  {
+    id: 'glm-5-3-flash',
+    // Official model page (docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash,
+    // page dated 2026-08-28): input modalities "视频、图像、文本、文件", 1M
+    // context / 128K max output, and "thinking.type 仅支持 enabled" — forced
+    // thinking, no off switch. "文本参数与 GLM-5.3 保持一致" gives the flash
+    // variant the 5.3 ladder (low/high/max). Native multimodal (320B), which
+    // the text-only glm-5.3 entry must NOT claim — hence this separate entry;
+    // the longer pattern wins over plain 'glm-5.3'.
+    patterns: ['glm-5.3-flash'],
+    efforts: { low: 'low', high: 'high', max: 'max' },
+    compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_048_576,
+    maxTokens: 131_072,
+    note: 'GLM-5.3-Flash（320B，官方文档 vlm 分类）：强制思考（thinking.type 仅 enabled，不支持关闭），文本参数与 GLM-5.3 一致——档位 Low / High / Max。输入模态：视频、图像、文本、文件（视频/文件未入核心词表，图片可勾）。官方 1M 上下文 / 128K 最大输出。来源：docs.bigmodel.cn 模型页。',
   },
   {
     id: 'glm-5-3',
@@ -840,6 +892,21 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     input: ['text'],
     contextWindow: 262_144,
     note: '混元 hy3：开源契约经 chat_template_kwargs.reasoning_effort = no_think(默认)/low/high；官方模型卡 256K 上下文（295B MoE，2026 开源）。',
+  },
+  {
+    id: 'hunyuan-hy4',
+    // Open-weight contract (Tencent-Hunyuan/Hy4-preview README): reasoning
+    // defaults to "high" (deep chain-of-thought) and is disabled with
+    // extra_body={"chat_template_kwargs": {"reasoning_effort": "no_think"}}
+    // — the same chat-template channel as hy3, with the default flipped to
+    // high. The spec table states a 1M context length; the model is a
+    // 770B-A49B MoE with Gated DSA attention. The README documents no levels
+    // beyond high/no_think, so a low rung is NOT declared without evidence.
+    patterns: ['hy4-preview', 'hy-4-preview'],
+    efforts: { off: 'no_think', high: 'high' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    contextWindow: 1_000_000,
+    note: '混元 Hy4 preview：官方 README——reasoning 默认 high（深度思考），关闭经 chat_template_kwargs.reasoning_effort=no_think；官方规格表 1M 上下文（770B-A49B MoE，Gated DSA）。low 档官方未列，如有请手调；视觉未声明，按需手勾。来源：Tencent-Hunyuan/Hy4-preview 官方 README。',
   },
   {
     id: 'step-3-7',
