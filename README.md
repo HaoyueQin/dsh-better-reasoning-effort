@@ -41,7 +41,9 @@ This plugin brings both configuration surfaces back into the UI: **edit right in
 
 ## Install
 
-Requires DeepSeek Harness `0.1.1-rc.1` or newer (`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`; the host half also peers on `@deepseek-ai/dsh-settings@^0.1.1-rc.1` and `@deepseek-ai/schemastery@^3.18.0`). The wire contract is verified against `0.1.1-rc.2`; older release-candidate lines are not supported.
+Requires DeepSeek Harness `0.1.1-rc.1` or newer, including the `0.1.2-alpha.1` pre-release (`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1 || ^0.1.2-alpha.1`; the host half also peers on `@deepseek-ai/dsh-settings` with the same range and on `@deepseek-ai/schemastery@^3.18.0` — the explicit `||` branch is required because npm's prerelease exclusion rule makes a plain rc range reject `0.1.2-alpha.1`). The wire contract is verified against `0.1.1-rc.2` and statically re-checked against the `0.1.2-alpha.1` sources (settings Remote faces, client services, the module-loader protocol, and the Models page DOM anchors); older release-candidate lines are not supported. The client bundle requests no official module at runtime, so it loads on both kernel lines unchanged.
+
+**Two injection paths, picked per kernel at runtime (no version sniffing):** on `0.1.2-alpha.1` the plugin registers into the official Models page's `settings.models.provider-card` keyed slot (keyed to `llm-pi-ai`) and renders one panel per provider card; on `0.1.1-rc.2` — which has no such slot — it keeps the DOM bypass injector. The switch keys off the settings wire seat the kernel exposes (`ctx.remote.settings` vs `connection.api`), not off a version string, and the DOM path retires automatically the moment the slot activates. Slot mode is document-driven: a model row shows up in its panel once it is SAVED, so on alpha.1 the flow for a new model is *save the row first, then configure its declaration* (the rc.2 path keeps the stage-unsaved-rows behavior).
 
 ### From npm
 

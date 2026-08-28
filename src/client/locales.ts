@@ -40,6 +40,7 @@ export const en = {
   level_high: 'high',
   level_xhigh: 'xhigh',
   level_max: 'max',
+  panelEmpty: 'No saved models to configure yet — save a model row first.',
 }
 
 /** The plugin's locale key union. */
@@ -85,4 +86,5 @@ export const zh: { [Key in keyof typeof en]: string } = {
   level_high: 'high',
   level_xhigh: 'xhigh',
   level_max: 'max',
+  panelEmpty: '尚无已保存的模型——请先保存模型行再配置。',
 }

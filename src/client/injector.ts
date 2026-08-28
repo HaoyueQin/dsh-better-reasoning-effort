@@ -72,8 +72,13 @@ interface FoundModel {
 
 /** The join the injector renders from. */
 export interface InjectorDeps {
-  /** settings Remote face. */
-  api: RemoteApi
+  /**
+   * Resolve the settings wire for THIS scan/write. Undefined means no seat
+   * answers yet (on alpha.1 the settings stub mounts after boot) — the scan
+   * skips silently and the next mutation retries; already-mounted editors
+   * keep the face they were built with.
+   */
+  wire(): RemoteApi | undefined
   /** Read the pi-ai namespace plus writability from the settings join. */
   describeNamespace(): Promise<SettingsJoin>
   /** Localized copy. */
@@ -292,6 +297,10 @@ async function flushRoute(
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
 ): Promise<void> {
+  const wire = deps.wire()
+  // A wire that has not come up yet is transient: keep the staging and let
+  // the next scan retry rather than surface a failed write.
+  if (wire === undefined) return
   // Snapshot: stageEffortsInto below mutates the stored map as writes land.
   for (const [modelId, declaration] of [...models]) {
     const join = await deps.describeNamespace()
@@ -325,12 +334,12 @@ async function flushRoute(
     // retry re-describes fresh through the live seam, so the seed never
     // costs the write its recovery path.
     let seeded = false
-    const seededApi = createEditorApi(deps.api, () => {
+    const seededApi = createEditorApi(wire, () => {
       if (!seeded) {
         seeded = true
         return Promise.resolve(join)
       }
-      return describeNamespace(deps.api)
+      return describeNamespace(wire)
     })
     const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input)
     if (reply.ok || reply.error === 'model-not-found') {
@@ -457,6 +466,12 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
   // all. One prefix query per locale answers "is the Models page here?" —
   // when it is not and nothing is mounted, the scan costs nothing more.
   if (!root.isConnected) return
+  // The wire gate sits before the describe fold: with no seat answering (the
+  // alpha.1 boot window), a scan could neither read nor write — and must not
+  // unmount editors over its own unreadiness. Skip silently; slot-mode
+  // activation or the next DOM mutation re-enters with a live wire.
+  const wire = deps.wire()
+  if (wire === undefined) return
   const hasCapacityRows = CAPACITY_ARIA.some(aria =>
     root.querySelector(`button[aria-label^="${aria}"]`) !== null)
   if (!hasCapacityRows) {
@@ -618,7 +633,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ...input === undefined ? {} : { input },
         index,
         staged,
-        api: createEditorApi(deps.api, undefined, (r, m, e, c, i) => { stageEffortsInto(state, r, m, e, c, i) }),
+        api: createEditorApi(wire, undefined, (r, m, e, c, i) => { stageEffortsInto(state, r, m, e, c, i) }),
         readOnly: join.writable !== true,
         t: deps.t,
       }

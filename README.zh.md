@@ -41,7 +41,9 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 安装
 
-需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1`；host 侧同时 peer 依赖 `@deepseek-ai/dsh-settings@^0.1.1-rc.1` 与 `@deepseek-ai/schemastery@^3.18.0`）。线协议契约已对照 `0.1.1-rc.2` 验证；更早的 rc 线不受支持。
+需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本，含 `0.1.2-alpha.1` 预发布（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1 || ^0.1.2-alpha.1`；host 侧 peer 依赖 `@deepseek-ai/dsh-settings` 采用同一范围，另有 `@deepseek-ai/schemastery@^3.18.0`——必须显式写 `||` 分支：npm 的 prerelease 排除规则会使普通 rc 范围拒绝匹配 `0.1.2-alpha.1`）。线协议契约已对照 `0.1.1-rc.2` 验证，并对照 `0.1.2-alpha.1` 源码静态复核（settings Remote 面、client 服务、模块加载协议与 Models 页 DOM 锚点）；更早的 rc 线不受支持。client bundle 运行时不请求任何官方模块，同一产物可在两条内核线上加载。
+
+**两条注入路径，运行时按内核能力选择（不做版本号嗅探）：**在 `0.1.2-alpha.1` 上，插件注册进官方 Models 页的 `settings.models.provider-card` keyed slot（以 `llm-pi-ai` 为 key），每个 provider 卡渲染一个面板；在尚无该 slot 的 `0.1.1-rc.2` 上，继续使用 DOM bypass 注入器。切换依据是内核暴露的 settings wire 席位（`ctx.remote.settings` 与 `connection.api`），而非版本字符串；slot 激活的瞬间 DOM 路径自动退役。slot 模式由设置文档驱动：模型行保存后才会出现在面板中，因此 alpha.1 上新模型的流程是*先保存行，再配置声明*（rc.2 路径保留未保存行暂存行为）。
 
 ### 从 npm
 

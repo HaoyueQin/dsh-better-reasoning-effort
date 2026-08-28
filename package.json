@@ -50,13 +50,7 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-settings",
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-api-remotes"
-      ]
+      "platform": "web"
     }
   },
   "scripts": {
@@ -73,8 +67,8 @@
     "node": "^20.0.0 || ^22.0.0 || >=24"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-api-remotes": "^0.1.1-rc.1",
-    "@deepseek-ai/dsh-settings": "^0.1.1-rc.1",
+    "@deepseek-ai/dsh-api-remotes": "^0.1.1-rc.1 || ^0.1.2-alpha.1",
+    "@deepseek-ai/dsh-settings": "^0.1.1-rc.1 || ^0.1.2-alpha.1",
     "@deepseek-ai/schemastery": "^3.18.0",
     "react": "^18.2.0 || ^19.0.0"
   },

@@ -36,7 +36,89 @@ export interface SettingsJoin {
 
 export type { SettingsNamespaceView }
 
-/** One result of writing a model's declaration. */
+// ---- Kernel-dual wire faces (see client/wire.ts) ----
+
+/** Error half of an alpha.1 Typert stub answer (code is best-effort on the wire). */
+export interface AlphaWireError {
+  code?: string
+  message?: string
+}
+
+/** alpha.1 Typert stub answers are top-level envelopes, not result-wrapped. */
+export interface AlphaEnvelope<V> {
+  ok: boolean
+  value?: V
+  error?: AlphaWireError
+}
+
+/**
+ * Shape-erased face of the alpha.1 'ctx.remote.settings' Typert stub: describe
+ * takes no argument and mutate takes positional (ns, ops, expectedRevision) —
+ * both differing from the rc.2 IApiClient conventions the wire normalizes onto.
+ */
+export interface AlphaSettingsStub {
+  describe(): Promise<AlphaEnvelope<{
+    namespaces: SettingsNamespaceView[]
+    writable: boolean
+    hasDocument?: boolean
+  }>>
+  mutate(
+    ns: string,
+    ops: unknown[],
+    expectedRevision: number | undefined,
+  ): Promise<AlphaEnvelope<unknown>>
+}
+
+/** The service seats the wire probe reads, as a minimal structural type. */
+export interface WireContext {
+  remote?: { settings?: unknown }
+  get?(name: string): unknown
+}
+
+// ---- alpha.1 Models-page slot faces (locally declared; rc.2 types lack them) ----
+
+/** The directory row alpha.1 hands a provider-card slot entry (ui-settings-models store.ts). */
+export interface ProviderDirectoryLike {
+  /** Route id (the settings providers key). */
+  provider: string
+  /** Display name. */
+  displayName: string
+  /** The settings namespace this card's family edits (the slot's dispatch key). */
+  settingsNs: string
+  /** Whether a live route is registered for this provider. */
+  active: boolean
+}
+
+/** Owner share of the 'settings.models.provider-card' keyed slot. */
+export interface ProviderCardOwnerProps {
+  provider: ProviderDirectoryLike
+  configured: boolean
+  keyConfigured: boolean
+}
+
+/**
+ * Minimal 'ctx.slots' face the slot path needs, declared locally because the
+ * rc.2 type baseline predates the provider-card slot. The runtime accepts the
+ * same calls on both kernels; rc.2 never reaches them because the slot path is
+ * gated on the alpha.1 wire probe.
+ */
+export interface SlotRegistrarFace {
+  inject(name: string, registrar: () => unknown): unknown
+  register(options: {
+    name: string
+    key?: string
+    id?: string
+    order?: number
+    inject?: () => Record<string, unknown>
+    [extra: string]: unknown
+  }, component: unknown): () => void
+}
+
+// ---- (rest unchanged) ----
+
+/**
+ * One result of writing a model's declaration.
+ */
 export type WriteEffortsReply = { ok: true } | { ok: false; error: string }
 
 /**
@@ -50,11 +132,11 @@ export type SuggestReply =
       suggestion: {
         /** The declaration to apply; false = the endpoint says it does not reason. */
         efforts: ReasoningEfforts | false
-        /** The compat block to write alongside (thinkingFormat etc.), when derivable. */
+        /** The compat block to write alongside, if any. */
         compat?: CompatSuggestion
         /** Request modalities to declare, when derivable. */
         input?: InputModalities
-        /** Where the modality part came from; its confidence rides this. */
+        /** Where the modality part came from -- its confidence rides this. */
         inputSource?: InputSource
         /** Reference context window (display-only; never auto-filled). */
         contextWindow?: number
@@ -64,7 +146,7 @@ export type SuggestReply =
         source: string
         /** Evidence strength: high (knowledge base / endpoint), medium, low. */
         confidence: 'high' | 'medium' | 'low'
-        /** Raw endpoint signal behind the suggestion, when probed. */
+        /** Raw endpoint signal behind this suggestion, when probed. */
         endpoint?: { reasoning: boolean | 'unknown'; source: string | null }
       }
     }
@@ -74,7 +156,7 @@ export type SuggestReply =
 export interface StagedRouteFacts {
   /** Wire protocol as typed into the create card. */
   api?: string
-  /** Endpoint URL as typed into the create card. */
+  /** Endpoint URL, if any. */
   baseURL?: string
 }
 
@@ -107,9 +189,9 @@ export interface EffortEditorApi {
   /**
    * Write one model's reasoningEfforts (unset, disabled, a dict -- or 'keep'
    * to leave it completely untouched) and, when an input intent is supplied,
-   * its input-modality declaration in the same mutate. A compat block is written only when one is supplied
-   * alongside a dict declaration -- an omitted compat leaves whatever the
-   * document already holds untouched.
+   * its input-modality declaration in the same mutate. A compat block is
+   * written only when one is supplied alongside a dict declaration -- an
+   * omitted compat leaves whatever the document already holds untouched.
    */
   writeEfforts(
     route: string,

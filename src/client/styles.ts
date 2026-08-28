@@ -149,4 +149,19 @@ export const STYLES = `
 }
 .bre-reference-title { font-weight: 600; }
 .bre-reference-values { display: inline-flex; gap: 14px; }
+/* ---- alpha.1 slot-mode panel ---- */
+.bre-provider-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.bre-provider-panel-empty {
+  font-size: 12px;
+  color: var(--dsh-text-secondary, inherit);
+}
+.bre-provider-panel-failed {
+  font-size: 12px;
+  color: #c62828;
+}
 `

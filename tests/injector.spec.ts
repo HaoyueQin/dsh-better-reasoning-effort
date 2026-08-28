@@ -106,16 +106,17 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
   // injector's describeNamespace — wire both to the same (overridable) read
   // so a test's dynamic document is what a flush sees too.
   const describeNamespace = overrides?.describeNamespace ?? (async () => join)
-  return {
-    api: {
-      settings: {
-        describe: async () => {
-          const local = await describeNamespace()
-          return { result: { ok: true, value: { writable: true, hasDocument: true, namespaces: local.namespace === undefined ? [] : [local.namespace] } } }
-        },
-        mutate,
+  const apiFace = {
+    settings: {
+      describe: async () => {
+        const local = await describeNamespace()
+        return { result: { ok: true, value: { writable: true, hasDocument: true, namespaces: local.namespace === undefined ? [] : [local.namespace] } } }
       },
-    } as unknown as RemoteApi,
+      mutate,
+    },
+  } as unknown as RemoteApi
+  return {
+    wire: () => apiFace,
     describeNamespace,
     t: (key: string) => key,
     mount,

@@ -12,7 +12,7 @@
  */
 
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
+import type { SlotRegistrarFace, WireContext } from './types.js'
 // Type-only: pulls the shell's locale/remote context merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -26,6 +26,8 @@ import { EffortEditor } from './EffortEditor.tsx'
 import { createScanState, reconcile } from './injector.ts'
 import { en, zh, type BreKey } from './locales.ts'
 import { describeNamespace } from './ops.ts'
+import { ProviderEffortPanel } from './ProviderEffortPanel.js'
+import { resolveWire } from './wire.js'
 import { STYLES } from './styles.ts'
 import type { RemoteApi } from './types.ts'
 
@@ -86,8 +88,20 @@ export function apply(ctx: ClientContext): void {
   document.head.appendChild(style)
   ctx.effect(() => () => style.remove(), 'dsh-better-reasoning-effort: stylesheet')
 
-  const connection = ctx.get('connection') as ConnectionHandle
-  const api: RemoteApi = { settings: connection.api.settings }
+  // Kernel-dual wire: alpha.1 answers on ctx.remote.settings (Typert stub,
+  // mounted after boot), rc.2 on connection.api (IApiClient). Resolution is
+  // lazy — every scan and write re-probes — so a stub that mounts later is
+  // picked up without a re-apply. See client/wire.ts for the adapters.
+  const wire = (): RemoteApi | undefined => resolveWire(ctx as unknown as WireContext)
+  // Pushed invalidations for slot-mode panels: the same two signals the
+  // official describe mirror listens to, folded into one subscription face.
+  const subscribe = (listener: () => void): (() => void) => {
+    const disposers = [
+      ctx.remote.$on('settings/document-updated', () => { listener() }),
+      ctx.on('connection/reset', () => { listener() }),
+    ]
+    return () => { for (const dispose of disposers) dispose() }
+  }
   // The shell's Translate is `(key: string, params?: Record<string, unknown>)`;
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
@@ -99,16 +113,20 @@ export function apply(ctx: ClientContext): void {
   let scanTimer: number | undefined
   let observer: MutationObserver | undefined
 
+  /** Once true, the sanctioned alpha.1 slot owns the page and DOM scans retire. */
+  let slotMode = false
   const scheduleScan = (): void => {
-    if (scanTimer !== undefined) return
+    if (slotMode || scanTimer !== undefined) return
     // Debounce: the official page re-renders in bursts (typing, expanding,
     // applying); one scan per frame keeps the editor stable mid-keystroke.
     scanTimer = window.setTimeout(() => {
       scanTimer = undefined
       const root = panelRoot()
       reconcile(root, {
-        api,
-        describeNamespace: () => describeNamespace(api),
+        wire,
+        // reconcile has already gated on the wire being up, so the read here
+        // always has a face; the assertion only satisfies the types.
+        describeNamespace: () => describeNamespace(wire() as RemoteApi),
         t,
         mount(container, props) {
           const rootEl = document.createElement('div')
@@ -187,6 +205,39 @@ export function apply(ctx: ClientContext): void {
     ]
     return () => { for (const dispose of disposers) dispose() }
   }, 'dsh-better-reasoning-effort: pushed invalidations')
+
+  // ---- alpha.1 slot mode ----
+  // The official Models page grew a keyed extension slot
+  // ('settings.models.provider-card', dispatched per provider card by its
+  // settings namespace). Once the alpha.1 settings stub mounts, the plugin
+  // switches to that sanctioned seat: the DOM bypass observer retires, its
+  // editors unmount, and one panel per pi-ai provider card takes over. On
+  // rc.2 the stub never mounts, this callback never fires, and the DOM
+  // bypass remains the only path — one bundle, two kernels, no version
+  // sniffing.
+  ctx.effect(() => {
+    let disposed = false
+    const host = ctx as unknown as {
+      inject?: (names: string[], cb: () => void) => unknown
+      slots?: SlotRegistrarFace
+    }
+    host.inject?.(['remote.settings'], () => {
+      if (disposed || slotMode) return
+      slotMode = true
+      stopObserver()
+      for (const [, entry] of scanState.mounted) entry.editor.unmount()
+      scanState.mounted.clear()
+      host.slots?.inject('settings.models.provider-card', () => {
+        host.slots?.register({
+          name: 'settings.models.provider-card',
+          key: PI_AI_NS,
+          id: PLUGIN_ID,
+          inject: () => ({ wire, subscribe, t }),
+        }, ProviderEffortPanel)
+      })
+    })
+    return () => { disposed = true }
+  }, 'dsh-better-reasoning-effort: alpha.1 slot activation')
 }
 
 export type { BreKey }

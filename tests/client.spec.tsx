@@ -62,11 +62,15 @@ function fakeApi(describe: () => Promise<SettingsJoin>): RemoteApi & { describeS
 }
 
 /** Minimal cordis client context face capturing what apply() touches. */
-function makeCtx(api: RemoteApi) {
+function makeCtx(api: RemoteApi, opts?: { alphaStub?: unknown }) {
   const disposers: Array<() => void> = []
   const remoteHandlers = new Map<string, Set<(payload: unknown) => void>>()
   const localHandlers = new Map<string, Set<(payload: unknown) => void>>()
   const localeRegister = vi.fn()
+  const slotCalls = {
+    injected: [] as string[],
+    registered: [] as Array<Record<string, unknown>>,
+  }
   const t = (key: string): string => (en as Record<string, string>)[key] ?? key
   const track = (
     map: Map<string, Set<(payload: unknown) => void>>,
@@ -86,14 +90,32 @@ function makeCtx(api: RemoteApi) {
     get(name: string): unknown {
       return name === 'connection' ? { api } : undefined
     },
+    inject(names: string[], cb: () => void): void {
+      // Mirror cordis: the callback fires once the named service exists. The
+      // alpha.1 stub mounts synchronously in this fake; rc.2 has no such
+      // service and never calls back.
+      if (opts?.alphaStub !== undefined && names.includes('remote.settings')) cb()
+    },
     remote: {
+      ...(opts?.alphaStub !== undefined ? { settings: opts.alphaStub } : {}),
       $on: (event: string, cb: (payload: unknown) => void) => track(remoteHandlers, event, cb),
+    },
+    slots: {
+      inject(name: string, registrar: () => unknown): void {
+        slotCalls.injected.push(name)
+        registrar()
+      },
+      register(options: Record<string, unknown>): () => void {
+        slotCalls.registered.push(options)
+        return () => {}
+      },
     },
     on: (event: string, cb: (payload: unknown) => void) => track(localHandlers, event, cb),
   }
   return {
     ctx,
     localeRegister,
+    slotCalls,
     emitRemote(event: string, payload?: unknown): void {
       for (const cb of [...(remoteHandlers.get(event) ?? [])]) cb(payload)
     },
@@ -238,6 +260,32 @@ describe('client apply()', () => {
         return notes.some(note => note.textContent?.includes('No reasoning-effort control'))
       })
       expect(api.describeSpy.mock.calls.length).toBeGreaterThan(initialDescribes)
+    } finally {
+      h.disposeAll()
+    }
+  })
+
+  it('hands the page over to the official slot once the alpha.1 stub mounts', async () => {
+    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
+    const h = makeCtx(api, {
+      alphaStub: { describe: async () => ({ ok: true, value: { writable: true, hasDocument: false, namespaces: [] } }) },
+    })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+
+      // The plugin registered into the official provider-card slot, keyed to
+      // the pi-ai namespace.
+      expect(h.slotCalls.injected).toContain('settings.models.provider-card')
+      expect(h.slotCalls.registered).toHaveLength(1)
+      expect(h.slotCalls.registered[0]).toMatchObject({ name: 'settings.models.provider-card', key: PI_AI_NS, id: PLUGIN_ID })
+
+      // The DOM bypass retired with the page: even as the page mutates, no
+      // row editor mounts — the slot owns the contribution now.
+      document.body.appendChild(document.createElement('div'))
+      await new Promise(resolve => setTimeout(resolve, 300))
+      expect(document.querySelectorAll('.bre-effort-editor')).toHaveLength(0)
     } finally {
       h.disposeAll()
     }
