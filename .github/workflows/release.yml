@@ -19,4 +19,13 @@ jobs:
       - name: Create the GitHub release for the pushed tag
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+        run: |
+          # Idempotence: a tag can be created out of band together with its
+          # release (gh release create makes its own tag), which used to trip
+          # this step with HTTP 422 "tag_name already exists". When the
+          # release already exists, leave its notes and assets untouched.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists; leaving its notes and assets untouched"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+          fi
