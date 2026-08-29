@@ -267,6 +267,17 @@ export function apply(ctx: ClientContext): void {
     const cells = Array.from(menu.children).filter((el): el is HTMLButtonElement =>
       el instanceof HTMLButtonElement && el.getAttribute('role') === 'menuitem')
     if (menu.querySelector('[role="menuitemradio"]') !== null) {
+      // Focus handoff BEFORE hiding: the replica row (possibly focused) is
+      // about to become display:none. Without moving focus first the browser
+      // drops it to <body>, the official shell's onBlur reads that as "focus
+      // left the seat" and closes the menu instantly — the flash-out that
+      // made the model list unusable. The menu itself sits inside the seat
+      // root, so focusing it keeps the blur inside (tabindex -1: no Tab
+      // stop, no focus ring for programmatic focus).
+      if (sliderMount.wrapper.contains(document.activeElement)) {
+        menu.tabIndex = -1
+        menu.focus({ preventScroll: true })
+      }
       sliderMount.wrapper.style.display = 'none'
     } else {
       sliderMount.wrapper.style.display = ''

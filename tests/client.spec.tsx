@@ -436,12 +436,30 @@ describe('client apply()', () => {
       const wrapper = document.querySelector<HTMLElement>('[data-bre-slider="1"]')!
       const menu = card.querySelector<HTMLElement>('[role="menu"]')!
 
-      // Drill-in: React swaps the root cells for the model list (menuitemradio).
-      menu.innerHTML = '<button role="menuitemradio">item</button>'
+      // The replica row is the user's click target: focus it (a real click
+      // focuses the button) BEFORE drilling in.
+      const row = wrapper.querySelector<HTMLButtonElement>('.bre-model-row')!
+      row.focus()
+      expect(document.activeElement).toBe(row)
+
+      // Drill-in: the official pane switch replaces ITS root cells (the
+      // wrapper/replica stay in the DOM), so remove only the menu's DIRECT
+      // children — a descendant query would also catch the replica row,
+      // which is exactly what a real pane switch never does.
+      for (const cell of Array.from(menu.children)) {
+        if (cell instanceof HTMLButtonElement && cell.getAttribute('role') === 'menuitem') cell.remove()
+      }
+      menu.insertAdjacentHTML('beforeend', '<button role="menuitemradio">item</button>')
       await waitFor(() => wrapper.style.display === 'none')
+      // Focus handoff: the hidden row must not dump focus onto <body> (which
+      // the official shell reads as an outside blur and closes the menu). It
+      // lands on the menu itself, inside the seat root.
+      expect(document.activeElement).toBe(menu)
+      expect(menu.tabIndex).toBe(-1)
 
       // Back to root: the body returns and the (re-created) cells hide again.
-      menu.innerHTML = '<button class="cell" role="menuitem">Model</button><button class="cell" role="menuitem">Effort</button>'
+      menu.querySelector('[role="menuitemradio"]')?.remove()
+      menu.insertAdjacentHTML('beforeend', '<button class="cell" role="menuitem">Model</button><button class="cell" role="menuitem">Effort</button>')
       await waitFor(() => wrapper.style.display === '' && wrapper.parentElement?.firstChild === wrapper)
       const cells = Array.from(menu.children).filter(el => el instanceof HTMLButtonElement && el.getAttribute('role') === 'menuitem')
       for (const cell of cells) expect((cell as HTMLButtonElement).style.display).toBe('none')
