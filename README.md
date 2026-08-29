@@ -11,7 +11,7 @@
 
 **English** | [中文](README.zh.md)
 
-Reasoning-effort **and input-modality** editing for **third-party models** in DeepSeek Harness — thinking levels and image-input support declared per model, auto-adapted from a model knowledge base + wire-protocol inference, edited right inside the official Models page card.
+Reasoning-effort **and input-modality** editing for **third-party models** in DeepSeek Harness — thinking levels and image-input support declared per model, auto-adapted from a model knowledge base + wire-protocol inference, edited right inside the official Models page card. Plus a **quick reasoning-effort slider inside the official model menu** (white round thumb, integrated from HanaAyane's dsh-reasoning-effort — see [Acknowledgements](#acknowledgements)) — the composer's official bottom-right *model · effort* display is left untouched.
 
 ![The thinking-effort editor injected into a model row on the official Models page](assets/models-page-effort-editor.png)
 
@@ -36,6 +36,8 @@ This plugin brings both configuration surfaces back into the UI: **edit right in
 - **Endpoint evidence**: Auto-adapt also probes the provider's RAW `/models` listing through a same-origin host route (credential resolved server-side, never echoed) and fuses the signal by confidence — an explicit "does not reason" wins outright; knowledge-base wire values stay authoritative; every suggestion is labeled high / medium / low so you know what to double-check. The same probe reads **modality disclosures** (OpenRouter-style `architecture.input_modalities`, models.dev-style nesting, `supported_features`/`capabilities` vision flags, `supports_vision`) and the advertised **context length**; an explicit listing outranks the knowledge base, silence changes nothing.
 - **Host auto-fill**: on every settings update, models without a `reasoningEfforts` declaration get a recommended one — and missing input-modality declarations are filled too (opt out via `modalityAutofill: false`; declared parts, explicit `false`, and deliberately unset markers are never touched, and capacities are never written at all). The write is optimistic-locked: if your edit moved the namespace first, the fill backs off and waits for the next update — it never fights you for the write.
 - **Three intents**: all levels off = unset the declaration (back to inheritance — persisted as a `reasoningEffortsUnset` marker so auto-fill respects it, even across restarts); only `off` armed = disable reasoning (`false`); levels armed = write the declaration. The editor stays in sync with official-page re-renders and pushed settings changes without clobbering your in-flight edits.
+- **Composer reasoning-effort slider (full popover replication)**: when the official model menu (the bottom-right seat's popover) opens, its body is replaced on the same painted frame by the upstream design — the slider (white round thumb, gradient pill track, radiation canvas + flare; levels from the current model's adapter-advertised ladder) with 14px padding, a separator, and ONE model row reading *name · current effort ›* whose click opens the official model list. The official "Effort" drill-in row is gone because the slider IS the effort control; the official menu shell and the bottom-right trigger stay untouched. Dragging commits through the official session model-selection seam (optimistic, rolled back on refusal); a refused selection announces in the menu. Models with fewer than two levels show the quiet hint plus the model row. The replica mounts synchronously with the menu, so no official window flashes first.
+- **Models-page toggle**: the "Reasoning effort slider" switch moved out of the general settings and onto the **Models** settings page, below the *Add provider* / *Add custom provider* actions, inside a boxed container (same item form as the upstream plugin). On `0.1.2-alpha.1` the toggle rides the official 'settings.models.footer' slot; on older kernels (rc.2) the same box is DOM-injected below the add actions.
 - **Defensive injection**: the injector keys off the official page's DOM (aria-labels / classes). If an official upgrade changes the structure, injection simply stops and the official page is untouched; the next scan re-injects once the structure is back.
 - Bilingual copy (中文 / English).
 
@@ -43,7 +45,7 @@ This plugin brings both configuration surfaces back into the UI: **edit right in
 
 Requires DeepSeek Harness `0.1.1-rc.1` or newer, including the `0.1.2-alpha.1` pre-release (`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1 || ^0.1.2-alpha.1`; the host half also peers on `@deepseek-ai/dsh-settings` with the same range and on `@deepseek-ai/schemastery@^3.18.0` — the explicit `||` branch is required because npm's prerelease exclusion rule makes a plain rc range reject `0.1.2-alpha.1`). The wire contract is verified against `0.1.1-rc.2` and statically re-checked against the `0.1.2-alpha.1` sources (settings Remote faces, client services, the module-loader protocol, and the Models page DOM anchors); older release-candidate lines are not supported. The client bundle requests no official module at runtime, so it loads on both kernel lines unchanged.
 
-**Two injection paths, picked per kernel at runtime (no version sniffing):** on `0.1.2-alpha.1` the plugin registers into the official Models page's `settings.models.provider-card` keyed slot (keyed to `llm-pi-ai`) and renders one panel per provider card; on `0.1.1-rc.2` — which has no such slot — it keeps the DOM bypass injector. The switch keys off the settings wire seat the kernel exposes (`ctx.remote.settings` vs `connection.api`), not off a version string, and the DOM path retires automatically the moment the slot activates. Slot mode is document-driven: a model row shows up in its panel once it is SAVED, so on alpha.1 the flow for a new model is *save the row first, then configure its declaration* (the rc.2 path keeps the stage-unsaved-rows behavior).
+**One DOM-bypass path for the per-model editor on BOTH kernel lines (no version sniffing):** the injector keys off the official Capacity disclosure anchors (`Capacities`/`容量`), which are unchanged between rc.2 and alpha.1, so the editor mounts under every model row that expands — inside the *edit → custom settings* flow — including unsaved rows on a provider's create card (staged, flushed the moment the row is saved; alpha.1's create card works this way too, no "save first" dance needed). The only version-dependent seat is the slider toggle: on `0.1.2-alpha.1` it rides the official `settings.models.footer` slot; on `0.1.1-rc.2` — whose Models section declares no extension slots — the same box is DOM-injected below the add actions. The switch itself keys off the settings wire seat the kernel exposes (`ctx.remote.settings` vs `connection.api`), not off a version string.
 
 ### From npm
 
@@ -136,11 +138,34 @@ Contract version: `@deepseek-ai/dsh-api-remotes@0.1.1-rc.2` (client contract typ
 ## Known limitations
 
 - Injection depends on the official Models page's current DOM (aria-label/class). If an official upgrade changes the structure, injection pauses until adapted; the official page is unaffected meanwhile.
+- The official model menu's Arrow-key roving focus walks its own (hidden) root cells, which is a no-op on display:none nodes — keyboard users reach the replica via Tab, and the replica row's Enter opens the official model list.
 - The auto-adapt probe route answers **loopback and IP-literal Hosts only** — the core `/api` fence's Host-allowlist discipline without its `trustedHosts` escape hatch (a rebound page always names the attacker's *domain* in Host, so named hosts are refused outright). LAN deployments serving the GUI under a domain name get a 403 from this one route (IP-literal LAN hosts keep working); every other feature is unaffected.
 - `reasoningEfforts` declarations are suggestions: which levels/spellings an endpoint actually accepts is up to its docs — tweak each in the UI.
 - The knowledge base is not exhaustive — spellings drift as vendors ship models, and families without an effort ladder carry no entry at all; unlisted models fall back to protocol inference + generic levels and can be adjusted by hand.
 - The modality vocabulary follows pi-ai's core (`text` / `image` today). Wider support some gateways serve (PDF, audio, video) is recorded per family until the core vocabulary grows — declaring them is impossible today by design, not oversight.
 - Name-heuristic modality advice (vision-flavored ids like `*-vl*` / `*vision*` / `gpt-4o`) is deliberately low-confidence and labeled as such — verify before relying on it.
+
+## Acknowledgements
+
+The composer reasoning-effort slider is **adapted from [dsh-reasoning-effort](https://github.com/HanaAyane/dsh-reasoning-effort) by [HanaAyane](https://github.com/HanaAyane)** (MIT license) — thank you for the original work and the codex-style effort control idea.
+
+What this plugin took from it:
+
+- the session model-selection contract it rides (per-session model directory → adapter-advertised effort ladder → `selectModel` submit, with optimistic snap and rollback on refusal);
+- the slider interaction shape (drag / keyboard, level label next to the thumb).
+
+What was deliberately **changed** in this integration:
+
+- **White round thumb only.** The chibi-runner "big fish" knob is not carried over (it swaps the thumb for the fish sprite); everything else is upstream verbatim — the gradient pill track, the left-clipped radiation canvas effect and the flare glow, the drag/keyboard contract, the optimistic commit with rollback.
+- **The official model seat is never replaced.** The upstream plugin shadows the whole seat (its own trigger + menu); here the official bottom-right *model · effort* display stays untouched, and the slider is injected into the top of the official menu when it opens.
+- **Different placement / fewer settings.** The upstream "推理强度滑块 / 大肥鱼滑块" items lived in the general settings page; here only the *Reasoning effort slider* toggle remains, in a boxed container on the **Models** page below the add-provider actions. The "大肥鱼滑块" item is dropped together with the feature.
+- **Maintained across kernels.** This is a reduced re-implementation over the harness wire contract (not a fork of the upstream bundle): it runs on both `0.1.1-rc.2` and `0.1.2-alpha.1` without the upstream's `0.1.0-rc.6` pins, and the whole mount/unmount lifetime is managed by this plugin's DOM injector. If the upstream project resumes publishing, keep both in mind: running both plugins doubles up — the upstream shadows the official seat again, so the official trigger would disappear once more.
+
+If you used the upstream plugin before, remove it to avoid two effort controls on the same seat:
+
+```bash
+dsh plugin --profile web remove dsh-reasoning-effort
+```
 
 ## License
 
