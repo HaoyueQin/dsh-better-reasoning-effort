@@ -2,7 +2,10 @@
  * Kernel-dual wire seam: seat probing priority, the alpha.1 adapter's
  * envelope normalization, and the transient-undefined contract. The rc.2
  * seat passes through untouched (same face, same envelopes), so only its
- * selection needs a test.
+ * selection needs a test. Both seats are probed through `ctx.get` — the
+ * optional lookup — because alpha.1 mounts `remote.settings` as a standalone
+ * service whose property read throws without an inject declaration (a
+ * declaration rc.2 can never satisfy).
  *
  * @module dsh-better-reasoning-effort/client/wire
  */
@@ -29,10 +32,18 @@ function alphaStub(overrides?: Partial<AlphaSettingsStub>): AlphaSettingsStub & 
   return { describe: describeSpy, mutate: mutateSpy, ...overrides, describeSpy, mutateSpy }
 }
 
+/**
+ * A WireContext whose service store answers by name: the alpha.1 stub sits
+ * under 'remote.settings' (its standalone-service name), the rc.2 connection
+ * under 'connection' — exactly the seats the optional lookup probes.
+ */
 function ctxWith(parts: { api?: RemoteApi; stub?: AlphaSettingsStub }): WireContext {
   return {
-    remote: parts.stub === undefined ? undefined : { settings: parts.stub },
-    get: (name: string) => (name === 'connection' && parts.api !== undefined ? { api: parts.api } : undefined),
+    get: (name: string): unknown => {
+      if (name === 'remote.settings' && parts.stub !== undefined) return parts.stub
+      if (name === 'connection' && parts.api !== undefined) return { api: parts.api }
+      return undefined
+    },
   }
 }
 
@@ -62,6 +73,21 @@ describe('resolveWire', () => {
     const broken = {} as AlphaSettingsStub
     const wire = resolveWire(ctxWith({ api, stub: broken }))
     expect(wire).toBe(api)
+  })
+
+  // alpha.1 mounts every Remote namespace as a standalone 'remote.<ns>'
+  // service; a context property read that the fiber did not inject THROWS
+  // (cordis' reflect gate). The wire must never touch such properties —
+  // this pins the probe to ctx.get alone.
+  it('never reads service properties: an alpha.1 ctx whose property access throws still resolves', () => {
+    const stub = alphaStub()
+    const hostile: WireContext = {
+      get: (name: string) => (name === 'remote.settings' ? stub : undefined),
+    }
+    const wire = resolveWire(hostile)
+    expect(wire).toBeDefined()
+    // And the returned adapter really is wired to that stub.
+    expect(wire).not.toBe(stub)
   })
 })
 

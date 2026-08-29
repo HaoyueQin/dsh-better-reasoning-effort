@@ -69,38 +69,26 @@ export interface AlphaSettingsStub {
   ): Promise<AlphaEnvelope<unknown>>
 }
 
-/** The service seats the wire probe reads, as a minimal structural type. */
+/**
+ * The service seats the wire probe reads, as a minimal structural type. Only
+ * `get` — cordis' optional lookup — is used: on alpha.1 every
+ * `remote.<namespace>` is a standalone service whose property read throws
+ * without a matching `inject` declaration (which rc.2 could never satisfy;
+ * see client/wire.ts), so the wire never touches context properties here.
+ */
 export interface WireContext {
-  remote?: { settings?: unknown }
+  /** Optional service lookup: returns the service value or undefined. */
   get?(name: string): unknown
 }
 
 // ---- alpha.1 Models-page slot faces (locally declared; rc.2 types lack them) ----
 
-/** The directory row alpha.1 hands a provider-card slot entry (ui-settings-models store.ts). */
-export interface ProviderDirectoryLike {
-  /** Route id (the settings providers key). */
-  provider: string
-  /** Display name. */
-  displayName: string
-  /** The settings namespace this card's family edits (the slot's dispatch key). */
-  settingsNs: string
-  /** Whether a live route is registered for this provider. */
-  active: boolean
-}
-
-/** Owner share of the 'settings.models.provider-card' keyed slot. */
-export interface ProviderCardOwnerProps {
-  provider: ProviderDirectoryLike
-  configured: boolean
-  keyConfigured: boolean
-}
-
 /**
  * Minimal 'ctx.slots' face the slot path needs, declared locally because the
- * rc.2 type baseline predates the provider-card slot. The runtime accepts the
- * same calls on both kernels; rc.2 never reaches them because the slot path is
- * gated on the alpha.1 wire probe.
+ * rc.2 type baseline predates the Models extension slots. The runtime accepts
+ * the same calls on both kernels; rc.2 never reaches them because the slot path
+ * is gated on the alpha.1 wire probe (and rc.2's Models section declares no
+ * slots at all).
  */
 export interface SlotRegistrarFace {
   inject(name: string, registrar: () => unknown): unknown
@@ -112,6 +100,66 @@ export interface SlotRegistrarFace {
     inject?: () => Record<string, unknown>
     [extra: string]: unknown
   }, component: unknown): () => void
+}
+
+// ---- Composer slider faces (structurally typed; the directory's true types
+// ---- live in @deepseek-ai/dsh-client-ui-model-selection, which both kernels
+// ---- export with the same shape but which the rc.2 dev baseline could not
+// ---- pin alongside alpha.1 — so the seam stays structural.)
+
+/** One effort level exactly as the owning adapter advertised it. */
+export interface EffortLevelLike {
+  readonly id: string
+  readonly name: string
+}
+
+/** Per-model reasoning metadata the directory reports. */
+export interface ModelReasoningLike {
+  readonly defaultEffort?: string
+  readonly efforts?: readonly EffortLevelLike[]
+}
+
+/** One directory model row. */
+export interface DirectoryModelLike {
+  readonly id: string
+  readonly name?: string
+  readonly reasoning?: ModelReasoningLike
+}
+
+/** One provider group of directory models. */
+export interface DirectoryGroupLike {
+  readonly id: string
+  readonly name: string
+  readonly models: readonly DirectoryModelLike[]
+}
+
+/** The selection the host reports for the next assembled step. */
+export interface DirectoryCurrentLike {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
+/** The directory snapshot both selection entries render from (see ui-model-selection). */
+export interface ModelDirectoryStateLike {
+  readonly current: DirectoryCurrentLike | null
+  readonly groups: readonly DirectoryGroupLike[]
+  readonly status: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'
+  readonly error: string | null
+}
+
+/** Per-session model-selection directory face the slider needs (structural). */
+export interface ModelDirectoryLike {
+  readonly store: {
+    getSnapshot(): ModelDirectoryStateLike
+    subscribe(listener: () => void): () => void
+  }
+  load(): Promise<unknown>
+  select(selection: {
+    provider: string
+    model: string
+    reasoningEffort?: string
+  }): Promise<unknown>
 }
 
 // ---- (rest unchanged) ----

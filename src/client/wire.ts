@@ -8,12 +8,13 @@
  * positional mutate arguments, and reports refusals through thrown
  * TypertRemoteFailure as well as `{ok: false}` answers.
  *
- * `resolveWire` probes both seats lazily and the alpha.1 adapter normalizes
- * onto the rc.2 wire shape, so the write seam (ops.ts) keeps one calling
- * convention while both kernels run from one bundle. A probe returning
- * undefined means "no seat answers YET" — on alpha.1 the stub mounts
- * asynchronously after boot — and callers treat it as a transient skip, not
- * an error.
+ * `resolveWire` probes both seats lazily (through `ctx.get`, the optional
+ * lookup — see the function for why the property read is off-limits) and the
+ * alpha.1 adapter normalizes onto the rc.2 wire shape, so the write seam
+ * (ops.ts) keeps one calling convention while both kernels run from one
+ * bundle. A probe returning undefined means "no seat answers YET" — on
+ * alpha.1 the stub mounts asynchronously after boot — and callers treat it as
+ * a transient skip, not an error.
  *
  * ponytail: when 0.1.1-rc.2 support is dropped, delete `resolveWire`'s
  * connection fallback and make the alpha.1 shape the wire's native contract.
@@ -73,10 +74,21 @@ function wrapAlphaSettings(stub: AlphaSettingsStub): RemoteApi {
  * that removed the connection seat); the rc.2 connection seat is the
  * fallback. Callers re-resolve per scan and per write, so a stub that mounts
  * after boot is picked up without a re-apply.
+ *
+ * Both seats are probed through `ctx.get` (cordis' OPTIONAL lookup), never as
+ * context properties. On alpha.1 the gateway mounts every Remote namespace as
+ * a standalone `remote.<namespace>` SERVICE (a fiber that provides it under
+ * exactly that dotted name), and cordis throws `cannot get property without
+ * inject` on any property read the fiber's `inject` did not declare. Declaring
+ * `'remote.settings'` is not an option: a fiber waits for every declared
+ * service before its apply runs, and rc.2 provides no such service — the
+ * plugin would park forever and lose the DOM bypass there too. `ctx.get`
+ * returns the stub once mounted, undefined in alpha.1's boot window (the
+ * transient-skip contract), and undefined on rc.2 where the seat does not
+ * exist.
  */
 export function resolveWire(ctx: WireContext): RemoteApi | undefined {
-  const remote = ctx.remote as { settings?: unknown } | undefined
-  const stub = remote?.settings as AlphaSettingsStub | undefined
+  const stub = ctx.get?.('remote.settings') as AlphaSettingsStub | undefined
   if (stub !== undefined && typeof stub.describe === 'function') {
     return wrapAlphaSettings(stub)
   }
