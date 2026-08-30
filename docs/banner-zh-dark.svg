@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" viewBox="0 0 1200 260" font-family="system-ui,-apple-system,'Segoe UI',sans-serif">
+<defs>
+<linearGradient id="b" x1="0" y1="0" x2="1" y2=".6"><stop offset="0" stop-color="#05070f"/><stop offset=".5" stop-color="#0e1638"/><stop offset="1" stop-color="#241a4e"/></linearGradient>
+<linearGradient id="tk" x1="0" y1="0" x2="1" y2=".25"><stop offset="0" stop-color="#03040a"/><stop offset=".22" stop-color="#071126"/><stop offset=".45" stop-color="#101d4c"/><stop offset=".7" stop-color="#302262"/><stop offset="1" stop-color="#5d35a0"/></linearGradient>
+<linearGradient id="ov" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#000" stop-opacity=".28"/><stop offset=".42" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#a871ff" stop-opacity=".12"/></linearGradient>
+<radialGradient id="or"><stop offset="0" stop-color="#5282ff" stop-opacity=".14"/><stop offset="1" stop-color="#5282ff" stop-opacity="0"/></radialGradient>
+<radialGradient id="fl" fx="1" fy=".5"><stop offset="0" stop-color="#fff" stop-opacity=".96"/><stop offset=".11" stop-color="#bcbdff" stop-opacity=".8"/><stop offset=".28" stop-color="#6a57ff" stop-opacity=".5"/><stop offset=".49" stop-color="#691fff" stop-opacity=".2"/><stop offset=".74" stop-color="#691fff" stop-opacity="0"/></radialGradient>
+<linearGradient id="hl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#64a0ff" stop-opacity="0"/><stop offset=".4" stop-color="#64a0ff" stop-opacity=".42"/><stop offset=".55" stop-color="#f1ecff"/><stop offset=".72" stop-color="#c152ff" stop-opacity=".65"/><stop offset="1" stop-color="#c152ff" stop-opacity="0"/></linearGradient>
+<linearGradient id="vl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c4beff" stop-opacity="0"/><stop offset=".5" stop-color="#c4beff" stop-opacity=".84"/><stop offset="1" stop-color="#c4beff" stop-opacity="0"/></linearGradient>
+<radialGradient id="ho"><stop offset="0" stop-color="#cfd6ff" stop-opacity=".5"/><stop offset="1" stop-color="#cfd6ff" stop-opacity="0"/></radialGradient>
+<radialGradient id="kg"><stop offset="0" stop-color="#874eff" stop-opacity=".55"/><stop offset="1" stop-color="#874eff" stop-opacity="0"/></radialGradient>
+<linearGradient id="pg" x1="0" x2="1"><stop offset="0" stop-color="#4876ff" stop-opacity="0"/><stop offset=".68" stop-color="#7087ff" stop-opacity=".5"/><stop offset="1" stop-color="#ecdeff" stop-opacity=".7"/></linearGradient>
+<radialGradient id="mk" gradientUnits="userSpaceOnUse" cx="955" cy="193" r="242"><stop offset="0" stop-color="#fff"/><stop offset=".2" stop-color="#c9c9c9"/><stop offset=".45" stop-color="#9a9a9a"/><stop offset=".75" stop-color="#757575"/><stop offset="1" stop-color="#606060"/></radialGradient>
+<pattern id="pt" width="62.83" height="30" patternUnits="userSpaceOnUse"><rect x="12" width="2" height="30" fill="#a9c2ff" opacity=".05"/><rect x="16" width="2" height="30" fill="#a9c2ff" opacity=".09"/><rect x="20" width="2" height="30" fill="#a9c2ff" opacity=".13"/><rect x="24" width="2" height="30" fill="#a9c2ff" opacity=".17"/><rect x="28" width="2" height="30" fill="#a9c2ff" opacity=".19"/><rect x="32" width="2" height="30" fill="#a9c2ff" opacity=".2"/><rect x="36" width="2" height="30" fill="#a9c2ff" opacity=".31"/><rect x="40" width="2" height="30" fill="#a9c2ff" opacity=".56"/><rect x="44" width="2" height="30" fill="#e8eaff" opacity=".88"/><rect x="48" width="2" height="30" fill="#e8eaff" opacity=".88"/><rect x="52" width="2" height="30" fill="#a9c2ff" opacity=".63"/><rect x="56" width="2" height="30" fill="#a9c2ff" opacity=".51"/><rect x="60" width="2" height="30" fill="#e8eaff" opacity=".54"/></pattern>
+<filter id="fb" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2"/></filter>
+<filter id="f3" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3"/></filter>
+<clipPath id="pc"><rect x="715" y="179" width="240" height="28" rx="14"/></clipPath>
+<clipPath id="tc"><rect x="714" y="178" width="284" height="30" rx="15"/></clipPath>
+<mask id="m"><rect x="714" y="178" width="284" height="30" fill="url(#mk)"/></mask>
+</defs>
+<rect width="1200" height="260" fill="url(#b)"/>
+<g fill="#c9d4ff"><circle cx="636" cy="46" r="1.5" opacity=".55"/><circle cx="402" cy="247" r="1.2" opacity=".35"/><circle cx="1174" cy="50" r="1.3" opacity=".4"/></g>
+<text x="56" y="102" font-size="38" font-weight="700" fill="#f0f3fa">DSH Better Reasoning Effort</text>
+<text x="56" y="142" font-size="16" fill="#9aa5c0">第三方模型的思考强度与图片输入声明,</text>
+<text x="56" y="166" font-size="16" fill="#9aa5c0">直接在官方「模型」页内编辑,一键自动适配。</text>
+<g font-size="12.5">
+<rect x="56" y="192" width="150" height="27" rx="13.5" fill="#5d83ff"/><text x="131" y="210" text-anchor="middle" font-weight="600" fill="#fff">DeepSeek Harness 插件</text>
+<rect x="218" y="192" width="104" height="27" rx="13.5" fill="#131a30" stroke="#47538a"/><text x="270" y="210" text-anchor="middle" fill="#c6d2f2">一键自动适配</text>
+<rect x="334" y="192" width="140" height="27" rx="13.5" fill="#131a30" stroke="#47538a"/><text x="404" y="210" text-anchor="middle" fill="#c6d2f2">Composer 思考滑块</text>
+</g>
+<rect x="690" y="24" width="450" height="212" rx="13" fill="#161b2c" stroke="#273049"/>
+<text x="714" y="54" font-size="15" font-weight="700" fill="#f0f3fa">思考强度</text>
+<text x="1116" y="54" font-size="13" font-weight="600" fill="#7d97ff" text-anchor="end">自动适配</text>
+<g font-size="13" fill="#c6cddc">
+<text x="740" y="78">off</text><text x="740" y="106">low</text><text x="740" y="134">high</text>
+</g>
+<g fill="#0f1526" stroke="#3a4666">
+<rect x="714" y="65" width="18" height="18" rx="4"/><rect x="714" y="93" width="18" height="18" rx="4"/><rect x="714" y="121" width="18" height="18" rx="4"/>
+</g>
+<g fill="#0f1526" stroke="#2c3554">
+<rect x="812" y="62" width="120" height="24" rx="5"/><rect x="812" y="90" width="120" height="24" rx="5"/><rect x="812" y="118" width="120" height="24" rx="5"/>
+</g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.047;.086;.844;.922;1" dur="6.4s" repeatCount="indefinite"/>
+<rect x="714" y="65" width="18" height="18" rx="4" fill="#5d83ff"/>
+<path d="M718 74l4 4 8-9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="20" stroke-dashoffset="20"><animate attributeName="stroke-dashoffset" values="20;20;0;0;20;20" keyTimes="0;.047;.086;.844;.922;1" dur="6.4s" repeatCount="indefinite"/></path>
+<text x="822" y="78" font-size="12.5" fill="#e8ecf6">off</text></g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.125;.164;.844;.922;1" dur="6.4s" repeatCount="indefinite"/>
+<rect x="714" y="93" width="18" height="18" rx="4" fill="#5d83ff"/>
+<path d="M718 102l4 4 8-9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="20" stroke-dashoffset="20"><animate attributeName="stroke-dashoffset" values="20;20;0;0;20;20" keyTimes="0;.125;.164;.844;.922;1" dur="6.4s" repeatCount="indefinite"/></path>
+<text x="822" y="106" font-size="12.5" fill="#e8ecf6">low</text></g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.203;.242;.844;.922;1" dur="6.4s" repeatCount="indefinite"/>
+<rect x="714" y="121" width="18" height="18" rx="4" fill="#5d83ff"/>
+<path d="M718 130l4 4 8-9" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="20" stroke-dashoffset="20"><animate attributeName="stroke-dashoffset" values="20;20;0;0;20;20" keyTimes="0;.203;.242;.844;.922;1" dur="6.4s" repeatCount="indefinite"/></path>
+<text x="822" y="134" font-size="12.5" fill="#e8ecf6">high</text></g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.281;.328;.844;.922;1" dur="6.4s" repeatCount="indefinite"/>
+<rect x="714" y="142" width="402" height="22" rx="6" fill="none" stroke="#39435f" stroke-dasharray="4 3"/>
+<text x="728" y="156.5" font-size="11" fill="#97a2c4">上下文窗口 1,048,576 · 最大输出 128,000</text></g>
+<rect x="711" y="175" width="290" height="36" rx="18" fill="none" stroke="#6f42ff" stroke-width="5" opacity="0"><animate attributeName="opacity" values="0;.28;0" dur="1.9s" repeatCount="indefinite"/></rect>
+<ellipse cx="856" cy="211" rx="140" ry="6" fill="#0c1137" opacity=".35" filter="url(#f3)"/>
+<rect x="714" y="178" width="284" height="30" rx="15" fill="url(#tk)"/>
+<rect x="716" y="179" width="280" height="1.2" fill="#bdc7ff" opacity=".15"/>
+<rect x="716" y="206" width="280" height="1.2" fill="#000" opacity=".55"/>
+<ellipse cx="765" cy="191" rx="60" ry="14" fill="url(#or)"/>
+<rect x="714" y="178" width="284" height="30" rx="15" fill="url(#ov)"/>
+<g clip-path="url(#pc)"><g mask="url(#m)">
+<rect x="714" y="178" width="284" height="30" fill="#2a38af" opacity=".26"/>
+<ellipse cx="955" cy="193" rx="80" ry="16" fill="url(#ho)"/>
+<g><animateTransform attributeName="transform" type="translate" values="0 0;-62.8 0" dur=".74s" repeatCount="indefinite"/><rect x="651" y="178" width="348" height="30" fill="url(#pt)"/></g>
+<rect x="941" y="185" width="14" height="2" fill="url(#pg)"><animate attributeName="x" values="941;710" dur="3.4s" repeatCount="indefinite"/></rect>
+<rect x="941" y="200" width="9" height="1.6" fill="url(#pg)"><animate attributeName="x" values="941;710" dur="4.6s" begin="-2.1s" repeatCount="indefinite"/></rect>
+</g></g>
+<g clip-path="url(#tc)">
+<ellipse cx="916" cy="193" rx="39" ry="23" fill="url(#fl)" filter="url(#fb)"/>
+<rect x="928" y="191.7" width="54" height="2.6" fill="#9b7cff" opacity=".5" filter="url(#fb)"/>
+<rect x="929" y="192.2" width="52" height="1.6" fill="url(#hl)"/>
+<rect x="953.4" y="182" width="3.2" height="22" fill="#9c7cff" opacity=".5" filter="url(#fb)"/>
+<rect x="954.2" y="183" width="1.6" height="20" fill="url(#vl)"/>
+</g>
+<circle cx="955" cy="193" r="30" fill="url(#kg)"><animate attributeName="opacity" values=".5;.95;.5" dur="1.9s" repeatCount="indefinite"/></circle>
+<circle cx="955" cy="193" r="16.2" fill="none" stroke="#7763ff" stroke-opacity=".18" stroke-width="2.6"/>
+<circle cx="955" cy="193" r="14" fill="#fff" stroke="#fff" stroke-opacity=".94"/>
+</svg>

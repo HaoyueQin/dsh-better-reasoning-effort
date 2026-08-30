@@ -1,5 +1,12 @@
 # DSH Better Reasoning Effort
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/banner-zh-dark.svg">
+    <img src="docs/banner-zh.svg" alt="DSH Better Reasoning Effort" width="720">
+  </picture>
+</p>
+
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![npm version](https://img.shields.io/npm/v/dsh-better-reasoning-effort)](https://www.npmjs.com/package/dsh-better-reasoning-effort)
 [![npm downloads](https://img.shields.io/npm/dw/dsh-better-reasoning-effort)](https://www.npmjs.com/package/dsh-better-reasoning-effort)
@@ -15,7 +22,13 @@
 
 给 DeepSeek Harness 的**第三方模型**（pi-ai 手工声明路由）提供思考强度（reasoning effort）与**输入模态**（图片输入支持）设置的插件——直接在官方「模型」页的模型行里编辑，带知识库 + 协议推断的自动适配；另附**官方模型菜单内的快捷思考强度滑块**（白色圆形滑块，集成自 HanaAyane 的 dsh-reasoning-effort，见[致谢](#致谢)）——Composer 右下角的官方*模型 · 思考强度*显示形式保持不变。
 
-![官方「模型」页模型行内的思考强度编辑器](assets/models-page-effort-editor.png)
+<p align="center">
+  <img src="docs/demo-zh.svg" alt="demo" width="640">
+</p>
+
+<p align="center">
+  <img src="assets/models-page-effort-editor.png" alt="官方「模型」页模型行内的思考强度编辑器" width="720">
+</p>
 
 ## 为什么需要它
 

@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" font-family="system-ui,-apple-system,'Segoe UI',sans-serif">
+<defs>
+<linearGradient id="gt" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff"/><stop offset=".18" stop-color="#d7eaff"/><stop offset=".54" stop-color="#75afea"/><stop offset="1" stop-color="#0751ad"/></linearGradient>
+<linearGradient id="ov" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity=".48"/><stop offset=".34" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#1765c9" stop-opacity=".07"/></linearGradient>
+<radialGradient id="fl" fx="1" fy=".5"><stop offset="0" stop-color="#fff" stop-opacity=".98"/><stop offset=".13" stop-color="#cce7ff" stop-opacity=".88"/><stop offset=".31" stop-color="#5ba2f1" stop-opacity=".48"/><stop offset=".53" stop-color="#256fcf" stop-opacity=".16"/><stop offset=".75" stop-color="#256fcf" stop-opacity="0"/></radialGradient>
+<linearGradient id="hl" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#74b1f4" stop-opacity="0"/><stop offset=".4" stop-color="#74b1f4" stop-opacity=".34"/><stop offset=".55" stop-color="#fff"/><stop offset=".72" stop-color="#428be1" stop-opacity=".58"/><stop offset="1" stop-color="#428be1" stop-opacity="0"/></linearGradient>
+<linearGradient id="vl" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".94"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<radialGradient id="ho"><stop offset="0" stop-color="#eaf3ff" stop-opacity=".7"/><stop offset="1" stop-color="#eaf3ff" stop-opacity="0"/></radialGradient>
+<radialGradient id="gd"><stop offset="0" stop-color="#fff" stop-opacity=".86"/><stop offset=".14" stop-color="#a2d2ff" stop-opacity=".48"/><stop offset=".44" stop-color="#2570cf" stop-opacity=".22"/><stop offset="1" stop-color="#1959b5" stop-opacity="0"/></radialGradient>
+<radialGradient id="kg"><stop offset="0" stop-color="#3076cf" stop-opacity=".3"/><stop offset="1" stop-color="#3076cf" stop-opacity="0"/></radialGradient>
+<linearGradient id="pg" x1="0" x2="1"><stop offset="0" stop-color="#185eb8" stop-opacity="0"/><stop offset=".68" stop-color="#246cca" stop-opacity=".4"/><stop offset="1" stop-color="#67aff8" stop-opacity=".6"/></linearGradient>
+<radialGradient id="mk" gradientUnits="userSpaceOnUse" cx="154" cy="163" r="390"><stop offset="0" stop-color="#fff"/><stop offset=".2" stop-color="#c9c9c9"/><stop offset=".45" stop-color="#9a9a9a"/><stop offset=".75" stop-color="#757575"/><stop offset="1" stop-color="#606060"/><animate attributeName="cx" values="154;154;290;290;430;430;566;566" keyTimes="0;.6325;.6575;.7575;.7825;.8825;.9075;1" calcMode="spline" keySplines="0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1" dur="8s" repeatCount="indefinite"/></radialGradient>
+<pattern id="pt" width="100.53" height="48" patternUnits="userSpaceOnUse"><rect x="19.2" width="3.2" height="48" fill="#65bef4" opacity=".03"/><rect x="25.6" width="3.2" height="48" fill="#65bef4" opacity=".05"/><rect x="32" width="3.2" height="48" fill="#65bef4" opacity=".07"/><rect x="38.4" width="3.2" height="48" fill="#65bef4" opacity=".09"/><rect x="44.8" width="3.2" height="48" fill="#65bef4" opacity=".1"/><rect x="51.2" width="3.2" height="48" fill="#65bef4" opacity=".11"/><rect x="57.6" width="3.2" height="48" fill="#65bef4" opacity=".17"/><rect x="64" width="3.2" height="48" fill="#65bef4" opacity=".3"/><rect x="70.4" width="3.2" height="48" fill="#65bef4" opacity=".45"/><rect x="76.8" width="3.2" height="48" fill="#65bef4" opacity=".45"/><rect x="83.2" width="3.2" height="48" fill="#65bef4" opacity=".34"/><rect x="89.6" width="3.2" height="48" fill="#65bef4" opacity=".27"/><rect x="96" width="3.2" height="48" fill="#65bef4" opacity=".29"/></pattern>
+<filter id="d" x="-10%" y="-10%" width="120%" height="120%"><feDropShadow dx="0" dy="3" stdDeviation="7" flood-color="#26324d" flood-opacity=".14"/></filter>
+<filter id="fbd" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="3.2"/></filter>
+<filter id="f4" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="4.5"/></filter>
+<clipPath id="pc"><rect x="133" y="140" width="0" height="46" rx="23"><animate attributeName="width" values="0;0;136;136;276;276;412;412" keyTimes="0;.6325;.6575;.7575;.7825;.8825;.9075;1" calcMode="spline" keySplines="0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1" dur="8s" repeatCount="indefinite"/></rect></clipPath>
+<clipPath id="tc"><rect x="132" y="139" width="456" height="48" rx="24"/></clipPath>
+<mask id="m"><rect x="132" y="139" width="456" height="48" fill="url(#mk)"/></mask>
+</defs>
+<rect width="720" height="420" fill="#f7f9fc"/>
+<g><animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;.45;.5;.93;1" dur="8s" repeatCount="indefinite"/>
+<rect x="90" y="24" width="540" height="348" rx="14" fill="#fff" stroke="#e4e8ef" filter="url(#d)"/>
+<text x="118" y="69" font-size="17" font-weight="700" fill="#15171b">思考强度</text>
+<rect x="510" y="52" width="72" height="26" rx="7" fill="#e8eeff" opacity="0"><animate attributeName="opacity" values="0;0;.85;0;0" keyTimes="0;.1;.115;.15;1" dur="8s" repeatCount="indefinite"/></rect>
+<text x="574" y="69" font-size="14" font-weight="600" fill="#4d6bfe" text-anchor="end">自动适配</text>
+<g fill="#fff" stroke="#c3cbd7"><rect x="118" y="102" width="20" height="20" rx="5"/><rect x="118" y="146" width="20" height="20" rx="5"/><rect x="118" y="190" width="20" height="20" rx="5"/></g>
+<g font-size="14.5" fill="#2a313a"><text x="150" y="117">off</text><text x="150" y="161">low</text><text x="150" y="205">high</text></g>
+<g fill="#fbfcfe" stroke="#d9dee6"><rect x="230" y="98" width="150" height="28" rx="6"/><rect x="230" y="142" width="150" height="28" rx="6"/><rect x="230" y="186" width="150" height="28" rx="6"/></g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.1375;.18125;.6;.62;1" dur="8s" repeatCount="indefinite"/>
+<rect x="118" y="102" width="20" height="20" rx="5" fill="#4d6bfe"/>
+<path d="M122.5 112l4.5 4.5 9-10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="22" stroke-dashoffset="22"><animate attributeName="stroke-dashoffset" values="22;22;0;0;22;22" keyTimes="0;.1375;.18125;.6;.62;1" dur="8s" repeatCount="indefinite"/></path>
+<text x="242" y="117" font-size="13.5" fill="#1c232b">off</text></g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.1875;.23125;.6;.62;1" dur="8s" repeatCount="indefinite"/>
+<rect x="118" y="146" width="20" height="20" rx="5" fill="#4d6bfe"/>
+<path d="M122.5 156l4.5 4.5 9-10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="22" stroke-dashoffset="22"><animate attributeName="stroke-dashoffset" values="22;22;0;0;22;22" keyTimes="0;.1875;.23125;.6;.62;1" dur="8s" repeatCount="indefinite"/></path>
+<text x="242" y="161" font-size="13.5" fill="#1c232b">low</text></g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.2375;.28125;.6;.62;1" dur="8s" repeatCount="indefinite"/>
+<rect x="118" y="190" width="20" height="20" rx="5" fill="#4d6bfe"/>
+<path d="M122.5 200l4.5 4.5 9-10" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="22" stroke-dashoffset="22"><animate attributeName="stroke-dashoffset" values="22;22;0;0;22;22" keyTimes="0;.2375;.28125;.6;.62;1" dur="8s" repeatCount="indefinite"/></path>
+<text x="242" y="205" font-size="13.5" fill="#1c232b">high</text></g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.28125;.3125;.6;.62;1" dur="8s" repeatCount="indefinite"/>
+<rect x="118" y="226" width="484" height="52" rx="8" fill="#fbfcfd" stroke="#c6cdd9" stroke-dasharray="5 4"/>
+<text x="132" y="247" font-size="11.5" fill="#79839a">参考容量 · 仅提示,不自动填充</text>
+<text x="132" y="267" font-size="13" fill="#333c4a">上下文窗口 <tspan font-weight="700">1,048,576</tspan> · 最大输出 <tspan font-weight="700">128,000</tspan></text></g>
+<text x="118" y="305" font-size="13" fill="#4d6bfe" opacity="0">已按 DeepSeek-V4-Flash 应用建议 · 置信度:高<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.31875;.35;.6;.62;1" dur="8s" repeatCount="indefinite"/></text>
+<rect x="418" y="322" width="72" height="32" rx="7" fill="#4d6bfe"/><text x="454" y="343" font-size="13.5" font-weight="600" fill="#fff" text-anchor="middle">应用</text>
+<rect x="502" y="322" width="100" height="32" rx="7" fill="#fff" stroke="#d3d9e2"/><text x="552" y="343" font-size="13" fill="#4a5160" text-anchor="middle">放弃修改</text>
+<text x="360" y="404" font-size="12.5" fill="#7b8494" text-anchor="middle">官方模型页编辑器 · 一键自动适配</text>
+</g>
+<g opacity="0"><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.45;.5;.955;.995;1" dur="8s" repeatCount="indefinite"/>
+<text x="360" y="404" font-size="12.5" fill="#7b8494" text-anchor="middle">Composer 思考强度滑块</text>
+<rect x="129" y="136" width="462" height="54" rx="27" fill="none" stroke="#1f69c9" stroke-width="5" opacity="0"><animate attributeName="opacity" values="0;.2;0" dur="1.9s" repeatCount="indefinite"/></rect>
+<ellipse cx="360" cy="192" rx="230" ry="10" fill="#3065a5" opacity=".16" filter="url(#f4)"/>
+<rect x="132" y="139" width="456" height="48" rx="24" fill="#e5f0ff"/>
+<rect x="134" y="140.6" width="452" height="1.8" rx=".9" fill="#fff" opacity=".9"/>
+<rect x="133" y="140" width="0" height="46" rx="23" fill="url(#gt)"><animate attributeName="width" values="0;0;136;136;276;276;412;412" keyTimes="0;.6325;.6575;.7575;.7825;.8825;.9075;1" calcMode="spline" keySplines="0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1" dur="8s" repeatCount="indefinite"/></rect>
+<rect x="132" y="139" width="456" height="48" rx="24" fill="url(#ov)"/>
+<g clip-path="url(#pc)"><g mask="url(#m)">
+<ellipse cx="154" cy="163" rx="150" ry="26" fill="url(#ho)"><animate attributeName="cx" values="154;154;290;290;430;430;566;566" keyTimes="0;.6325;.6575;.7575;.7825;.8825;.9075;1" calcMode="spline" keySplines="0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1" dur="8s" repeatCount="indefinite"/></ellipse>
+<g><animateTransform attributeName="transform" type="translate" values="0 0;-100.5 0" dur="1.18s" repeatCount="indefinite"/><rect x="31" y="139" width="560" height="48" fill="url(#pt)"/></g>
+<rect x="154" y="147" width="17" height="3.2" fill="url(#pg)"><animate attributeName="x" values="154;-30" dur="3.2s" repeatCount="indefinite"/></rect>
+<rect x="154" y="163" width="10" height="2" fill="url(#pg)"><animate attributeName="x" values="154;-30" dur="4.4s" begin="-1.8s" repeatCount="indefinite"/></rect>
+<rect x="154" y="177" width="14" height="2.6" fill="url(#pg)"><animate attributeName="x" values="154;-30" dur="5.6s" begin="-3s" repeatCount="indefinite"/></rect>
+</g></g>
+<g clip-path="url(#tc)"><g><animateTransform attributeName="transform" type="translate" values="0 0;0 0;136 0;136 0;276 0;276 0;412 0;412 0" keyTimes="0;.6325;.6575;.7575;.7825;.8825;.9075;1" calcMode="spline" keySplines="0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1;.4 0 .2 1;0 0 1 1" dur="8s" repeatCount="indefinite"/>
+<ellipse cx="91.5" cy="163" rx="62.5" ry="37" fill="url(#fl)" filter="url(#fbd)"/>
+<rect x="110" y="160.5" width="88" height="5" fill="#428be1" opacity=".4" filter="url(#fbd)"/>
+<rect x="112.5" y="161.7" width="83" height="2.6" fill="url(#hl)"/>
+<rect x="151" y="144" width="6" height="38" fill="#428be1" opacity=".35" filter="url(#fbd)"/>
+<rect x="152.7" y="147" width="2.6" height="32" fill="url(#vl)"/>
+<circle cx="154" cy="163" r="38" fill="url(#gd)"/>
+<circle cx="154" cy="163" r="60" fill="url(#kg)"><animate attributeName="opacity" values=".5;.95;.5" dur="1.9s" repeatCount="indefinite"/></circle>
+<circle cx="154" cy="163" r="25" fill="none" stroke="#3a7ccf" stroke-opacity=".12" stroke-width="4"/>
+<circle cx="154" cy="163" r="22" fill="#fff" stroke="#7ea0c5" stroke-opacity=".32" stroke-width="1.6"/>
+</g></g>
+<rect x="132" y="209" width="456" height="1.6" fill="#798091" opacity=".16"/>
+<text x="154" y="252" font-size="21" fill="#15171b">DeepSeek-V4-Flash</text>
+<text x="536" y="252" font-size="19" fill="#4d70ff" text-anchor="end" opacity="0">none<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.45;.5;.6325;.6575;1" dur="8s" repeatCount="indefinite"/></text>
+<text x="536" y="252" font-size="19" fill="#4d70ff" text-anchor="end" opacity="0">low<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.6575;.6775;.7575;.7775;1" dur="8s" repeatCount="indefinite"/></text>
+<text x="536" y="252" font-size="19" fill="#4d70ff" text-anchor="end" opacity="0">high<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.7775;.7975;.8825;.9025;1" dur="8s" repeatCount="indefinite"/></text>
+<text x="536" y="252" font-size="19" fill="#4d70ff" text-anchor="end" opacity="0">max<animate attributeName="opacity" values="0;0;1;1" keyTimes="0;.9025;.9225;1" dur="8s" repeatCount="indefinite"/></text>
+<text x="565" y="255" font-size="32" fill="#15171b" opacity=".42" text-anchor="end">›</text>
+</g>
+</svg>
