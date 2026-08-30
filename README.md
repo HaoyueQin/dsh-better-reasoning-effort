@@ -8,6 +8,8 @@
 ![Version](https://img.shields.io/badge/version-0.3.1-4d6bfe)
 ![Docs](https://img.shields.io/badge/docs-EN%20%7C%20ZH-4d6bfe)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
+[![Commit activity](https://img.shields.io/github/commit-activity/t/HaoyueQin/dsh-better-reasoning-effort)](https://github.com/HaoyueQin/dsh-better-reasoning-effort/graphs/commit-activity)
+[![Last commit](https://img.shields.io/github/last-commit/HaoyueQin/dsh-better-reasoning-effort)](https://github.com/HaoyueQin/dsh-better-reasoning-effort/commits)
 
 **English** | [中文](README.zh.md)
 
@@ -166,6 +168,10 @@ If you used the upstream plugin before, remove it to avoid two effort controls o
 ```bash
 dsh plugin --profile web remove dsh-reasoning-effort
 ```
+
+## Activity
+
+[![HaoyueQin/dsh-better-reasoning-effort GitStock K-Line Chart](https://gitstock.org/HaoyueQin/dsh-better-reasoning-effort/stock.svg)](https://gitstock.org/HaoyueQin/dsh-better-reasoning-effort)
 
 ## License
 
