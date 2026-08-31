@@ -12,7 +12,8 @@
 
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import type { AlphaSettingsStub, RemoteApi, WireContext } from '../src/client/types.js'
+import type { AlphaSettingsStub, RemoteApi, SettingsNamespaceView, WireContext } from '../src/client/types.js'
+import { createEditorApi } from '../src/client/ops.js'
 import { resolveWire } from '../src/client/wire.js'
 
 /** An rc.2-shaped face whose identity is observable through the probe. */
@@ -140,5 +141,59 @@ describe('alpha.1 adapter normalization', () => {
       expect(response.result.error.message).toBe('transport down')
       expect(response.result.error.code).toBe('error')
     }
+  })
+})
+
+// ---- Wire -> ops integration: the kernel-dual recovery path end to end ----
+// The adapter tests above pin the normalization onto the {result} envelope
+// and ops.spec.ts pins the conflict retry against an already-normalized face;
+// this walks the REAL chain: the alpha.2 stub refuses by THROWING a
+// RemoteError carrying the re-coded 'settings/conflict', wrapAlphaSettings
+// folds the throw into the envelope, and createEditorApi's conflict retry
+// re-describes and lands the write with the fresh revision.
+describe('alpha stub through the write seam (wire -> ops)', () => {
+  const doc = {
+    providers: {
+      aliyun: {
+        displayName: 'Aliyun',
+        api: 'openai-completions',
+        models: [{ id: 'qwen-max', name: 'Qwen Max' }],
+      },
+    },
+  }
+
+  it('recovers a thrown settings/conflict through the conflict retry', async () => {
+    let revision = 7
+    let conflictsLeft = 1
+    const expectedRevisions: Array<number | undefined> = []
+    const stub = alphaStub({
+      describe: vi.fn(async () => ({
+        ok: true,
+        value: {
+          writable: true,
+          hasDocument: false,
+          namespaces: [{
+            ns: 'llm-pi-ai', schema: {}, value: doc, user: doc, revision, applies: 'live' as const, secrets: [],
+          } as unknown as SettingsNamespaceView],
+        },
+      })),
+      mutate: vi.fn(async (_ns: string, _ops: unknown[], expectedRevision: number | undefined) => {
+        expectedRevisions.push(expectedRevision)
+        if (conflictsLeft > 0) {
+          conflictsLeft -= 1
+          revision += 1 // a concurrent writer moved the namespace
+          // alpha.2's RemoteError: the refusal rides a THROW, not an answer
+          // envelope — the recovery must survive that delivery too.
+          throw Object.assign(new Error('settings namespace "llm-pi-ai" changed since it was read'), { code: 'settings/conflict' })
+        }
+        return { ok: true, value: { ns: 'llm-pi-ai', revision } }
+      }),
+    })
+    const editor = createEditorApi(resolveWire(ctxWith({ stub }))!)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: true })
+    // First write carried the stale revision; the retry re-described and
+    // carried the fresh one.
+    expect(expectedRevisions).toEqual([7, 8])
   })
 })
