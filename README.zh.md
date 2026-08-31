@@ -12,7 +12,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/dsh-better-reasoning-effort)](https://www.npmjs.com/package/dsh-better-reasoning-effort)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4d6bfe)
 ![dsh-plugin](https://img.shields.io/badge/dsh--plugin-ecosystem-4d6bfe)
-![Version](https://img.shields.io/badge/version-0.3.1-4d6bfe)
+![Version](https://img.shields.io/badge/version-0.3.2-4d6bfe)
 ![Docs](https://img.shields.io/badge/docs-EN%20%7C%20ZH-4d6bfe)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![Commit activity](https://img.shields.io/github/commit-activity/t/HaoyueQin/dsh-better-reasoning-effort)](https://github.com/HaoyueQin/dsh-better-reasoning-effort/graphs/commit-activity)
