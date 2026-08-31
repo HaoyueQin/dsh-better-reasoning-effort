@@ -15,6 +15,7 @@ import {
 import { INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
 import { isRecord, routeFactsOf } from '../shared.js'
+import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   EffortEditorApi,
   EffortWriteIntent,
@@ -217,7 +218,12 @@ export function createEditorApi(
           })
           const response = await api.settings.mutate({
             ns: PI_AI_NS,
-            ops: [{ op: 'set', path: ['providers', route, 'models'], value: nextModels }],
+            // The rebuilt models array is JSON-shaped by construction (a
+            // settings document is JSON). rc.2's SettingsPathOpView.value was
+            // unknown while the alpha.2 type pinned it to JsonValue — a type
+            // owned by different packages on the two kernels — so the set op
+            // asserts once instead of naming either value type.
+            ops: [{ op: 'set', path: ['providers', route, 'models'], value: nextModels } as unknown as SettingsPathOpView],
             expectedRevision: join.namespace.revision,
           })
           if (!response.result.ok) {

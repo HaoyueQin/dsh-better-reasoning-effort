@@ -1,13 +1,17 @@
 /**
  * Wire-surface types the browser half consumes: the settings Remote faces and
- * the pure seam the effort editor needs. Derived from the published client
- * contract ('@deepseek-ai/dsh-api-remotes/client') so a harness-side drift
- * surfaces as a compile error rather than a browser surprise.
+ * the pure seam the effort editor needs. The faces the browser writes through
+ * are declared structurally: the rc.2 line exposed them through
+ * `IApiClient['settings']` ('@deepseek-ai/dsh-api-remotes/client'), but the
+ * alpha line replaced the fetch client with generated Typert remotes and
+ * dropped that interface, so no export exists on both kernels to derive from.
+ * Only the used members are pinned here, and the wire (client/wire.ts)
+ * normalizes the alpha stub onto the rc.2 calling convention below.
  *
  * @module dsh-better-reasoning-effort/types
  */
 
-import type { IApiClient, SettingsNamespaceView } from '@deepseek-ai/dsh-api-remotes/client'
+import type { SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   CompatSuggestion,
   InputModalities,
@@ -15,11 +19,45 @@ import type {
   ReasoningEfforts,
 } from '../knowledge.js'
 
-export type { ConfigurableProviderView, SettingsPathOpView, RpcResponse } from
+// Re-exported vocabulary both kernels still publish through the same subpath
+// (rc.2 / alpha.2 checked; ConfigurableProviderView was dropped on the alpha
+// line and is not re-exported here).
+export type { SettingsPathOpView, RpcResponse } from
   '@deepseek-ai/dsh-api-remotes/client'
 
+/** Error half of a settings-remote answer, in the rc.2 RpcError shape. */
+export interface SettingsRemoteError {
+  code: string
+  message: string
+  details?: unknown
+}
+
+/** The `settings.describe` answer value (the rc.2 describe response value, structural). */
+export interface SettingsDescribeValueView {
+  writable: boolean
+  hasDocument?: boolean
+  namespaces: SettingsNamespaceView[]
+}
+
+/** The result envelope both kernels answer with (`result` slot of a rc.2 RpcResponse). */
+export type SettingsRemoteResult<T> = {
+  result:
+    | { ok: true; value: T }
+    | { ok: false; error: SettingsRemoteError }
+}
+
+/** The rc.2 settings.mutate payload: ops plus the optimistic-lock revision. */
+export interface SettingsMutateInput {
+  ns: string
+  ops: SettingsPathOpView[]
+  expectedRevision?: number
+}
+
 /** The 'settings' Remote methods the browser half calls. */
-export type SettingsRemoteApi = Pick<IApiClient['settings'], 'describe' | 'mutate'>
+export interface SettingsRemoteApi {
+  describe(payload?: unknown): Promise<SettingsRemoteResult<SettingsDescribeValueView>>
+  mutate(input: SettingsMutateInput): Promise<SettingsRemoteResult<unknown>>
+}
 
 /** The Remote faces the browser half consumes. */
 export interface RemoteApi {
@@ -57,11 +95,7 @@ export interface AlphaEnvelope<V> {
  * both differing from the rc.2 IApiClient conventions the wire normalizes onto.
  */
 export interface AlphaSettingsStub {
-  describe(): Promise<AlphaEnvelope<{
-    namespaces: SettingsNamespaceView[]
-    writable: boolean
-    hasDocument?: boolean
-  }>>
+  describe(): Promise<AlphaEnvelope<SettingsDescribeValueView>>
   mutate(
     ns: string,
     ops: unknown[],
@@ -79,6 +113,31 @@ export interface AlphaSettingsStub {
 export interface WireContext {
   /** Optional service lookup: returns the service value or undefined. */
   get?(name: string): unknown
+}
+
+/**
+ * The client shell's context face, declared locally instead of imported: the
+ * rc.2 line exports `ClientContext` from
+ * '@deepseek-ai/dsh-client-runtime/client' (an alias of cordis `Context`, and
+ * also the package declaring the 'connection/reset' event key), the alpha
+ * line dropped that package and official client plugins take a plain cordis
+ * `Context` with the same members merged in through the assembly packages.
+ * Only the members the browser half calls are pinned here; `get`/`inject`/
+ * `slots` are probed through casts below, so they stay optional structural
+ * reads.
+ */
+export interface ClientContext {
+  locale: {
+    register(ns: string, dict: Record<string, unknown>): unknown
+    bind(ns: string): unknown
+  }
+  remote: {
+    $on(event: 'settings/document-updated', listener: (ns: unknown) => void): () => void
+  }
+  on(event: 'connection/reset', listener: () => void): () => void
+  effect(fn: () => unknown, name?: string): unknown
+  get?(name: string): unknown
+  inject?(names: string[], callback: () => unknown): unknown
 }
 
 // ---- alpha.1 Models-page slot faces (locally declared; rc.2 types lack them) ----

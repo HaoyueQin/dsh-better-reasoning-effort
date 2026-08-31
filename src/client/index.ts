@@ -21,8 +21,7 @@
  * @module dsh-better-reasoning-effort/client
  */
 
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
-import type { SlotRegistrarFace, WireContext, ModelDirectoryLike } from './types.js'
+import type { ClientContext, SlotRegistrarFace, WireContext, ModelDirectoryLike } from './types.js'
 // Type-only: pulls the shell's locale/remote context merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'

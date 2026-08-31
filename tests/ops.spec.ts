@@ -21,7 +21,10 @@ function fakeApi(initial: unknown): {
   mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[] }[]
   namespace(): SettingsNamespaceView | undefined
 } {
-  const namespace: SettingsNamespaceView = {
+  // The alpha.2 SettingsNamespaceView pinned value/user to JsonValue while the
+  // rc.2 type left them unknown; fixtures are plain JSON shapes, so the view
+  // asserts once instead of per-field.
+  const namespace = {
     ns: 'llm-pi-ai',
     schema: {},
     value: initial,
@@ -29,7 +32,7 @@ function fakeApi(initial: unknown): {
     revision: 7,
     applies: 'live',
     secrets: [],
-  }
+  } as unknown as SettingsNamespaceView
   const mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[] }[] = []
   const api: RemoteApi = {
     settings: {
@@ -66,7 +69,9 @@ const initialValue = {
 }
 
 describe('providersOf / modelsOf / effortsOf', () => {
-  const ns = { ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 1, applies: 'live' as const, secrets: [] } satisfies SettingsNamespaceView
+  const ns = {
+    ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 1, applies: 'live' as const, secrets: [],
+  } as unknown as SettingsNamespaceView
 
   it('reads providers and models as records', () => {
     const providers = providersOf(ns)

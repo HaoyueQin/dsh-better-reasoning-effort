@@ -18,6 +18,9 @@ import type { ModelDirectoryLike, ModelDirectoryStateLike, RemoteApi, SettingsJo
 /** A settings join shaped like the real wire view. */
 function makeJoin(providers: Record<string, unknown>): SettingsJoin {
   return {
+    // The alpha.2 SettingsNamespaceView pinned value/user to JsonValue while
+    // the rc.2 type left them unknown; the fixtures are plain JSON shapes, so
+    // the view asserts once instead of per-field.
     namespace: {
       ns: PI_AI_NS,
       schema: {},
@@ -26,7 +29,7 @@ function makeJoin(providers: Record<string, unknown>): SettingsJoin {
       revision: 1,
       applies: 'live',
       secrets: [],
-    },
+    } as unknown as SettingsJoin['namespace'],
     writable: true,
   }
 }
