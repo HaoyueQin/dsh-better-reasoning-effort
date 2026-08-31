@@ -60,7 +60,7 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本，含 `0.1.2-alpha.1` 与 `0.1.2-alpha.2` 预发布（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.2-alpha.2`；host 侧 peer 依赖 `@deepseek-ai/dsh-settings` 采用同一范围，另有 `@deepseek-ai/schemastery@^3.18.0`——必须显式写 `||` 分支：npm 的 prerelease 排除规则会使普通 rc 范围拒绝匹配 `0.1.2-alpha.x`）。线协议契约已对照 `0.1.1-rc.2` 验证，并对照 `0.1.2-alpha.1` 与 `0.1.2-alpha.2` 源码静态复核（settings Remote 面与 Models 页 DOM 锚点；alpha.2 把 `settingsNamespace` 值导出收编为类型级品牌，并把冲突错误码重排为 `settings/conflict`）；更早的 rc 线不受支持。client bundle 运行时不请求任何官方模块，同一产物可在两条内核线上加载。
 
-**模型行编辑器在三条内核线上统一走 DOM bypass（不做版本号嗅探）：**注入器按官方容量折叠区锚点（`Capacities`/`容量`）定位——rc.2、alpha.1 与 alpha.2 未变——因此编辑器挂进每个展开的模型行下，就在*编辑 → 自定义设置*流程里，也覆盖未保存行（新建供应商卡片上的暂存、保存瞬间自动写入；alpha.1 的新建卡片同样支持，不需要“先保存再配置”）。唯一随内核变化的席位是滑块开关：alpha 线（`0.1.2-alpha.1` 与 `0.1.2-alpha.2`）上挂在官方 `settings.models.footer` slot；`0.1.1-rc.2` 的 Models 分区不声明任何扩展 slot，同一盒子以 DOM 注入方式挂到添加按钮下方。切换依据仍是内核暴露的 settings wire 席位（`ctx.remote.settings` 与 `connection.api`），而非版本字符串。
+**模型行编辑器在三条内核线上统一走 DOM bypass（不做版本号嗅探）：**注入器按官方容量折叠区锚点（`Capacities`/`容量`）定位——rc.2、alpha.1 与 alpha.2 未变——因此编辑器挂进每个展开的模型行下，就在*编辑 → 自定义设置*流程里，也覆盖未保存行（新建供应商卡片上的暂存、保存瞬间自动写入；alpha.1 的新建卡片同样支持，不需要“先保存再配置”）。唯一随内核变化的席位是滑块开关：alpha 线（`0.1.2-alpha.1` 与 `0.1.2-alpha.2`）上挂在官方 `settings.models.footer` slot；`0.1.1-rc.2` 的 Models 分区不声明任何扩展 slot，同一盒子以 DOM 注入方式挂到添加按钮下方。切换依据仍是内核暴露的 settings wire 席位（`ctx.remote.settings` 与 `connection.api`），而非版本字符串。模型页余下的正规席位是 keyed `settings.models.provider-card`（按提供方卡片分发，alpha.1 起提供）——卡片级 UI 的迁移路径在它，但没有任何 slot 能触及单个模型行，这正是模型行编辑器保留 DOM bypass 的原因。
 
 ### 从 npm
 

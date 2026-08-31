@@ -2,10 +2,13 @@
  * The DOM bypass injector: the piece that makes reasoning effort editable
  * *inside* the official Models page's model rows.
  *
- * The official settings slot contract exposes no seam into the Models page's
- * editor internals (there is no `settings.model.*` slot), so this plugin
- * mounts its editor as a DOM contribution next to the official per-model
- * capacity disclosure. The anchor is the official "Capacities" (容量) chevron
+ * The official Models-page slot contract's two sanctioned seats are both
+ * coarser than a model row: `settings.models.provider-card` (keyed, since
+ * 0.1.2-alpha.1) renders per provider card and `settings.models.footer`
+ * renders after the rows — neither reaches a single model row's editor
+ * internals, so this plugin mounts its editor as a DOM contribution next to
+ * the official per-model capacity disclosure. The anchor is the official
+ * "Capacities" (容量) chevron
  * button, found by aria-label in both locales; the editor is inserted into the
  * same disclosure container that holds the official context-window / max
  * tokens fields.
