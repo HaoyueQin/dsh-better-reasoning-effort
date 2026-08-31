@@ -17,10 +17,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 // Type-only: pulls the webServer service merge into this program's Context.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-// Runtime helper + the `declare module '@deepseek-ai/cordis'` merge that types
+// Type-only: the `declare module '@deepseek-ai/cordis'` merge that types
 // `ctx.settings` as `SettingsProvider` (describe() returns one descriptor per
 // registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
-import { settingsNamespace } from '@deepseek-ai/dsh-settings'
+// 0.1.2-alpha.2 dropped the `settingsNamespace` value export (it became a
+// private parse + a compile-time SettingsNamespaceInput); the brand is a
+// compile-time concept on every kernel line, so a typed constant is enough.
+import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
 import { INPUT_UNSET_MARKER, PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
 import { suggestEfforts } from './knowledge.js'
@@ -33,7 +36,7 @@ export const name = PLUGIN_ID
 export const inject = ['settings']
 
 /** The branded settings namespace this plugin reads and fills. */
-const PI_NS = settingsNamespace(PI_AI_NS)
+const PI_NS = PI_AI_NS as SettingsNamespace
 
 type JsonObject = Record<string, unknown>
 

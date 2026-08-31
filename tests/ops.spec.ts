@@ -288,40 +288,48 @@ describe('createEditorApi', () => {
     expect(reply).toEqual({ ok: false, error: 'model-not-found' })
   })
 
-  it('retries once on a settings-conflict using the fresh revision', async () => {
-    let revision = 7
-    let conflictsLeft = 1
-    const mutates: Array<{ expectedRevision?: number }> = []
-    const api: RemoteApi = {
-      settings: {
-        async describe() {
-          return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision, applies: 'live' as const, secrets: [] }] } })
+  // Both wire codes mean the same refusal: 'settings-conflict' on the rc
+  // line, 'settings/conflict' since 0.1.2-alpha.2 (the TypertRemoteFailure ->
+  // RemoteError re-coding). The retry must trigger on either.
+  it.each(['settings-conflict', 'settings/conflict'])(
+    'retries once on a %s using the fresh revision',
+    async (conflictCode) => {
+      let revision = 7
+      let conflictsLeft = 1
+      const mutates: Array<{ expectedRevision?: number }> = []
+      const api: RemoteApi = {
+        settings: {
+          async describe() {
+            return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision, applies: 'live' as const, secrets: [] }] } })
+          },
+          async mutate(request) {
+            mutates.push(request)
+            if (conflictsLeft > 0) {
+              conflictsLeft -= 1
+              revision += 1 // a concurrent writer moved the namespace
+              return fakeRpc({
+                ok: false,
+                error: {
+                  // The rc.2 RpcErrorCode union names only the hyphenated value;
+                  // the alpha.2 value is legal at runtime on that kernel line.
+                  code: conflictCode as 'settings-conflict',
+                  message: 'settings namespace "llm-pi-ai" changed since it was read',
+                  details: { ns: 'llm-pi-ai', expected: revision - 1, actual: revision },
+                },
+              })
+            }
+            return fakeRpc({ ok: true, value: undefined as unknown as SettingsNamespaceView })
+          },
         },
-        async mutate(request) {
-          mutates.push(request)
-          if (conflictsLeft > 0) {
-            conflictsLeft -= 1
-            revision += 1 // a concurrent writer moved the namespace
-            return fakeRpc({
-              ok: false,
-              error: {
-                code: 'settings-conflict',
-                message: 'settings namespace "llm-pi-ai" changed since it was read',
-                details: { ns: 'llm-pi-ai', expected: revision - 1, actual: revision },
-              },
-            })
-          }
-          return fakeRpc({ ok: true, value: undefined as unknown as SettingsNamespaceView })
-        },
-      },
-    }
-    const editor = createEditorApi(api)
-    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
-    expect(reply).toEqual({ ok: true })
-    expect(mutates).toHaveLength(2)
-    // The retry carried the FRESH revision, not the stale one.
-    expect(mutates[1]!.expectedRevision).toBe(8)
-  })
+      }
+      const editor = createEditorApi(api)
+      const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+      expect(reply).toEqual({ ok: true })
+      expect(mutates).toHaveLength(2)
+      // The retry carried the FRESH revision, not the stale one.
+      expect(mutates[1]!.expectedRevision).toBe(8)
+    },
+  )
 
   it('surfaces non-conflict write errors without retrying', async () => {
     const api: RemoteApi = {

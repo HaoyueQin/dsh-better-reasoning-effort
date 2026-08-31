@@ -222,11 +222,15 @@ export function createEditorApi(
           })
           if (!response.result.ok) {
             // The stable wire code, not the message prose: 'settings-conflict'
-            // means a concurrent writer moved the namespace between our describe
-            // and mutate. Re-reading and retrying with the fresh revision is
-            // the same recovery the official settings form uses; anything else
-            // surfaces as-is.
-            if (attempt === 0 && response.result.error.code === 'settings-conflict') continue
+            // (rc line) and 'settings/conflict' (0.1.2-alpha.2+, re-coded when
+            // TypertRemoteFailure became RemoteError) both mean a concurrent
+            // writer moved the namespace between our describe and mutate.
+            // Re-reading and retrying with the fresh revision is the same
+            // recovery the official settings form uses; anything else
+            // surfaces as-is. The rc.2 RpcErrorCode union cannot name the
+            // alpha.2 value, so the comparison widens to the wire string.
+            const errorCode = response.result.error.code as string
+            if (attempt === 0 && (errorCode === 'settings-conflict' || errorCode === 'settings/conflict')) continue
             return { ok: false, error: response.result.error.message }
           }
           return { ok: true }
