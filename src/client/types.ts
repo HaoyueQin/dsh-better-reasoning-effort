@@ -20,8 +20,8 @@ import type {
 } from '../knowledge.js'
 
 // Re-exported vocabulary both kernels still publish through the same subpath
-// (rc.2 / alpha.2 checked; ConfigurableProviderView was dropped on the alpha
-// line and is not re-exported here).
+// (rc.2 / alpha.2 / alpha.3 checked; ConfigurableProviderView was dropped on the
+// alpha line and is not re-exported here).
 export type { SettingsPathOpView, RpcResponse } from
   '@deepseek-ai/dsh-api-remotes/client'
 
