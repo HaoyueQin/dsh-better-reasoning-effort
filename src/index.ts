@@ -267,6 +267,42 @@ function displayUrl(raw: string): string {
 }
 
 /**
+ * Compose the raw-models probe request's headers, mirroring the discipline of
+ * the harness's own model discovery since 0.1.2-alpha.4: the provider
+ * profile's configured request headers form the base (deployment-owned
+ * credentials like `x-api-key` ride along), `accept` is always JSON, and a
+ * resolved credential's Bearer overwrites a profile `authorization` — which
+ * survives only when no credential resolves (a route may authenticate through
+ * its configured headers alone). Entries Fetch would refuse are dropped
+ * rather than failing the probe: alpha.4 hosts reject such profiles at
+ * resolve time, but older kernels never validated, and a diagnostic must not
+ * die on them. Harness attribution headers are deliberately not sent — this
+ * is a same-origin diagnostic, not a harness request.
+ * @param profileHeaders - the profile's raw `headers` dict (in the schema
+ *   since rc.2; simply absent on older documents).
+ * @param apiKey - the resolved credential, when one resolved.
+ */
+export function composeProbeHeaders(
+  profileHeaders: unknown,
+  apiKey: string | undefined,
+): Record<string, string> {
+  const headers = new Headers()
+  if (isRecord(profileHeaders)) {
+    for (const [name, value] of Object.entries(profileHeaders)) {
+      if (typeof value !== 'string') continue
+      try {
+        headers.set(name, value)
+      } catch {
+        // Unrepresentable as a Fetch header: skip the entry, keep probing.
+      }
+    }
+  }
+  headers.set('accept', 'application/json')
+  if (apiKey !== undefined) headers.set('authorization', `Bearer ${apiKey}`)
+  return Object.fromEntries(headers.entries())
+}
+
+/**
  * Apply the plugin: autofill undeclared models on boot and after every commit
  * that touches the pi-ai namespace.
  * @param ctx - host context.
@@ -401,7 +437,11 @@ export function apply(ctx: Context, config: Config = {}): void {
             try {
               const upstream = await fetch(listingURL, {
                 method: 'GET',
-                headers: { accept: 'application/json', ...(apiKey === undefined ? {} : { authorization: `Bearer ${apiKey}` }) },
+                // Header composition mirrors the harness's own model discovery
+                // (0.1.2-alpha.4): the profile's configured request headers ride
+                // along, so a deployment that authenticates through a custom
+                // header probes here exactly as it lists officially.
+                headers: composeProbeHeaders(profile['headers'], apiKey),
                 signal: AbortSignal.timeout(resolved.probeTimeoutMs),
               })
               if (!upstream.ok) {
