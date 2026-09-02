@@ -68,7 +68,10 @@ function stateWith(current: DirectoryCurrentLike | null): ModelDirectoryStateLik
 type Selection = Parameters<ModelDirectoryLike['select']>[0]
 
 /** A directory fake whose submissions are recorded; `state` is swappable. */
-function fakeDirectory(initial: ModelDirectoryStateLike): {
+function fakeDirectory(
+  initial: ModelDirectoryStateLike,
+  opts?: { rejectSelects?: boolean },
+): {
   directory: ModelDirectoryLike
   submitted: Selection[]
   update(next: ModelDirectoryStateLike): void
@@ -82,6 +85,10 @@ function fakeDirectory(initial: ModelDirectoryStateLike): {
     },
     load: async (): Promise<ModelDirectoryStateLike> => state,
     select: async (selection: Selection): Promise<unknown> => {
+      // The real directory throws on a rejected selection (directory.ts).
+      if (opts?.rejectSelects === true) {
+        throw new Error('session.selectModel failed: session/invalid: no such effort')
+      }
       submitted.push(selection)
       return undefined
     },
@@ -123,6 +130,20 @@ describe('wireSelect', () => {
       await fake.directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'high' })
       expect(fake.submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'high' }])
       expect(rememberedEffort('openai', 'gpt-5.6')).toBe('high')
+    } finally {
+      restore()
+    }
+  })
+
+  it('does not remember a REFUSED explicit pick', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }), { rejectSelects: true })
+    const restore = wireSelect(fake.directory)
+    try {
+      await expect(
+        fake.directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'xhigh' }),
+      ).rejects.toThrow('session.selectModel failed')
+      // A refused pick must not poison the memory for every later switch.
+      expect(rememberedEffort('openai', 'gpt-5.6')).toBeUndefined()
     } finally {
       restore()
     }

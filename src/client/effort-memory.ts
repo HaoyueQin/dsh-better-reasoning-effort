@@ -121,15 +121,22 @@ function isModelSwitch(
 export function wireSelect(directory: ModelDirectoryLike): () => void {
   const target = directory as unknown as Record<string, unknown>
   if (target[WIRED_MARKER] === true) return () => {}
+  // Whether `select` was an OWN property at wire time decides the restore:
+  // real directories carry it on the prototype, so the disposer removes the
+  // instance shadow entirely instead of freezing a copy of today's method
+  // onto the instance (which would keep shadowing a hot-swapped prototype).
+  const hadOwnSelect = Object.prototype.hasOwnProperty.call(target, 'select')
   const original = directory.select
   const wrapped = async (
     selection: Parameters<ModelDirectoryLike['select']>[0],
   ): Promise<unknown> => {
-    // An explicit level is the memory's source of truth: record it for this
-    // exact model and pass the selection through untouched.
+    // An explicit level is the memory's source of truth — but only an
+    // ACCEPTED one: a refused selection (host validation failed) must not
+    // poison the memory and re-fail every later switch.
     if (selection.reasoningEffort !== undefined) {
+      const result = await original.call(directory, selection)
       rememberEffort(selection.provider, selection.model, selection.reasoningEffort)
-      return original.call(directory, selection)
+      return result
     }
     const snapshot = directory.store.getSnapshot()
     // Same model, no level: an explicit "follow the provider default".
@@ -151,6 +158,7 @@ export function wireSelect(directory: ModelDirectoryLike): () => void {
   directory.select = wrapped as typeof directory.select
   return () => {
     delete target[WIRED_MARKER]
-    directory.select = original
+    if (hadOwnSelect) directory.select = original
+    else delete target['select']
   }
 }

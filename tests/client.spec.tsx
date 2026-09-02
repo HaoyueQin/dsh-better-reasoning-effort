@@ -464,6 +464,7 @@ describe('client apply()', () => {
 
   it('mounts the composer slider into the official model menu and unmounts it on close', async () => {
     const directory = directoryFixture()
+    const originalSelect = directory.select
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
     const h = makeCtx(api, {
       services: {
@@ -475,6 +476,10 @@ describe('client apply()', () => {
       const card = buildComposerMenu()
       const { apply } = await import('../src/client/index.js')
       apply(h.ctx as unknown as Ctx)
+
+      // The effort-memory wiretap wraps the shared directory's select as soon
+      // as the slider's first scan resolves it.
+      await waitFor(() => directory.select !== originalSelect)
 
       // The slider mounts at the TOP of the official menu, wedged before the
       // official cells — the official trigger itself is never replaced.
@@ -513,8 +518,11 @@ describe('client apply()', () => {
       // Closing the menu (React removes it) unmounts the slider root.
       card.querySelector('[role="menu"]')!.remove()
       await waitFor(() => document.querySelector('[data-bre-slider="1"]') === null)
+      expect(directory.select).not.toBe(originalSelect)
     } finally {
       h.disposeAll()
+      // Fiber disposal restores the directory's original select.
+      expect(directory.select).toBe(originalSelect)
     }
   })
 
