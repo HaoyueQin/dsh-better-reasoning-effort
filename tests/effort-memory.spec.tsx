@@ -1,0 +1,233 @@
+/**
+ * Effort-memory tests: the select wrapper's discipline — per-model memory,
+ * the knowledge base's vendor-default fallback for models without one,
+ * respect for explicit picks (a level, or a same-model "follow the provider
+ * default"), the slider gate, defensive storage reads, and fiber-dispose
+ * restoration.
+ */
+
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it } from 'vitest'
+import {
+  rememberEffort,
+  rememberedEffort,
+  wireSelect,
+} from '../src/client/effort-memory.js'
+import { setSliderEnabled } from '../src/client/slider-pref.js'
+import type {
+  DirectoryCurrentLike,
+  ModelDirectoryLike,
+  ModelDirectoryStateLike,
+} from '../src/client/types.js'
+
+const LEVELS = (...ids: string[]) => ids.map(id => ({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }))
+
+/**
+ * A directory snapshot spanning the fallback cases: two knowledge-base
+ * families with DIFFERENT vendor defaults (gpt-5.6 → medium, kimi-k3 → max),
+ * one unknown id (protocol inference → medium), and one model with no
+ * reasoning metadata at all.
+ */
+function stateWith(current: DirectoryCurrentLike | null): ModelDirectoryStateLike {
+  return {
+    current,
+    groups: [
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        models: [{ id: 'gpt-5.6', name: 'GPT-5.6', reasoning: { efforts: LEVELS('low', 'medium', 'high', 'xhigh', 'max') } }],
+      },
+      {
+        id: 'moonshot',
+        name: 'Moonshot',
+        models: [{ id: 'kimi-k3', name: 'Kimi K3', reasoning: { efforts: LEVELS('low', 'high', 'max') } }],
+      },
+      {
+        id: 'generic',
+        name: 'Gateway',
+        models: [{ id: 'gateway-xyz-pro', name: 'Gateway Pro', reasoning: { efforts: LEVELS('low', 'medium', 'high') } }],
+      },
+      {
+        // A directory whose one-model ladder carries neither a memory nor the
+        // vendor default: the switch must stand down entirely.
+        id: 'narrow',
+        name: 'Narrow',
+        models: [{ id: 'narrow-max', name: 'Narrow', reasoning: { efforts: LEVELS('xhigh') } }],
+      },
+      {
+        id: 'plain',
+        name: 'Plain',
+        models: [{ id: 'plain-chat-9', name: 'Plain Chat' }],
+      },
+    ],
+    status: 'ready',
+    error: null,
+  }
+}
+
+type Selection = Parameters<ModelDirectoryLike['select']>[0]
+
+/** A directory fake whose submissions are recorded; `state` is swappable. */
+function fakeDirectory(initial: ModelDirectoryStateLike): {
+  directory: ModelDirectoryLike
+  submitted: Selection[]
+  update(next: ModelDirectoryStateLike): void
+} {
+  let state = initial
+  const submitted: Selection[] = []
+  const directory = {
+    store: {
+      getSnapshot: (): ModelDirectoryStateLike => state,
+      subscribe: (): (() => void) => () => {},
+    },
+    load: async (): Promise<ModelDirectoryStateLike> => state,
+    select: async (selection: Selection): Promise<unknown> => {
+      submitted.push(selection)
+      return undefined
+    },
+  }
+  return {
+    directory: directory as unknown as ModelDirectoryLike,
+    submitted,
+    update(next: ModelDirectoryStateLike): void { state = next },
+  }
+}
+
+beforeEach(() => {
+  window.localStorage.clear()
+  setSliderEnabled(true)
+})
+
+describe('effort memory storage', () => {
+  it('round-trips per provider/model and degrades malformed documents to no memory', () => {
+    expect(rememberedEffort('openai', 'gpt-5.6')).toBeUndefined()
+    rememberEffort('openai', 'gpt-5.6', 'high')
+    rememberEffort('moonshot', 'kimi-k3', 'off')
+    expect(rememberedEffort('openai', 'gpt-5.6')).toBe('high')
+    expect(rememberedEffort('moonshot', 'kimi-k3')).toBe('off')
+    // The same model id under another provider is a DIFFERENT memory slot.
+    expect(rememberedEffort('gateway', 'gpt-5.6')).toBeUndefined()
+
+    window.localStorage.setItem('dsh-better-reasoning-effort.slider.efforts', 'not-json')
+    expect(rememberedEffort('openai', 'gpt-5.6')).toBeUndefined()
+    window.localStorage.setItem('dsh-better-reasoning-effort.slider.efforts', '{"openai/gpt-5.6":42,"": "x"}')
+    expect(rememberedEffort('openai', 'gpt-5.6')).toBeUndefined()
+  })
+})
+
+describe('wireSelect', () => {
+  it('records an explicit level for its exact model and submits untouched', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireSelect(fake.directory)
+    try {
+      await fake.directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'high' })
+      expect(fake.submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'high' }])
+      expect(rememberedEffort('openai', 'gpt-5.6')).toBe('high')
+    } finally {
+      restore()
+    }
+  })
+
+  it('re-applies the target model\'s own remembered level on a switch', async () => {
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireSelect(fake.directory)
+    try {
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }])
+    } finally {
+      restore()
+    }
+  })
+
+  it('falls back to the vendor default when the target model has no memory', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'plain', model: 'plain-chat-9' }))
+    const restore = wireSelect(fake.directory)
+    try {
+      // Knowledge base family: the vendor's own documented default.
+      await fake.directory.select({ provider: 'openai', model: 'gpt-5.6' })
+      expect(fake.submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'medium' }])
+      // Another family with a different vendor default.
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted[1]).toEqual({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'max' })
+      // Unknown id: the inferred generic ladder's medium.
+      await fake.directory.select({ provider: 'generic', model: 'gateway-xyz-pro' })
+      expect(fake.submitted[2]).toEqual({ provider: 'generic', model: 'gateway-xyz-pro', reasoningEffort: 'medium' })
+    } finally {
+      restore()
+    }
+  })
+
+  it('falls back to the vendor default when the remembered level is off the target ladder', async () => {
+    // 'minimal' was picked on some other model; gpt-5.6's ladder lacks it.
+    rememberEffort('openai', 'gpt-5.6', 'minimal')
+    const fake = fakeDirectory(stateWith({ provider: 'moonshot', model: 'kimi-k3' }))
+    const restore = wireSelect(fake.directory)
+    try {
+      await fake.directory.select({ provider: 'openai', model: 'gpt-5.6' })
+      expect(fake.submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'medium' }])
+    } finally {
+      restore()
+    }
+  })
+
+  it('leaves the switch untouched when no fallback lands on the advertised ladder', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireSelect(fake.directory)
+    try {
+      // The advertised ladder carries neither a memory nor the vendor
+      // default: the official behaviour stands.
+      await fake.directory.select({ provider: 'narrow', model: 'narrow-max' })
+      expect(fake.submitted).toEqual([{ provider: 'narrow', model: 'narrow-max' }])
+      // No reasoning metadata at all: nothing to speak.
+      await fake.directory.select({ provider: 'plain', model: 'plain-chat-9' })
+      expect(fake.submitted[1]).toEqual({ provider: 'plain', model: 'plain-chat-9' })
+    } finally {
+      restore()
+    }
+  })
+
+  it('passes through a same-model effort-less selection (explicit provider default)', async () => {
+    rememberEffort('openai', 'gpt-5.6', 'high')
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireSelect(fake.directory)
+    try {
+      await fake.directory.select({ provider: 'openai', model: 'gpt-5.6' })
+      expect(fake.submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6' }])
+    } finally {
+      restore()
+    }
+  })
+
+  it('gates the injection on the slider preference', async () => {
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireSelect(fake.directory)
+    try {
+      setSliderEnabled(false)
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3' }])
+    } finally {
+      restore()
+    }
+  })
+
+  it('is idempotent per instance and restores the original select on dispose', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const original = fake.directory.select
+    const restore = wireSelect(fake.directory)
+    const noop = wireSelect(fake.directory)
+    try {
+      expect(noop).not.toBe(restore)
+      restore()
+      // The original method is back: a switch no longer carries a level.
+      expect(fake.directory.select).toBe(original)
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3' }])
+    } finally {
+      restore()
+      // A second dispose stays harmless.
+      restore()
+    }
+  })
+})

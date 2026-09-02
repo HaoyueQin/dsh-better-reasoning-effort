@@ -32,6 +32,7 @@ import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
+import { wireSelect } from './effort-memory.js'
 import { createScanState, reconcile, type HostLabels } from './injector.ts'
 import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
@@ -236,6 +237,9 @@ export function apply(ctx: ClientContext): void {
   // ---- Composer slider mount (DOM path on both kernels) ----
   let sliderMount: ForeignMount | undefined
   let sliderDirectory: { sessionId: string; directory: ModelDirectoryLike } | undefined
+  // One effort-memory wiretap per directory instance, with each original
+  // `select` kept for the fiber disposer to restore.
+  const wiredDirectories = new Map<ModelDirectoryLike, () => void>()
 
   /** Resolve the current session's model directory (lazy seat probe). */
   const currentDirectory = (): ModelDirectoryLike | undefined => {
@@ -247,6 +251,10 @@ export function apply(ctx: ClientContext): void {
     if (sliderDirectory !== undefined && sliderDirectory.sessionId === current) return sliderDirectory.directory
     try {
       const directory = directories.directoryFor(current)
+      // The memory wrapper rides the shared select seam every submitter uses
+      // (official seat, /model popup, our slider), so a model switch carries
+      // the remembered level in the same atomic commit. Idempotent per instance.
+      if (!wiredDirectories.has(directory)) wiredDirectories.set(directory, wireSelect(directory))
       sliderDirectory = { sessionId: current, directory }
       return directory
     } catch {
@@ -484,6 +492,10 @@ export function apply(ctx: ClientContext): void {
       sliderMount = undefined
       unmountReact(toggleMount)
       toggleMount = undefined
+      // Restore every wrapped directory's original select (the instances
+      // outlive the fiber on disable/HMR and must submit officially again).
+      for (const [, restore] of wiredDirectories) restore()
+      wiredDirectories.clear()
     }
   }, 'dsh-better-reasoning-effort: DOM injector')
 
