@@ -45,21 +45,35 @@ function hasOwn(object: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key)
 }
 
-/** Localized aria-labels that identify the official disclosure buttons. */
-const CAPACITY_ARIA = ['Capacities', '容量']
-
-/** Official aria-labels of the model-id input, in both locales. */
-const MODEL_ID_ARIA = ['Model ID', '模型 ID']
-
-/** Official aria-labels of the per-row model display-name input, in both locales. */
-const MODEL_NAME_ARIA = ['Display name', '显示名称']
-
-/** Official aria-label of the create card's route-id input (same in both locales). */
-const ROUTE_ID_ARIA = ['Provider ID']
-
-/** Official aria-labels of the create card's endpoint and protocol fields. */
-const BASE_URL_ARIA = ['Base URL', 'API 地址']
-const API_PROTOCOL_ARIA = ['API protocol', 'API 协议']
+/**
+ * Localized aria-labels of the official settings controls this injector
+ * anchors to, in the language the host is currently rendering.
+ *
+ * The host renders these labels from its own `settings.models` dictionary
+ * (`ui-settings-models`), so the plugin must read them through the same
+ * channel instead of pinning the two languages it knows about: a host
+ * language pack that adds, say, Japanese would otherwise relabel every
+ * control and leave the injector unable to find a single model row. Each
+ * field carries the active language first and English last — English is the
+ * host's own fallback floor, so it doubles as ours.
+ *
+ * Every field is a LIST because the official labels are numbered per row
+ * ("Model ID 1", "モデル ID 2", …) and are matched by prefix.
+ */
+export interface HostLabels {
+  /** The per-row disclosure button ("Capacities", "容量", …). */
+  capacity: readonly string[]
+  /** The model-id input. */
+  modelId: readonly string[]
+  /** The per-row display-name input. */
+  modelName: readonly string[]
+  /** The create card's route-id input. */
+  routeId: readonly string[]
+  /** The create card's endpoint input. */
+  baseUrl: readonly string[]
+  /** The create card's protocol select. */
+  apiProtocol: readonly string[]
+}
 
 /** A row's identity as found on the page, resolved from the settings join. */
 interface FoundModel {
@@ -86,6 +100,13 @@ export interface InjectorDeps {
   describeNamespace(): Promise<SettingsJoin>
   /** Localized copy. */
   t: (key: string, params?: Record<string, string | number>) => string
+  /**
+   * The official controls' aria-labels in the ACTIVE language. A thunk, not a
+   * value: the host resolves labels through the same fallback chain it renders
+   * from, so re-reading per scan is what keeps a language switch (and a late
+   * language pack) in step with the page it has to find controls on.
+   */
+  labels(): HostLabels
   /** Mount one editor into a container (React); render() updates its props in place. */
   mount(container: HTMLElement, props: EditorMountProps): MountedEditor
 }
@@ -442,11 +463,12 @@ function hasLabeledInput(card: HTMLElement, labels: readonly string[]): boolean 
 function routeOfCard(
   card: HTMLElement,
   providers: Record<string, Record<string, unknown>>,
+  labels: HostLabels,
 ): { route: string; staged: boolean } | undefined {
   const key = card.querySelector<HTMLElement>('[class*="editorRoute"]')?.textContent?.trim()
   if (key !== undefined && key.length > 0 && hasOwn(providers, key)) return { route: key, staged: false }
-  if (hasLabeledInput(card, ROUTE_ID_ARIA)) {
-    const typed = inputValueByLabel(card, ROUTE_ID_ARIA)
+  if (hasLabeledInput(card, labels.routeId)) {
+    const typed = inputValueByLabel(card, labels.routeId)
     return typed.length > 0 && !hasOwn(providers, typed) ? { route: typed, staged: true } : undefined
   }
   const title = card.querySelector<HTMLElement>('[class*="editorTitle"], [class*="rowName"]')?.textContent?.trim()
@@ -469,13 +491,17 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
   // all. One prefix query per locale answers "is the Models page here?" —
   // when it is not and nothing is mounted, the scan costs nothing more.
   if (!root.isConnected) return
+  // One label read per scan, taken before the cheap DOM gate below: the gate
+  // itself matches on them, and reading lazily is what keeps a language switch
+  // in step with the page (the labels the host renders change with it).
+  const labels = deps.labels()
   // The wire gate sits before the describe fold: with no seat answering (the
   // alpha.1 boot window), a scan could neither read nor write — and must not
   // unmount editors over its own unreadiness. Skip silently; slot-mode
   // activation or the next DOM mutation re-enters with a live wire.
   const wire = deps.wire()
   if (wire === undefined) return
-  const hasCapacityRows = CAPACITY_ARIA.some(aria =>
+  const hasCapacityRows = labels.capacity.some(aria =>
     root.querySelector(`button[aria-label^="${aria}"]`) !== null)
   if (!hasCapacityRows) {
     if (state.mounted.size > 0) {
@@ -524,7 +550,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     }
 
     const found: FoundModel[] = []
-    for (const aria of CAPACITY_ARIA) {
+    for (const aria of labels.capacity) {
       // The official disclosure buttons carry a numbered aria-label
       // ("Capacities 1", "容量 2", …), so match by prefix.
       const triggers = Array.from(root.querySelectorAll<HTMLButtonElement>('button[aria-label]'))
@@ -538,7 +564,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         // card: reading the card would return the first row's id for every
         // trigger once more than one model is present.
         const row = trigger.closest<HTMLElement>('[class*="modelEntry"]') ?? card
-        const modelId = inputValueByLabel(row, MODEL_ID_ARIA)
+        const modelId = inputValueByLabel(row, labels.modelId)
         if (modelId.length === 0) continue
         found.push({ container, row, modelId, card })
       }
@@ -560,7 +586,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     if (state.pending.size > 0) {
       const onPage = new Map<string, Set<string>>()
       for (const target of found) {
-        const resolved = routeOfCard(target.card, providers)
+        const resolved = routeOfCard(target.card, providers, labels)
         if (resolved === undefined) continue
         let ids = onPage.get(resolved.route)
         if (ids === undefined) onPage.set(resolved.route, ids = new Set())
@@ -586,7 +612,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     }
 
     found.forEach((target, index) => {
-      const resolved = routeOfCard(target.card, providers)
+      const resolved = routeOfCard(target.card, providers, labels)
       if (resolved === undefined) return
       const { route, staged: routeStaged } = resolved
       const profile = providers[route] ?? {}
@@ -611,10 +637,10 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       // have typed a Display name on the row already -- suggestion inference
       // and knowledge-base matching lose that signal without it. The read is
       // ROW-scoped (the same multi-row trap the model id above avoids).
-      const typedName = staged ? inputValueByLabel(target.row, MODEL_NAME_ARIA) : ''
+      const typedName = staged ? inputValueByLabel(target.row, labels.modelName) : ''
       const modelName = staged ? (typedName.length > 0 ? typedName : undefined) : nameOf(models, target.modelId)
-      const typedApi = routeStaged ? inputValueByLabel(target.card, API_PROTOCOL_ARIA) : ''
-      const typedBaseURL = routeStaged ? inputValueByLabel(target.card, BASE_URL_ARIA) : ''
+      const typedApi = routeStaged ? inputValueByLabel(target.card, labels.apiProtocol) : ''
+      const typedBaseURL = routeStaged ? inputValueByLabel(target.card, labels.baseUrl) : ''
       const routeApi = routeStaged && typedApi.length > 0
         ? typedApi
         : typeof profile['api'] === 'string' ? profile['api'] as string : undefined

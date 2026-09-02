@@ -130,6 +130,14 @@ export interface ClientContext {
   locale: {
     register(ns: string, dict: Record<string, unknown>): unknown
     bind(ns: string): unknown
+    /**
+     * LocaleFace pair (present from rc.2 on): the revision moves on every
+     * active-language switch and dictionary registration. Absent on a kernel
+     * that only exposes register/bind — mounted copy then stays in the
+     * language it rendered in, which is the pre-existing behaviour.
+     */
+    subscribe?(fn: () => void): () => void
+    getSnapshot?(): { revision?: number }
   }
   remote: {
     $on(event: 'settings/document-updated', listener: (ns: unknown) => void): () => void

@@ -119,6 +119,17 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
     wire: () => apiFace,
     describeNamespace,
     t: (key: string) => key,
+    // The English anchors, as the real hostLabels() resolves them against the
+    // host's 'settings.models' dictionary while English is active (the test
+    // DOM below renders the official page in English).
+    labels: () => ({
+      capacity: ['Capacities'],
+      modelId: ['Model ID'],
+      modelName: ['Display name'],
+      routeId: ['Provider ID'],
+      baseUrl: ['Base URL'],
+      apiProtocol: ['API protocol'],
+    }),
     mount,
     editors,
     mutate,

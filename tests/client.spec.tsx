@@ -106,7 +106,14 @@ function directoryFixture(): ModelDirectoryLike & { update: (next: ModelDirector
 }
 
 /** Minimal cordis client context face capturing what apply() touches. */
-function makeCtx(api: RemoteApi, opts?: { alphaStub?: unknown; services?: Record<string, unknown> }) {
+function makeCtx(api: RemoteApi, opts?: {
+  alphaStub?: unknown
+  services?: Record<string, unknown>
+  /** Give the fake locale service the shell's LocaleFace pair (rc.2 on). */
+  localeFace?: boolean
+  /** When false, the 'settings.models' namespace is unregistered (bind echoes keys). */
+  hostDict?: boolean
+}) {
   const disposers: Array<() => void> = []
   const remoteHandlers = new Map<string, Set<(payload: unknown) => void>>()
   const localHandlers = new Map<string, Set<(payload: unknown) => void>>()
@@ -116,6 +123,36 @@ function makeCtx(api: RemoteApi, opts?: { alphaStub?: unknown; services?: Record
     registered: [] as Array<Record<string, unknown>>,
   }
   const t = (key: string): string => (en as Record<string, string>)[key] ?? key
+  // The ui-settings-models dictionary values hostLabels() resolves through
+  // (verified against the rc.2 and alpha.5 sources; customRoute is 'Provider
+  // ID' in BOTH host languages).
+  const hostModelsEn: Record<string, string> = {
+    modelAdvanced: 'Capacities',
+    modelId: 'Model ID',
+    modelName: 'Display name',
+    customRoute: 'Provider ID',
+    baseUrl: 'Base URL',
+    customApi: 'API protocol',
+  }
+  const hostModelsZh: Record<string, string> = {
+    modelAdvanced: '容量',
+    modelId: '模型 ID',
+    modelName: '显示名称',
+    customRoute: 'Provider ID',
+    baseUrl: 'API 地址',
+    customApi: 'API 协议',
+  }
+  let active: 'en' | 'zh' = 'en'
+  let localeRevision = 0
+  const localeListeners = new Set<() => void>()
+  const faceBind = (ns: string): ((key: string) => string) => {
+    if (ns !== 'settings.models') {
+      return key => ((active === 'zh' ? zh : en) as Record<string, string>)[key] ?? key
+    }
+    // An unregistered namespace makes the host's translate() echo the key.
+    if (opts?.hostDict === false) return key => key
+    return key => (active === 'zh' ? hostModelsZh : hostModelsEn)[key] ?? key
+  }
   const track = (
     map: Map<string, Set<(payload: unknown) => void>>,
     event: string,
@@ -130,7 +167,19 @@ function makeCtx(api: RemoteApi, opts?: { alphaStub?: unknown; services?: Record
       const disposer = setup()
       if (typeof disposer === 'function') disposers.push(disposer as () => void)
     },
-    locale: { register: localeRegister, bind: () => t },
+    locale: {
+      register: localeRegister,
+      bind: opts?.localeFace === true ? faceBind : (() => t) as unknown as typeof faceBind,
+      ...(opts?.localeFace === true
+        ? {
+            getSnapshot: (): { revision: number } => ({ revision: localeRevision }),
+            subscribe(fn: () => void): () => void {
+              localeListeners.add(fn)
+              return () => { localeListeners.delete(fn) }
+            },
+          }
+        : {}),
+    },
     get(name: string): unknown {
       if (name === 'connection') return { api }
       return opts?.services?.[name]
@@ -161,6 +210,11 @@ function makeCtx(api: RemoteApi, opts?: { alphaStub?: unknown; services?: Record
     ctx,
     localeRegister,
     slotCalls,
+    switchLocale(next: 'en' | 'zh'): void {
+      active = next
+      localeRevision += 1
+      for (const fn of [...localeListeners]) fn()
+    },
     emitRemote(event: string, payload?: unknown): void {
       for (const cb of [...(remoteHandlers.get(event) ?? [])]) cb(payload)
     },
@@ -279,6 +333,48 @@ describe('client apply()', () => {
       // Fiber disposal removes the stylesheet and unmounts every React root.
       expect(document.head.querySelector(`style[data-plugin-styles="${PLUGIN_ID}"]`)).toBeNull()
       expect(document.querySelectorAll('.bre-effort-editor')).toHaveLength(0)
+    } finally {
+      h.disposeAll()
+    }
+  })
+
+  it('re-translates mounted copy when the shell language switches (LocaleFace path)', async () => {
+    let join = makeJoin(structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(join))
+    const h = makeCtx(api, { localeFace: true })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      expect(document.body.textContent).toContain('Auto-adapt')
+
+      // The shell switches to Chinese: the revision bumps and every
+      // LocaleRefresh subscriber re-renders with the same stable `t`.
+      h.switchLocale('zh')
+      await waitFor(() => document.body.textContent?.includes('自动适配') === true)
+      // The editors survived the switch (the English fallback keeps matching
+      // the English DOM anchors) and now render Chinese copy.
+      expect(document.querySelectorAll('.bre-effort-editor')).toHaveLength(2)
+    } finally {
+      h.disposeAll()
+    }
+  })
+
+  it('anchors with the English fallback when the host ships no models dictionary', async () => {
+    let join = makeJoin(structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(join))
+    const h = makeCtx(api, { localeFace: true, hostDict: false })
+    try {
+      // The page renders English aria-labels while bind('settings.models')
+      // echoes the key back — hostLabels() must fall back to the English
+      // anchors so the editor still mounts.
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      expect(document.body.textContent).toContain('Auto-adapt')
     } finally {
       h.disposeAll()
     }

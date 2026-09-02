@@ -32,7 +32,8 @@ import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
-import { createScanState, reconcile } from './injector.ts'
+import { createScanState, reconcile, type HostLabels } from './injector.ts'
+import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
 import { describeNamespace } from './ops.ts'
 import { ComposerSlider } from './ComposerSlider.js'
@@ -47,6 +48,26 @@ export const name = PLUGIN_ID
 
 /** Cordis fiber dependencies of the browser half. */
 export const inject = ['slots', 'locale', 'connection', 'remote']
+
+/** Dictionary namespace owning the Models page's copy (ui-settings-models). */
+const HOST_MODELS_NS = 'settings.models'
+
+/**
+ * The official Models-page controls this plugin anchors to, as
+ * (dictionary key, English copy) pairs — the English copy is both the anchor
+ * for a host that ships no such namespace and the language the host itself
+ * falls back to, so it stays valid in every configuration. Resolved through
+ * the host's own dictionary so a third language (or a late language pack)
+ * relabels the page and the anchors together.
+ */
+const HOST_LABEL_KEYS = {
+  capacity: ['modelAdvanced', 'Capacities'],
+  modelId: ['modelId', 'Model ID'],
+  modelName: ['modelName', 'Display name'],
+  routeId: ['customRoute', 'Provider ID'],
+  baseUrl: ['baseUrl', 'Base URL'],
+  apiProtocol: ['customApi', 'API protocol'],
+} as const satisfies Record<keyof HostLabels, readonly [string, string]>
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -157,6 +178,51 @@ export function apply(ctx: ClientContext): void {
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
 
+  // The locale service is also its own LocaleFace (getSnapshot/subscribe) from
+  // rc.2 on. Without those two members a language switch cannot reach copy
+  // that is already on screen — the pre-existing behaviour, not a failure.
+  const localeFace = (): LocaleFace | undefined => {
+    const locale = ctx.locale
+    return typeof locale.subscribe === 'function' && typeof locale.getSnapshot === 'function'
+      ? locale as LocaleFace
+      : undefined
+  }
+
+  /**
+   * Wrap a subtree so it re-translates on a language switch. The thunk is
+   * rebuilt per render by {@link LocaleRefresh}; without the seat the subtree
+   * renders exactly as it did before.
+   */
+  const refreshed = (children: () => ReactNode): ReactNode => {
+    const face = localeFace()
+    return face === undefined ? children() : createElement(LocaleRefresh, { locale: face, children })
+  }
+
+  /**
+   * The official controls' aria-labels in the host's ACTIVE language.
+   *
+   * A thunk, never a cached value: the host renders those labels from its own
+   * dictionary through its own fallback chain, so re-reading per scan is what
+   * keeps a language switch (or a late language pack) from stranding the
+   * anchors on words the page no longer prints.
+   */
+  const hostLabels = (): HostLabels => {
+    const translate = ctx.locale.bind(HOST_MODELS_NS) as (key: string) => string
+    const resolve = ([key, fallback]: readonly [string, string]): readonly string[] => {
+      const value = translate(key)
+      // A host with no such namespace makes translate() echo the key back.
+      return value === key || value.trim() === '' ? [fallback] : [value, fallback]
+    }
+    return {
+      capacity: resolve(HOST_LABEL_KEYS.capacity),
+      modelId: resolve(HOST_LABEL_KEYS.modelId),
+      modelName: resolve(HOST_LABEL_KEYS.modelName),
+      routeId: resolve(HOST_LABEL_KEYS.routeId),
+      baseUrl: resolve(HOST_LABEL_KEYS.baseUrl),
+      apiProtocol: resolve(HOST_LABEL_KEYS.apiProtocol),
+    }
+  }
+
   // ---- DOM bypass injection ----
   /** Debounce window for DOM-mutation scans (one scan per render burst). */
   const SCAN_DEBOUNCE_MS = 120
@@ -229,7 +295,7 @@ export function apply(ctx: ClientContext): void {
       sliderMount = mountReact(wrapper,
         createElement(EffortBoundary, {
           fallbackText: t('renderFailed'),
-          children: createElement(ComposerSlider, {
+          children: refreshed(() => createElement(ComposerSlider, {
             directory,
             t,
             // Our model row replicates upstream's: clicking it opens the
@@ -244,7 +310,7 @@ export function apply(ctx: ClientContext): void {
                 el instanceof HTMLButtonElement && el.getAttribute('role') === 'menuitem')
               official?.click()
             },
-          }),
+          })),
         }),
       )
     } else if (sliderMount.wrapper.parentElement !== menu || menu.firstChild !== sliderMount.wrapper) {
@@ -313,7 +379,10 @@ export function apply(ctx: ClientContext): void {
       wrapper.dataset['breToggle'] = '1'
       block.appendChild(wrapper)
       toggleMount = mountReact(wrapper,
-        createElement(EffortBoundary, { fallbackText: t('renderFailed'), children: createElement(SliderToggle, { t }) }),
+        createElement(EffortBoundary, {
+          fallbackText: t('renderFailed'),
+          children: refreshed(() => createElement(SliderToggle, { t })),
+        }),
       )
       return
     }
@@ -337,6 +406,7 @@ export function apply(ctx: ClientContext): void {
         // always has a face; the assertion only satisfies the types.
         describeNamespace: () => describeNamespace(wire() as RemoteApi),
         t,
+        labels: hostLabels,
         mount(container, props) {
           const rootEl = document.createElement('div')
           // The slot class carries the grid-column span: this wrapper — not
@@ -355,7 +425,14 @@ export function apply(ctx: ClientContext): void {
           const renderEditor = (p: typeof props): void => {
             reactRoot.render(createElement(
               EffortBoundary,
-              { fallbackText: t('renderFailed'), children: createElement(EffortEditor, p) },
+              {
+                fallbackText: t('renderFailed'),
+                // Same seat as the slider and the toggle: without the locale
+                // subscription a language switch re-renders the official page
+                // but not this editor — sameProps compares only document data,
+                // so the copy would stay in the language it rendered in.
+                children: refreshed(() => createElement(EffortEditor, p)),
+              },
             ))
           }
           renderEditor(props)
