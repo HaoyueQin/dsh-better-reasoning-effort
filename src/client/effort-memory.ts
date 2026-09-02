@@ -14,11 +14,20 @@
  *
  * The memory is keyed by "provider/model-id" — the exact fields a selection
  * carries — because the same model id under two providers names two models,
- * and display names are editable and never unique. The fallback chain for a
- * switch is: the target model's own remembered level, else the VENDOR'S
- * documented default from the knowledge base (the same convention reasonix
- * and opencode ship as a per-model `default_effort`), else the official
- * no-effort behaviour. Discipline the wrapper keeps:
+ * and display names are editable and never unique. Two delivery paths share
+ * one fallback chain (the target model's own remembered level, else the
+ * VENDOR'S documented default from the knowledge base, else the official
+ * no-effort behaviour):
+ *   - the wrapped `select`: a model switch submitted without a level rides
+ *     the remembered level in ONE atomic commit — no "Default" flash, and
+ *     every surface shows the re-applied level;
+ *   - the projection watcher: a RESTORED session's durable selection arrives
+ *     from session history without going through `select` at all, so the
+ *     watcher re-applies the chain to a level-less projection (one best-
+ *     effort attempt per model per directory lifetime — spent attempts are
+ *     never retried, which also keeps an explicit provider-default pick
+ *     from being fought).
+ * Discipline both paths keep:
  *   - an EXPLICIT level (slider drag, any effort row) always wins: it is
  *     remembered for that exact model and submitted untouched;
  *   - an effort-less selection for the CURRENT model is an explicit "follow
@@ -111,14 +120,35 @@ function isModelSwitch(
 }
 
 /**
- * Wrap one directory's `select` with the effort-memory discipline. Idempotent:
- * an already-wrapped directory is left alone and the returned disposer is a
- * no-op. The disposer restores the original method (the directory instance
- * outlives the plugin fiber on disable/HMR).
- * @param directory - the shared per-session directory to wire.
- * @returns the disposer restoring the original `select`.
+ * Resolve the level the memory chain lands on for one model of a snapshot:
+ * the model's own remembered level, else the vendor's documented default
+ * from the knowledge base — always validated against the ADVERTISED ladder,
+ * and undefined when nothing legitimate lands.
  */
-export function wireSelect(directory: ModelDirectoryLike): () => void {
+function resolveFallback(
+  snapshot: ModelDirectoryStateLike,
+  provider: string,
+  model: string,
+): string | undefined {
+  const supported = effortIdsOf(snapshot, provider, model)
+  if (supported.length === 0) return undefined
+  const memory = rememberedEffort(provider, model)
+  const remembered = memory !== undefined && supported.includes(memory) ? memory : undefined
+  const fallback = remembered ?? suggestEfforts(model, {}).defaultEffort
+  return fallback !== undefined && supported.includes(fallback) ? fallback : undefined
+}
+
+/**
+ * Wire one directory with the effort-memory discipline: wrap its `select`
+ * (model-switch path) and watch its store (projection-restore path).
+ * Idempotent: an already-wired directory is left alone and the returned
+ * disposer is a no-op. The disposer unsubscribes the watcher and restores
+ * the original `select` (the directory instance outlives the plugin fiber
+ * on disable/HMR).
+ * @param directory - the shared per-session directory to wire.
+ * @returns the disposer restoring the original `select` and the watcher.
+ */
+export function wireEffortMemory(directory: ModelDirectoryLike): () => void {
   const target = directory as unknown as Record<string, unknown>
   if (target[WIRED_MARKER] === true) return () => {}
   // Whether `select` was an OWN property at wire time decides the restore:
@@ -127,6 +157,12 @@ export function wireSelect(directory: ModelDirectoryLike): () => void {
   // onto the instance (which would keep shadowing a hot-swapped prototype).
   const hadOwnSelect = Object.prototype.hasOwnProperty.call(target, 'select')
   const original = directory.select
+  // One restore attempt per model per directory lifetime: spent attempts are
+  // never retried, which bounds the watcher (no loop on a refused write) and
+  // keeps an explicit provider-default pick from being fought. Bounded by the
+  // number of models a session touches; dies with the directory.
+  const attemptedRestores = new Set<string>()
+
   const wrapped = async (
     selection: Parameters<ModelDirectoryLike['select']>[0],
   ): Promise<unknown> => {
@@ -144,20 +180,41 @@ export function wireSelect(directory: ModelDirectoryLike): () => void {
     // A switch without a level: re-apply the model's own memory, else the
     // vendor's documented default from the knowledge base — never a guess.
     // A model with no advertised ladder cannot be spoken to at all.
-    const supported = effortIdsOf(snapshot, selection.provider, selection.model)
-    if (!sliderEnabled() || supported.length === 0) return original.call(directory, selection)
-    const memory = rememberedEffort(selection.provider, selection.model)
-    // A memory that the target ladder no longer carries falls through to the
-    // vendor default, exactly like no memory at all.
-    const remembered = memory !== undefined && supported.includes(memory) ? memory : undefined
-    const fallback = remembered ?? suggestEfforts(selection.model, {}).defaultEffort
-    if (fallback === undefined || !supported.includes(fallback)) return original.call(directory, selection)
+    if (!sliderEnabled()) return original.call(directory, selection)
+    const fallback = resolveFallback(snapshot, selection.provider, selection.model)
+    if (fallback === undefined) return original.call(directory, selection)
     return original.call(directory, { ...selection, reasoningEffort: fallback })
   }
+
+  /** Re-apply the chain to a level-less durable projection (session restore). */
+  const restoreProjection = (): void => {
+    const snapshot = directory.store.getSnapshot()
+    const current = snapshot.current
+    if (current === null || current.reasoningEffort !== undefined) return
+    // The gate comes BEFORE the attempt is spent: with the slider off the
+    // plugin is absent, and absence must not burn the model's one attempt.
+    if (!sliderEnabled()) return
+    const key = memoryKey(current.provider, current.model)
+    if (attemptedRestores.has(key)) return
+    attemptedRestores.add(key)
+    const fallback = resolveFallback(snapshot, current.provider, current.model)
+    if (fallback === undefined) return
+    // Directly through the ORIGINAL select: the watcher's own re-apply is a
+    // memory READ, not a user pick, and must not be remembered as one.
+    void original
+      .call(directory, { provider: current.provider, model: current.model, reasoningEffort: fallback })
+      .catch(() => undefined)
+  }
+
+  const unsubscribe = directory.store.subscribe(restoreProjection)
+  // The projection may already be resident when the directory gets wired.
+  restoreProjection()
+
   target[WIRED_MARKER] = true
   directory.select = wrapped as typeof directory.select
   return () => {
     delete target[WIRED_MARKER]
+    unsubscribe()
     if (hadOwnSelect) directory.select = original
     else delete target['select']
   }

@@ -16,7 +16,7 @@
  *
  * @module dsh-better-reasoning-effort/client/LocaleRefresh
  */
-import { useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 
 /** The slice of the shell's locale service this component consumes. */
@@ -37,9 +37,10 @@ export interface LocaleRefreshProps {
 /** Re-render {@link LocaleRefreshProps.children} on every locale revision bump. */
 export function LocaleRefresh(props: LocaleRefreshProps): ReactNode {
   const { locale } = props
-  useSyncExternalStore(
-    (notify) => locale.subscribe(notify),
-    () => locale.getSnapshot().revision ?? 0,
-  )
+  // Stable identities: the shell's locale object never changes identity, so
+  // these two stay put across renders and uSES never churns subscriptions.
+  const subscribe = useCallback((notify: () => void) => locale.subscribe(notify), [locale])
+  const getSnapshot = useCallback(() => locale.getSnapshot().revision ?? 0, [locale])
+  useSyncExternalStore(subscribe, getSnapshot)
   return props.children()
 }

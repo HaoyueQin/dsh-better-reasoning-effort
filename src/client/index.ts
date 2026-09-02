@@ -32,7 +32,7 @@ import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
-import { wireSelect } from './effort-memory.js'
+import { wireEffortMemory } from './effort-memory.js'
 import { createScanState, reconcile, type HostLabels } from './injector.ts'
 import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
@@ -251,10 +251,11 @@ export function apply(ctx: ClientContext): void {
     if (sliderDirectory !== undefined && sliderDirectory.sessionId === current) return sliderDirectory.directory
     try {
       const directory = directories.directoryFor(current)
-      // The memory wrapper rides the shared select seam every submitter uses
-      // (official seat, /model popup, our slider), so a model switch carries
-      // the remembered level in the same atomic commit. Idempotent per instance.
-      if (!wiredDirectories.has(directory)) wiredDirectories.set(directory, wireSelect(directory))
+      // The effort-memory wiretap rides the shared directory (wrapping its
+      // select AND watching for level-less restored projections), so a model
+      // switch and a session restore both carry the remembered level.
+      // Idempotent per instance.
+      if (!wiredDirectories.has(directory)) wiredDirectories.set(directory, wireEffortMemory(directory))
       sliderDirectory = { sessionId: current, directory }
       return directory
     } catch {
