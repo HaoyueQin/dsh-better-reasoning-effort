@@ -58,9 +58,9 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 安装
 
-需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本，含 `0.1.2-alpha.1` 至 `0.1.2-alpha.4` 预发布（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.2-alpha.2 || ^0.1.2-alpha.3 || ^0.1.2-alpha.4`；host 侧 peer 依赖 `@deepseek-ai/dsh-settings` 采用同一范围，另有 `@deepseek-ai/schemastery@^3.18.0`——必须显式写 `||` 分支：npm 的 prerelease 排除规则会使普通 rc 范围拒绝匹配 `0.1.2-alpha.x`）。线协议契约已对照 `0.1.1-rc.2` 验证，并对照 `0.1.2-alpha.1` 至 `0.1.2-alpha.4` 源码静态复核（settings Remote 面与 Models 页 DOM 锚点；alpha.2 把 `settingsNamespace` 值导出收编为类型级品牌，并把冲突错误码重排为 `settings/conflict`；alpha.3 的变更集中在 session/chat 链路，不触及本插件依赖的 settings/Remote/DOM 席位；alpha.4 的官方模型发现开始携带 profile 配置的请求头——探测路由已镜像同一拼装方式——其 session 侧 breaking 变更（按需读取 API、`SessionSeq`/`SessionLogOffset` 品牌化）都留在本插件从不 import 的 session 包内）；更早的 rc 线不受支持。client bundle 运行时不请求任何官方模块，同一产物可在两条内核线上加载。
+需要 DeepSeek Harness `0.1.1-rc.1` 或更新版本，含 `0.1.2-alpha.1` 至 `0.1.2-alpha.5` 预发布（`@deepseek-ai/dsh-api-remotes@^0.1.1-rc.1 || ^0.1.2-alpha.1 || ^0.1.2-alpha.2 || ^0.1.2-alpha.3 || ^0.1.2-alpha.4 || ^0.1.2-alpha.5`；host 侧 peer 依赖 `@deepseek-ai/dsh-settings` 采用同一范围，另有 `@deepseek-ai/schemastery@^3.18.0`——必须显式写 `||` 分支：npm 的 prerelease 排除规则会使普通 rc 范围拒绝匹配 `0.1.2-alpha.x`）。线协议契约已对照 `0.1.1-rc.2` 验证，并对照 `0.1.2-alpha.1` 至 `0.1.2-alpha.5` 源码静态复核（settings Remote 面与 Models 页 DOM 锚点；alpha.2 把 `settingsNamespace` 值导出收编为类型级品牌，并把冲突错误码重排为 `settings/conflict`；alpha.3 的变更集中在 session/chat 链路，不触及本插件依赖的 settings/Remote/DOM 席位；alpha.4 的官方模型发现开始携带 profile 配置的请求头——探测路由已镜像同一拼装方式——其 session 侧 breaking 变更（按需读取 API、`SessionSeq`/`SessionLogOffset` 品牌化）都留在本插件从不 import 的 session 包内；alpha.5 是存储层发布——session-projection-cache 跨版本读兼容加 KV 域的 `compatibleVersions`/`backup-and-skip` 加固——不触及本插件 peer 的任何包）；更早的 rc 线不受支持。client bundle 运行时不请求任何官方模块，同一产物可在两条内核线上加载。
 
-**模型行编辑器在三条内核线上统一走 DOM bypass（不做版本号嗅探）：**注入器按官方容量折叠区锚点（`Capacities`/`容量`）定位——rc.2、alpha.1、alpha.2、alpha.3 与 alpha.4 未变——因此编辑器挂进每个展开的模型行下，就在*编辑 → 自定义设置*流程里，也覆盖未保存行（新建供应商卡片上的暂存、保存瞬间自动写入；alpha.1 的新建卡片同样支持，不需要“先保存再配置”）。唯一随内核变化的席位是滑块开关：alpha 线（`0.1.2-alpha.1` 至 `0.1.2-alpha.4`）上挂在官方 `settings.models.footer` slot；`0.1.1-rc.2` 的 Models 分区不声明任何扩展 slot，同一盒子以 DOM 注入方式挂到添加按钮下方。切换依据仍是内核暴露的 settings wire 席位（`ctx.remote.settings` 与 `connection.api`），而非版本字符串。模型页余下的正规席位是 keyed `settings.models.provider-card`（按提供方卡片分发，alpha.1 起提供）——卡片级 UI 的迁移路径在它，但没有任何 slot 能触及单个模型行，这正是模型行编辑器保留 DOM bypass 的原因。
+**模型行编辑器在三条内核线上统一走 DOM bypass（不做版本号嗅探）：**注入器按官方容量折叠区锚点（`Capacities`/`容量`）定位——rc.2、alpha.1、alpha.2、alpha.3、alpha.4 与 alpha.5 未变——因此编辑器挂进每个展开的模型行下，就在*编辑 → 自定义设置*流程里，也覆盖未保存行（新建供应商卡片上的暂存、保存瞬间自动写入；alpha.1 的新建卡片同样支持，不需要“先保存再配置”）。唯一随内核变化的席位是滑块开关：alpha 线（`0.1.2-alpha.1` 至 `0.1.2-alpha.5`）上挂在官方 `settings.models.footer` slot；`0.1.1-rc.2` 的 Models 分区不声明任何扩展 slot，同一盒子以 DOM 注入方式挂到添加按钮下方。切换依据仍是内核暴露的 settings wire 席位（`ctx.remote.settings` 与 `connection.api`），而非版本字符串。模型页余下的正规席位是 keyed `settings.models.provider-card`（按提供方卡片分发，alpha.1 起提供）——卡片级 UI 的迁移路径在它，但没有任何 slot 能触及单个模型行，这正是模型行编辑器保留 DOM bypass 的原因。
 
 ### 从 npm
 
@@ -172,7 +172,7 @@ Composer 思考强度滑块**改编自 [dsh-reasoning-effort](https://github.com
 - **只把滑块换成白色圆形。** chibi-runner“大肥鱼”滑块（把圆钮换成鱼形贴图）不带入；其余与上游逐字一致——渐变胶囊轨道、左侧裁剪的 canvas 辐射动效与 flare 辉光、拖动/键盘契约、乐观提交 + 被拒回滚。
 - **官方模型席位绝不被替换。** 上游插件把整个席位顶掉（自绘触发钮 + 菜单）；这里官方右下角 *模型 · 思考强度* 显示形式保持原样，滑块在官方菜单弹出时注入到其顶部。
 - **位置与设置项减少。** 上游的“推理强度滑块 / 大肥鱼滑块”两项在通用设置页；这里只保留 *推理强度滑块* 开关，放在**「模型」**页添加提供方按钮下方的带框容器内；“大肥鱼滑块”随功能一起移除。
-- **跨内核维护。** 这是基于 harness wire 契约的精简重写（不是上游 bundle 的 fork）：无需上游的 `0.1.0-rc.6` 版本钉死，可跑在 `0.1.1-rc.2`、`0.1.2-alpha.1`、`0.1.2-alpha.2`、`0.1.2-alpha.3` 与 `0.1.2-alpha.4` 上，整个挂载/卸载生命周期由本插件的 DOM 注入器管理。若上游项目恢复更新，留意两点：两个插件同时装会重复——上游再次顶掉官方席位，官方触发钮会再次消失。
+- **跨内核维护。** 这是基于 harness wire 契约的精简重写（不是上游 bundle 的 fork）：无需上游的 `0.1.0-rc.6` 版本钉死，可跑在 `0.1.1-rc.2`、`0.1.2-alpha.1`、`0.1.2-alpha.2`、`0.1.2-alpha.3`、`0.1.2-alpha.4` 与 `0.1.2-alpha.5` 上，整个挂载/卸载生命周期由本插件的 DOM 注入器管理。若上游项目恢复更新，留意两点：两个插件同时装会重复——上游再次顶掉官方席位，官方触发钮会再次消失。
 
 如果你之前用过上游插件，请移除它，避免同席位上出现两套思考强度控制：
 
