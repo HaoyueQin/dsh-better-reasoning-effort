@@ -102,6 +102,15 @@ export interface KnowledgeEntry {
   contextWindow?: number
   /** Reference max output tokens in tokens (display-only advice). */
   maxTokens?: number
+  /**
+   * The vendor's own default level for the family, when its docs name one
+   * (the same research pass that recorded the ladders). Consumed by the
+   * client's effort memory as the model-switch fallback: a switch to a model
+   * with no remembered level re-applies the vendor default instead of leaving
+   * the session on the host's "Default" (no-effort) state. Never guessed --
+   * entries whose docs publish no default simply carry none.
+   */
+  defaultEffort?: ThinkingLevel
   /** Human note shown next to the suggestion (localized by the caller). */
   note?: string
 }
@@ -144,6 +153,12 @@ export interface EffortSuggestion {
    * arrives when the endpoint explicitly reports the model does not reason.
    */
   efforts?: ReasoningEfforts | false
+  /**
+   * The vendor's own default level for the model, when the knowledge base
+   * names one and the suggested ladder carries it. The effort memory uses it
+   * as the model-switch fallback (see {@link KnowledgeEntry.defaultEffort}).
+   */
+  defaultEffort?: ThinkingLevel
   /** The compat block to write alongside, if any. */
   compat?: CompatSuggestion
   /** Request modalities to declare, when derivable. */
@@ -198,6 +213,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // longest-boundary-hit rule, since these patterns are strictly longer.
     patterns: ['deepseek-v4-flash-vision', 'deepseek-v4-vision'],
     efforts: { off: 'none', low: 'low', high: 'high', max: 'max' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_048_576,
@@ -218,6 +234,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // values are none/low/high/max -- 'off' would be a 400 there.
     patterns: ['deepseek-v4'],
     efforts: { off: 'none', low: 'low', high: 'high', max: 'max' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 1_048_576,
@@ -244,6 +261,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // R1's reasoning cannot be switched off at the API level; the harness
     // treats it as a thinking model whose only declared level is the default.
     efforts: { high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 163_840,
@@ -256,6 +274,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // gpt-5.2 (2025-12) took 'none' as the explicit no-thinking value
     // (replacing gpt-5's 'minimal') and added xhigh; its default is none.
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    defaultEffort: 'off',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 400_000,
@@ -269,6 +288,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // for it (a 'none' request would 400). Longer pattern wins over 'gpt-5.2'.
     patterns: ['gpt-5.2-codex'],
     efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    // OpenAI's API default for the codex line is medium (Inspect AI's
+    // per-model default table, aligned with developers.openai.com).
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 400_000,
@@ -282,6 +304,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // variants share it (official reasoning guide: values "can include none
     // minimal low medium high xhigh, and max").
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_050_000,
@@ -294,6 +317,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // gpt-5.5 defaults to medium (official reasoning guide) and tops out at
     // xhigh; the -pro variant drops none/low (medium/high/xhigh only).
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_050_000,
@@ -306,6 +330,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // Official model page: none (default) / low / medium / high / xhigh;
     // pro drops none+low and is Responses-only; mini/nano sit on 400K.
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    defaultEffort: 'off',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_050_000,
@@ -317,6 +342,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['gpt-5.3'],
     // Official model page: low / medium / high / xhigh only -- no none.
     efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 400_000,
@@ -332,6 +358,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // no none -- so the conservative declaration there drops both none and
     // xhigh (see openai-gpt-5-1-codex).
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'off',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 400_000,
@@ -359,6 +386,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // The 2025-08 first generation: minimal is the floor, there is no none,
     // and the default (medium) thinks -- so no off level is offered.
     efforts: { minimal: 'minimal', low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 400_000,
@@ -395,6 +423,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // o-series had no none: not sending the parameter meant medium (think
     // on), so no off level is offered.
     efforts: { low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 200_000,
@@ -408,6 +437,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // the same 131,072 max output tokens, text input only.
     patterns: ['gpt-oss'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'low',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 131_072,
@@ -489,6 +519,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // anthropic-messages protocol, anthropicAdaptive pins the compat that
     // makes pi-ai dispatch these as output_config.effort.
     efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    defaultEffort: 'high',
     // No thinkingFormat: pi-ai has no 'anthropic' member, and the
     // openai-completions compat gate that takes thinkingFormat is not the
     // protocol an Anthropic endpoint speaks.
@@ -506,6 +537,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // Sonnet 5 only).
     patterns: ['claude-mythos-preview'],
     efforts: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
+    // Anthropic's effort page: the API default is HIGH across the whole
+    // supported list (omitting effort behaves exactly as high).
+    defaultEffort: 'high',
     compat: { supportsReasoningEffort: true },
     anthropicAdaptive: true,
     input: ['text', 'image'],
@@ -519,6 +553,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // Official effort page: Opus 4.7/4.8 take the full ladder including
     // xhigh and max (xhigh is the recommended coding start on 4.7).
     efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    defaultEffort: 'high',
     compat: { supportsReasoningEffort: true },
     anthropicAdaptive: true,
     input: ['text', 'image'],
@@ -532,6 +567,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // Official effort page: the 4.6 generation supports max but NOT xhigh
     // ("some models that support max don't support xhigh").
     efforts: { low: 'low', medium: 'medium', high: 'high', max: 'max' },
+    defaultEffort: 'high',
     compat: { supportsReasoningEffort: true },
     anthropicAdaptive: true,
     input: ['text', 'image'],
@@ -547,6 +583,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // name it -- so the ladder tops out at high.
     patterns: ['claude-opus-4-5'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'high',
     compat: { supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 200_000,
@@ -594,6 +631,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // close thinking (docs.x.ai model page + reasoning capability page).
     // grok-4.7 does NOT exist upstream (404, re-checked 2026-08-24).
     efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 500_000,
@@ -606,6 +644,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // high (official reasoning page), so it is not declared here.
     patterns: ['grok-4.5'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 500_000,
@@ -619,7 +658,11 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // grok-4.3 at low/none. The old "no none for 4.3" reading of the docs
     // was wrong and is fixed here.
     patterns: ['grok-4.3'],
-    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high' },
+    // Official models page (docs.x.ai model JSON): supportedEfforts now
+    // spans none/low/medium/high/XHIGH with defaultEffort "low" -- xhigh
+    // joined the ladder after the 2026-08 pass, and low is the default.
+    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    defaultEffort: 'low',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_000_000,
@@ -669,6 +712,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // spelling also keys the API id (mistral-medium-3-5).
     patterns: ['mistral-medium-3.5', 'mistral-small-latest', 'mistral-small-2603'],
     efforts: { off: 'none', high: 'high' },
+    // mistral-common's ModelSettings defaults reasoning_effort to None --
+    // the endpoint's no-parameter behaviour IS the none/off level.
+    defaultEffort: 'off',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     note: 'Mistral 现役推理档：None / High——官方 reasoning_effort 枚举（mistral-common 协议库）即 none/high；mistral-small-2603（Small 4）与 mistral-medium-3-5 经它控制，Medium 3.5 带视觉。容量未在官方目录页单列，不提供。',
@@ -683,7 +729,10 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['qwen-vl', 'qwen2-vl', 'qwen2-5-vl', 'qwen3-vl', 'qvq'],
     // DashScope takes NO reasoning_effort: thinking is the enable_thinking
     // boolean -- pi-ai's 'qwen' format dispatches exactly that switch.
+    // Commercial Model Studio deployments default enable_thinking to TRUE
+    // (help.aliyun.com) -- the on state, which is High here.
     efforts: { off: null, high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'qwen' },
     input: ['text', 'image'],
     contextWindow: 131_072,
@@ -703,6 +752,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // the plain qwen entry's text-only declaration must not claim it.
     patterns: ['qwen3.8'],
     efforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' },
+    defaultEffort: 'xhigh',
     compat: { thinkingFormat: 'qwen', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_000_000,
@@ -717,6 +767,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // bare 'qwen3.8' pattern, so it wins for -27B ids.
     patterns: ['qwen3.8-27b'],
     efforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' },
+    defaultEffort: 'xhigh',
     compat: { thinkingFormat: 'qwen', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 262_144,
@@ -733,6 +784,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // medium / low. Longest pattern, so it wins for -flash-next ids.
     patterns: ['qwen3.8-flash-next'],
     efforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' },
+    defaultEffort: 'xhigh',
     compat: { thinkingFormat: 'qwen', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 262_144,
@@ -745,8 +797,10 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // boolean (plus thinking_budget) -- pi-ai's 'qwen' format dispatches
     // exactly that switch, so the ladder is honestly open/close with one
     // nominal thinking level. QwQ is think-always; clearing the off level
-    // there is one click.
+    // there is one click. Commercial DashScope defaults enable_thinking to
+    // TRUE (open-weight serving defaults to false) -- the on state is High.
     efforts: { off: null, high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'qwen' },
     input: ['text'],
     contextWindow: 1_000_000,
@@ -762,6 +816,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // same fold gives 'glm-4.5v' -> 'glm 4 5v'.
     patterns: ['glm-4v', 'glm-4-6v', 'glm-4-5v', 'glm-5v'],
     efforts: { off: null, high: 'high' },
+    // GLM-4.5V is forced-thinking and the 4.x line defaults to enabled
+    // (docs.bigmodel.cn thinking page) -- the on state is High.
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'zai' },
     input: ['text', 'image'],
     contextWindow: 131_072,
@@ -779,6 +836,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // the longer pattern wins over plain 'glm-5.3'.
     patterns: ['glm-5.3-flash'],
     efforts: { low: 'low', high: 'high', max: 'max' },
+    defaultEffort: 'max',
     compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_048_576,
@@ -790,7 +848,9 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['glm-5.3'],
     // glm-5.3 accepts exactly max/high/low; anything else (including the
     // 5.2 ladder's minimal/none) errors, and thinking cannot be disabled.
+    // The API reference names reasoning_effort's default as max.
     efforts: { low: 'low', high: 'high', max: 'max' },
+    defaultEffort: 'max',
     compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 1_048_576,
@@ -804,6 +864,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // high/xhigh/max (default max). The zai format arms thinking:disabled
     // for off and sends the effort for the rest.
     efforts: { off: 'none', minimal: 'minimal', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    defaultEffort: 'max',
     compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 1_048_576,
@@ -817,8 +878,11 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     patterns: ['glm', 'zhipu', 'chatglm'],
     // GLM 4.x: thinking.type enabled/disabled only, no effort ladder --
     // the zai format sends exactly that switch (and no effort value,
-    // because supportsReasoningEffort is not declared).
+    // because supportsReasoningEffort is not declared). GLM-4.5/4.6
+    // default to enabled (hybrid reasoning: the model decides per
+    // request) -- the on state is High.
     efforts: { off: null, high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'zai' },
     input: ['text'],
     note: 'GLM 通用：thinking 开关（无 effort 档），开=High；effort 阶梯仅 GLM-5.2+ 支持（见上两条目）。注意 GLM-4.7/GLM-4.5V 为强制思考，传 disabled 会报错（请手动删 Off 档）。视觉线见 glm-vision 条目。',
@@ -829,6 +893,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // kimi-k3: top-level reasoning_effort low/high/max (default max),
     // always thinking -- the thinking object must not be sent at all.
     efforts: { low: 'low', high: 'high', max: 'max' },
+    defaultEffort: 'max',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_048_576,
@@ -842,6 +907,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // wrong). Longer patterns beat the plain 'kimi' stem below.
     patterns: ['kimi-k2.6', 'kimi-k2.5'],
     efforts: { off: null, high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'deepseek' },
     input: ['text', 'image'],
     contextWindow: 262_144,
@@ -853,6 +919,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // accepts "enabled", sending "disabled" errors -- so no Off level.
     patterns: ['kimi-k2.7'],
     efforts: { high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'deepseek' },
     input: ['text', 'image'],
     contextWindow: 262_144,
@@ -904,6 +971,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // beyond high/no_think, so a low rung is NOT declared without evidence.
     patterns: ['hy4-preview', 'hy-4-preview'],
     efforts: { off: 'no_think', high: 'high' },
+    defaultEffort: 'high',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     contextWindow: 1_000_000,
     note: '混元 Hy4 preview：官方 README——reasoning 默认 high（深度思考），关闭经 chat_template_kwargs.reasoning_effort=no_think；官方规格表 1M 上下文（770B-A49B MoE，Gated DSA）。low 档官方未列，如有请手调；视觉未声明，按需手勾。来源：Tencent-Hunyuan/Hy4-preview 官方 README。',
@@ -914,6 +982,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // text-only on the official serving plan.
     patterns: ['step-3.7', 'step-3.6'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 262_144,
@@ -935,6 +1004,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // thinking cannot be turned off, only tuned.
     patterns: ['step-3', 'step-2'],
     efforts: { low: 'low', medium: 'medium', high: 'high' },
+    defaultEffort: 'medium',
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text'],
     note: '阶跃 Step 档位：Low / Medium / High（默认 Medium，不可关闭）。3.6/3.7 视觉代见单独条目。',
@@ -1267,6 +1337,13 @@ export function suggestEfforts(
     const compat = compatForRoute(entry, route)
     return {
       efforts: entry.efforts,
+      // The vendor default rides along only when the suggested ladder
+      // actually carries it (a declaration may deliberately drop a level).
+      ...(entry.efforts !== false
+        && entry.defaultEffort !== undefined
+        && entry.efforts[entry.defaultEffort] !== undefined
+        ? { defaultEffort: entry.defaultEffort }
+        : {}),
       ...(compat === undefined ? {} : { compat }),
       matched: true,
       entryId: entry.id,
@@ -1291,6 +1368,7 @@ export function suggestEfforts(
   if (endpoint?.reasoning === true) {
     return {
       efforts: { ...ENDPOINT_CONFIRMED_LADDER },
+      ...(ENDPOINT_CONFIRMED_LADDER['medium'] !== undefined ? { defaultEffort: 'medium' as const } : {}),
       // compat was already gated to the protocol above; no second gate.
       ...(compat === undefined ? {} : { compat }),
       matched: false,
@@ -1302,6 +1380,9 @@ export function suggestEfforts(
   }
   return {
     efforts,
+    // Inferred ladders default to medium (the convention codex/OpenAI set for
+    // their own ladders) whenever the inferred set carries it.
+    ...(efforts['medium'] !== undefined ? { defaultEffort: 'medium' as const } : {}),
     ...(compat === undefined ? {} : { compat }),
     matched: false,
     source: 'protocol:' + protocol,

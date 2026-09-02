@@ -147,8 +147,10 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('claude-sonnet-4-5')?.id).toBe('anthropic-claude')
     expect(matchKnowledgeBase('claude-sonnet-4-5')?.efforts).toBe(false)
     expect(matchKnowledgeBase('claude-sonnet-5')?.id).toBe('anthropic-claude-5')
-    // grok-4.3 documents four levels including none.
-    expect(matchKnowledgeBase('grok-4.3')?.efforts).toEqual({ off: 'none', low: 'low', medium: 'medium', high: 'high' })
+    // grok-4.3 documents none/low/medium/high/xhigh per the official models
+    // page JSON (xhigh joined after the 2026-08 pass; defaultEffort is low).
+    expect(matchKnowledgeBase('grok-4.3')?.efforts).toEqual({ off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' })
+    expect(matchKnowledgeBase('grok-4.3')?.defaultEffort).toBe('low')
     // qwen3.8-max is multimodal per Alibaba's catalog; mistral-small-2603
     // (Mistral Small 4) is the reasoning_effort model; GLM-4.5V is a vision
     // line member; hy3's 256K is on the official README.
