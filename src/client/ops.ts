@@ -216,28 +216,23 @@ export function createEditorApi(
             }
             return copy
           })
-          const response = await api.settings.mutate({
-            ns: PI_AI_NS,
+          const response = await api.settings.mutate(
+            PI_AI_NS,
             // The rebuilt models array is JSON-shaped by construction (a
-            // settings document is JSON). rc.2's SettingsPathOpView.value was
-            // unknown while the alpha.2 type pinned it to JsonValue — a type
-            // owned by different packages on the two kernels — so the set op
-            // asserts once instead of naming either value type.
-            ops: [{ op: 'set', path: ['providers', route, 'models'], value: nextModels } as unknown as SettingsPathOpView],
-            expectedRevision: join.namespace.revision,
-          })
-          if (!response.result.ok) {
-            // The stable wire code, not the message prose: 'settings-conflict'
-            // (rc line) and 'settings/conflict' (0.1.2-alpha.2+, re-coded when
-            // TypertRemoteFailure became RemoteError) both mean a concurrent
-            // writer moved the namespace between our describe and mutate.
-            // Re-reading and retrying with the fresh revision is the same
-            // recovery the official settings form uses; anything else
-            // surfaces as-is. The rc.2 RpcErrorCode union cannot name the
-            // alpha.2 value, so the comparison widens to the wire string.
-            const errorCode = response.result.error.code as string
-            if (attempt === 0 && (errorCode === 'settings-conflict' || errorCode === 'settings/conflict')) continue
-            return { ok: false, error: response.result.error.message }
+            // settings document is JSON); the value is JsonValue on the rc.1
+            // baseline, so the set op asserts once instead of rebuilding the
+            // row's type.
+            [{ op: 'set', path: ['providers', route, 'models'], value: nextModels } as unknown as SettingsPathOpView],
+            join.namespace.revision,
+          )
+          if (!response.ok) {
+            // The stable wire code, not the message prose: 'settings/conflict'
+            // (the rc.1 Typert refusal code) means a concurrent writer moved
+            // the namespace between our describe and mutate. Re-reading and
+            // retrying with the fresh revision is the same recovery the
+            // official settings form uses; anything else surfaces as-is.
+            if (attempt === 0 && response.error.code === 'settings/conflict') continue
+            return { ok: false, error: response.error.message }
           }
           return { ok: true }
         } catch (error) {
@@ -255,8 +250,8 @@ export function createEditorApi(
  * join and the editor's write seam read through it.
  */
 export async function describeNamespace(api: RemoteApi): Promise<SettingsJoin> {
-  const response = await api.settings.describe({})
-  if (!response.result.ok) return { namespace: undefined, writable: false }
-  const namespace = response.result.value.namespaces.find(ns => ns.ns === PI_AI_NS)
-  return { namespace, writable: response.result.value.writable }
+  const response = await api.settings.describe()
+  if (!response.ok) return { namespace: undefined, writable: false }
+  const namespace = response.value.namespaces.find(ns => ns.ns === PI_AI_NS)
+  return { namespace, writable: response.value.writable }
 }

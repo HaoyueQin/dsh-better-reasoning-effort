@@ -307,7 +307,13 @@ describe('apply() probe route', () => {
 
     const fetchMock = vi.fn(async () => ({
       ok: true,
-      json: async () => ({ data: [{ id: 'qwen-max', supported_parameters: ['reasoning'] }] }),
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ data: [{ id: 'qwen-max', supported_parameters: ['reasoning'] }] })))
+          controller.close()
+        },
+      }),
     }))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -325,6 +331,139 @@ describe('apply() probe route', () => {
     vi.unstubAllGlobals()
   })
 
+  it('probes an Anthropic Messages route through /v1/models with x-api-key', async () => {
+    const settings = fakeSettings({
+      anthropic: { api: 'anthropic-messages', baseURL: 'https://api.anthropic.com/v1', apiKeyEnv: 'ANTHROPIC_KEY', models: [] },
+    })
+    const credentials = { resolve: async (ref: string) => ({ value: ref === 'ANTHROPIC_KEY' ? 'sk-ant-secret' : undefined }) }
+    const { ctx, routes } = fakeHost(settings, { credentials })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ data: [{ id: 'claude-opus-5', capabilities: { thinking: { supported: true }, image_input: { supported: true } } }] })))
+          controller.close()
+        },
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler!(fakeReq({ url: '?route=anthropic' }), res)
+    const reply = out()
+    expect(reply.status).toBe(200)
+    expect((reply.body['data'] as unknown[]).length).toBe(1)
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, { headers: Record<string, string> }]
+    // The trailing /v1 is normalized away and reattached on the native route.
+    expect(url).toBe('https://api.anthropic.com/v1/models?limit=1000')
+    expect(init.headers['x-api-key']).toBe('sk-ant-secret')
+    expect(init.headers['anthropic-version']).toBe('2023-06-01')
+    expect(init.headers['authorization']).toBeUndefined()
+    expect(JSON.stringify(reply.body)).not.toContain('sk-ant-secret')
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses a protocol whose listing this mirror cannot read', async () => {
+    const settings = fakeSettings({ azure: { api: 'azure', baseURL: 'https://azure.example.com', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler!(fakeReq({ url: '?route=azure' }), res)
+    expect(out().status).toBe(400)
+    expect(String(out().body['error'])).toContain('cannot be interrogated')
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('accepts the enriched models-map listing, keying entries by map key', async () => {
+    const settings = fakeSettings({ aliyun: { api: 'openai-completions', baseURL: 'https://gw.example.com/v1', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({
+            models: {
+              'qwen-max': { id: 'inner-canonical', name: 'Qwen Max', reasoning: true },
+              'meta-field': 'not a model',
+            },
+          })))
+          controller.close()
+        },
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler!(fakeReq({ url: '?route=aliyun' }), res)
+    const reply = out()
+    expect(reply.status).toBe(200)
+    const entries = reply.body['data'] as Array<Record<string, unknown>>
+    expect(entries).toHaveLength(1)
+    // The map key is the endpoint-facing id; a nested canonical id is
+    // overridden exactly as the official parser does.
+    expect(entries[0]!['id']).toBe('qwen-max')
+    expect(entries[0]!['reasoning']).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('reports a listing that answers neither shape', async () => {
+    const settings = fakeSettings({ aliyun: { api: 'openai-completions', baseURL: 'https://gw.example.com/v1', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ ok: true })))
+          controller.close()
+        },
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler!(fakeReq({ url: '?route=aliyun' }), res)
+    expect(out().status).toBe(502)
+    expect(String(out().body['error'])).toContain('neither a "data" array nor a "models" object')
+    vi.unstubAllGlobals()
+  })
+
+  it('refuses a listing that declares more than the byte ceiling', async () => {
+    const settings = fakeSettings({ aliyun: { api: 'openai-completions', baseURL: 'https://gw.example.com/v1', models: [] } })
+    const { ctx, routes } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => String(5 * 1024 * 1024) },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('x'.repeat(1024)))
+          controller.close()
+        },
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { res, out } = fakeRes()
+    await handler!(fakeReq({ url: '?route=aliyun' }), res)
+    expect(out().status).toBe(502)
+    expect(String(out().body['error'])).toContain('overshoots')
+    vi.unstubAllGlobals()
+  })
   it('rejects cross-site callers before touching anything', async () => {
     const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com', models: [] } })
     const { ctx, routes } = fakeHost(settings)
@@ -491,7 +630,7 @@ describe('apply() probe route', () => {
   })
 
   it('reports upstream auth failures with a key hint instead of throwing', async () => {
-    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com/v1', models: [] } })
+    const settings = fakeSettings({ aliyun: { api: 'openai-completions', baseURL: 'https://gw.example.com/v1', models: [] } })
     const { ctx, routes } = fakeHost(settings)
     const { apply } = await import('../src/index.js')
     apply(ctx)
@@ -508,7 +647,7 @@ describe('apply() probe route', () => {
   })
 
   it('never echoes baseURL credentials in failure responses', async () => {
-    const settings = fakeSettings({ aliyun: { baseURL: 'https://user:sekrit@gw.example.com/v1', models: [] } })
+    const settings = fakeSettings({ aliyun: { api: 'openai-completions', baseURL: 'https://user:sekrit@gw.example.com/v1', models: [] } })
     const { ctx, routes } = fakeHost(settings)
     const { apply } = await import('../src/index.js')
     apply(ctx)
@@ -526,12 +665,21 @@ describe('apply() probe route', () => {
   })
 
   it('probes unauthenticated when no credential resolves', async () => {
-    const settings = fakeSettings({ aliyun: { baseURL: 'https://gw.example.com/v1', models: [] } })
+    const settings = fakeSettings({ aliyun: { api: 'openai-completions', baseURL: 'https://gw.example.com/v1', models: [] } })
     const { ctx, routes } = fakeHost(settings)
     const { apply } = await import('../src/index.js')
     apply(ctx)
     const handler = routes.get(PROBE_PATH)!
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ data: [] }) }))
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ data: [] })))
+          controller.close()
+        },
+      }),
+    }))
     vi.stubGlobal('fetch', fetchMock)
     const { res, out } = fakeRes()
     await handler(fakeReq(), res)

@@ -19,6 +19,7 @@ function fixture(state?: Partial<ModelDirectoryStateLike>): {
 } {
   let base: ModelDirectoryStateLike = {
     current: { provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'medium' },
+    routable: true,
     groups: [{
       id: 'aliyun',
       name: 'Aliyun',
@@ -31,6 +32,7 @@ function fixture(state?: Partial<ModelDirectoryStateLike>): {
         },
       }],
     }],
+    failures: [],
     status: 'ready',
     error: null,
     ...state,
@@ -46,7 +48,7 @@ function fixture(state?: Partial<ModelDirectoryStateLike>): {
         getSnapshot: () => base,
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
       },
-      load: vi.fn(async () => ({ current: base.current, routable: true, groups: base.groups, failures: [] })),
+      load: vi.fn(async () => base),
       select: selectSpy,
     },
     selectSpy,
@@ -54,6 +56,10 @@ function fixture(state?: Partial<ModelDirectoryStateLike>): {
       base = next
       for (const listener of [...listeners]) listener()
     },
+  } as unknown as {
+    directory: ModelDirectoryLike
+    selectSpy: ReturnType<typeof vi.fn>
+    update: (next: ModelDirectoryStateLike) => void
   }
 }
 
@@ -79,12 +85,12 @@ beforeEach(() => {
 describe('effectiveEffortIndex', () => {
   const levels = [{ id: 'off', name: 'Off' }, { id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }]
   it('prefers the session effort, then the adapter default, then the middle', () => {
-    expect(effectiveEffortIndex(levels, { current: { provider: 'a', model: 'm', reasoningEffort: 'high' }, groups: [], status: 'ready', error: null })).toBe(3)
-    expect(effectiveEffortIndex(levels, { current: { provider: 'a', model: 'm' }, groups: [{ id: 'a', name: 'A', models: [{ id: 'm', reasoning: { defaultEffort: 'low', efforts: levels } }] }], status: 'ready', error: null })).toBe(1)
-    expect(effectiveEffortIndex(levels, { current: { provider: 'a', model: 'm' }, groups: [{ id: 'a', name: 'A', models: [{ id: 'm' }] }], status: 'ready', error: null })).toBe(2)
+    expect(effectiveEffortIndex(levels, { current: { provider: 'a', model: 'm', reasoningEffort: 'high' }, routable: true, groups: [], failures: [], status: 'ready', error: null })).toBe(3)
+    expect(effectiveEffortIndex(levels, { current: { provider: 'a', model: 'm' }, routable: true, groups: [{ id: 'a', name: 'A', models: [{ id: 'm', name: 'M', reasoning: { defaultEffort: 'low', efforts: levels } }] }], failures: [], status: 'ready', error: null })).toBe(1)
+    expect(effectiveEffortIndex(levels, { current: { provider: 'a', model: 'm' }, routable: true, groups: [{ id: 'a', name: 'A', models: [{ id: 'm', name: 'M' }] }], failures: [], status: 'ready', error: null })).toBe(2)
   })
   it('hides the slider for models with fewer than two levels', async () => {
-    const one = fixture({ current: { provider: 'aliyun', model: 'qwen-max' }, groups: [{ id: 'aliyun', name: 'Aliyun', models: [{ id: 'qwen-max', reasoning: { efforts: [{ id: 'off', name: 'Off' }] } }] }] })
+    const one = fixture({ current: { provider: 'aliyun', model: 'qwen-max' }, groups: [{ id: 'aliyun', name: 'Aliyun', models: [{ id: 'qwen-max', name: 'Qwen Max', reasoning: { efforts: [{ id: 'off', name: 'Off' }] } }] }] })
     expect(sliderLevels(one.directory.store.getSnapshot())).toHaveLength(0)
     const { root, container } = await mount(one.directory)
     expect(container.querySelector('.bre-slider-hint')).not.toBeNull()

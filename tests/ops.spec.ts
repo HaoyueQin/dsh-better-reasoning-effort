@@ -4,21 +4,14 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import type { RpcId, RpcResponse } from '@deepseek-ai/dsh-api-remotes/client'
 import { createEditorApi, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
-
-/** Wrap a result in an RpcResponse with a branded fake rpcId. */
-const fakeRpc = <T>(result: RpcResponse<T>['result']): RpcResponse<T> => ({
-  rpcId: 'fake' as unknown as RpcId,
-  result,
-})
 import { modelsOf } from '../src/shared.js'
 import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
 
 /** A minimal settings Remote that records mutate calls. */
 function fakeApi(initial: unknown): {
   api: RemoteApi
-  mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[] }[]
+  mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[]; expectedRevision?: number }[]
   namespace(): SettingsNamespaceView | undefined
 } {
   // The alpha.2 SettingsNamespaceView pinned value/user to JsonValue while the
@@ -33,22 +26,22 @@ function fakeApi(initial: unknown): {
     applies: 'live',
     secrets: [],
   } as unknown as SettingsNamespaceView
-  const mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[] }[] = []
+  const mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[]; expectedRevision?: number }[] = []
   const api: RemoteApi = {
     settings: {
       async describe() {
-        return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [namespace] } })
+        return { ok: true, value: { writable: true, hasDocument: true, namespaces: [namespace] } }
       },
-      async mutate(request) {
-        mutates.push(request)
+      async mutate(ns, ops, expectedRevision) {
+        mutates.push({ ns, ops, expectedRevision })
         // Mutate the fake value so the next read sees the write.
         const providers = (namespace.value as { providers: Record<string, Record<string, unknown>> }).providers
-        for (const op of request.ops) {
+        for (const op of ops) {
           if (op.op !== 'set') continue
           const [_, route, key] = op.path
           providers[route][key] = op.value
         }
-        return fakeRpc({ ok: true, value: namespace })
+        return { ok: true, value: namespace }
       },
     },
   }
@@ -293,64 +286,58 @@ describe('createEditorApi', () => {
     expect(reply).toEqual({ ok: false, error: 'model-not-found' })
   })
 
-  // Both wire codes mean the same refusal: 'settings-conflict' on the rc
-  // line, 'settings/conflict' since 0.1.2-alpha.2 (the TypertRemoteFailure ->
-  // RemoteError re-coding). The retry must trigger on either.
-  it.each(['settings-conflict', 'settings/conflict'])(
-    'retries once on a %s using the fresh revision',
-    async (conflictCode) => {
-      let revision = 7
-      let conflictsLeft = 1
-      const mutates: Array<{ expectedRevision?: number }> = []
-      const api: RemoteApi = {
-        settings: {
-          async describe() {
-            return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision, applies: 'live' as const, secrets: [] }] } })
-          },
-          async mutate(request) {
-            mutates.push(request)
-            if (conflictsLeft > 0) {
-              conflictsLeft -= 1
-              revision += 1 // a concurrent writer moved the namespace
-              return fakeRpc({
-                ok: false,
-                error: {
-                  // The rc.2 RpcErrorCode union names only the hyphenated value;
-                  // the alpha.2 value is legal at runtime on that kernel line.
-                  code: conflictCode as 'settings-conflict',
-                  message: 'settings namespace "llm-pi-ai" changed since it was read',
-                  details: { ns: 'llm-pi-ai', expected: revision - 1, actual: revision },
-                },
-              })
-            }
-            return fakeRpc({ ok: true, value: undefined as unknown as SettingsNamespaceView })
-          },
+  // The rc.1 Typert refusal code is 'settings/conflict' — the retry must
+  // trigger on it and re-read a fresh revision.
+  it('retries once on a settings/conflict using the fresh revision', async () => {
+    let revision = 7
+    let conflictsLeft = 1
+    const mutates: Array<{ expectedRevision?: number }> = []
+    const api: RemoteApi = {
+      settings: {
+        async describe() {
+          return { ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision, applies: 'live' as const, secrets: [] } as unknown as SettingsNamespaceView] } }
         },
-      }
-      const editor = createEditorApi(api)
-      const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
-      expect(reply).toEqual({ ok: true })
-      expect(mutates).toHaveLength(2)
-      // The retry carried the FRESH revision, not the stale one.
-      expect(mutates[1]!.expectedRevision).toBe(8)
-    },
-  )
+        async mutate(_ns, _ops, expectedRevision) {
+          mutates.push({ expectedRevision })
+          if (conflictsLeft > 0) {
+            conflictsLeft -= 1
+            revision += 1 // a concurrent writer moved the namespace
+            return {
+              ok: false,
+              error: {
+                code: 'settings/conflict',
+                message: 'settings namespace "llm-pi-ai" changed since it was read',
+                details: { ns: 'llm-pi-ai', expected: revision - 1, actual: revision },
+              },
+            }
+          }
+          return { ok: true, value: undefined as unknown as SettingsNamespaceView }
+        },
+      },
+    }
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: true })
+    expect(mutates).toHaveLength(2)
+    // The retry carried the FRESH revision, not the stale one.
+    expect(mutates[1]!.expectedRevision).toBe(8)
+  })
 
   it('surfaces non-conflict write errors without retrying', async () => {
     const api: RemoteApi = {
       settings: {
         async describe() {
-          return fakeRpc({ ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 7, applies: 'live' as const, secrets: [] }] } })
+          return { ok: true, value: { writable: true, hasDocument: true, namespaces: [{ ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 7, applies: 'live' as const, secrets: [] } as unknown as SettingsNamespaceView] } }
         },
         async mutate() {
-          return fakeRpc({
+          return {
             ok: false,
             error: {
-              code: 'settings-rejected',
+              code: 'settings/rejected',
               message: 'model "qwen-max" sets compat "thinkingFormat", but its api is "openai-responses"',
               details: { ns: 'llm-pi-ai' },
             },
-          })
+          }
         },
       },
     }

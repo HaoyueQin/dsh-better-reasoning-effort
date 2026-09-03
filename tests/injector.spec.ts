@@ -101,7 +101,7 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
     editors.push(editor)
     return editor as unknown as MountedEditor
   })
-  const mutate = vi.fn(async () => ({ result: { ok: true } }))
+  const mutate = vi.fn(async (_ns: string, _ops: unknown[], _rev?: number) => ({ ok: true, value: undefined }))
   // The write seam describes through api.settings.describe, not through the
   // injector's describeNamespace — wire both to the same (overridable) read
   // so a test's dynamic document is what a flush sees too.
@@ -110,13 +110,13 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
     settings: {
       describe: async () => {
         const local = await describeNamespace()
-        return { result: { ok: true, value: { writable: true, hasDocument: true, namespaces: local.namespace === undefined ? [] : [local.namespace] } } }
+        return { ok: true, value: { writable: true, hasDocument: true, namespaces: local.namespace === undefined ? [] : [local.namespace] } }
       },
       mutate,
     },
   } as unknown as RemoteApi
   return {
-    wire: () => apiFace,
+    api: apiFace,
     describeNamespace,
     t: (key: string) => key,
     // The English anchors, as the real hostLabels() resolves them against the
@@ -508,7 +508,7 @@ describe('reconcile', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(deps.mutate).toHaveBeenCalledTimes(1)
-    const op = deps.mutate.mock.calls[0]![0].ops[0]
+    const op = deps.mutate.mock.calls[0]![1][0]
     expect(op.path).toEqual(['providers', 'acme-gateway', 'models'])
     const flushed = op.value as Array<Record<string, unknown>>
     expect(flushed[0]!['reasoningEfforts']).toEqual({ off: null, low: 'low', high: 'high', max: 'max' })
@@ -757,7 +757,7 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
     await Promise.resolve()
     await Promise.resolve()
     expect(deps.mutate).toHaveBeenCalledTimes(1)
-    const op = deps.mutate.mock.calls[0]![0].ops[0]
+    const op = deps.mutate.mock.calls[0]![1][0]
     const flushed = (op.value as Array<Record<string, unknown>>).find(model => model['id'] === 'qwen-new')
     expect(flushed!['reasoningEfforts']).toEqual({ low: 'low' })
     expect(flushed!['input']).toEqual(['text', 'image'])
@@ -790,7 +790,7 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
     await Promise.resolve()
     await Promise.resolve()
     expect(deps.mutate).toHaveBeenCalledTimes(1)
-    const op = deps.mutate.mock.calls[0]![0].ops[0]
+    const op = deps.mutate.mock.calls[0]![1][0]
     const flushed = (op.value as Array<Record<string, unknown>>)[0]!
     // The staged image choice overwrote the autofill's text-only input...
     expect(flushed['input']).toEqual(['text', 'image'])

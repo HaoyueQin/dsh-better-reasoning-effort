@@ -1,6 +1,7 @@
 # A pushed v* tag IS the release decision; this workflow only turns it into
-# the GitHub release page with generated notes, so a tag can never again land
-# without its release.
+# the GitHub release page, so a tag can never again land without its release.
+# When a body file exists for the tag (.github/releases/<tag>.md) it becomes
+# the release notes verbatim; otherwise GitHub's generated notes apply.
 name: release
 
 on:
@@ -20,12 +21,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          BODY=".github/releases/$GITHUB_REF_NAME.md"
           # Idempotence: a tag can be created out of band together with its
           # release (gh release create makes its own tag), which used to trip
           # this step with HTTP 422 "tag_name already exists". When the
           # release already exists, leave its notes and assets untouched.
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "release $GITHUB_REF_NAME already exists; leaving its notes and assets untouched"
+          elif [ -f "$BODY" ]; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --notes-file "$BODY"
           else
             gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
           fi

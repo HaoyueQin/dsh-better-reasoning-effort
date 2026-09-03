@@ -39,6 +39,7 @@ function stateWith(
     current: current === null || opts?.restore === true
       ? current
       : { ...current, reasoningEffort: 'medium' },
+    routable: true,
     groups: [
       {
         id: 'openai',
@@ -68,6 +69,7 @@ function stateWith(
         models: [{ id: 'plain-chat-9', name: 'Plain Chat' }],
       },
     ],
+    failures: [],
     status: 'ready',
     error: null,
   }

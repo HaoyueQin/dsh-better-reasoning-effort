@@ -20,3 +20,5 @@ Thumbs.db
 
 # Scratch release notes / packed artifacts working area
 .tmp-rel/
+.mnemon/
+.workbuddy/

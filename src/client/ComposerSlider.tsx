@@ -351,11 +351,18 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
       const models = await directory.load()
       // Upstream contract: the fresh directory is the load RETURNS (current /
       // routable / groups / failures), not an ad-hoc store snapshot.
-      const loaded = models as { current?: DirectoryCurrentLike | null; groups?: readonly DirectoryGroupLike[] }
+      const loaded = models as {
+        current?: DirectoryCurrentLike | null
+        routable?: boolean | null
+        groups?: readonly DirectoryGroupLike[]
+        failures?: readonly unknown[]
+      }
       const current = loaded.current ?? null
       const fresh: ModelDirectoryStateLike = {
         current,
+        routable: loaded.routable ?? state.routable,
         groups: loaded.groups ?? state.groups,
+        failures: (loaded.failures ?? state.failures) as ModelDirectoryStateLike['failures'],
         status: 'ready',
         error: null,
       }

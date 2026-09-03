@@ -54,13 +54,11 @@ function fakeApi(describe: () => Promise<SettingsJoin>): RemoteApi & { describeS
       describe: async () => {
         const join = await describeSpy()
         return {
-          result: {
-            ok: true,
-            value: { writable: join.writable, hasDocument: true, namespaces: join.namespace === undefined ? [] : [join.namespace] },
-          },
+          ok: true,
+          value: { writable: join.writable, hasDocument: true, namespaces: join.namespace === undefined ? [] : [join.namespace] },
         }
       },
-      mutate: vi.fn(async () => ({ rpcId: 'fake', result: { ok: true, value: undefined } })),
+      mutate: vi.fn(async () => ({ ok: true, value: undefined })),
     },
   } as unknown as RemoteApi & { describeSpy: ReturnType<typeof vi.fn> }
 }
@@ -69,6 +67,7 @@ function fakeApi(describe: () => Promise<SettingsJoin>): RemoteApi & { describeS
 function directoryFixture(): ModelDirectoryLike & { update: (next: ModelDirectoryStateLike) => void } {
   let state: ModelDirectoryStateLike = {
     current: { provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'medium' },
+    routable: true,
     groups: [{
       id: 'aliyun',
       name: 'Aliyun',
@@ -81,16 +80,19 @@ function directoryFixture(): ModelDirectoryLike & { update: (next: ModelDirector
         },
       }],
     }],
+    failures: [],
     status: 'ready',
     error: null,
   }
   const listeners = new Set<() => void>()
-  return {
+  return ({
     store: {
       getSnapshot: () => state,
       subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+      set: (next: ModelDirectoryStateLike) => { state = next },
+      update: (fn: (draft: ModelDirectoryStateLike) => void) => { fn(state) },
     },
-    load: vi.fn(async () => ({ current: state.current, groups: state.groups })),
+    load: vi.fn(async () => state),
     select: vi.fn(async (selection: { provider: string; model: string; reasoningEffort?: string }) => {
       state = {
         ...state,
@@ -102,12 +104,11 @@ function directoryFixture(): ModelDirectoryLike & { update: (next: ModelDirector
       state = next
       for (const listener of [...listeners]) listener()
     },
-  }
+  }) as unknown as ModelDirectoryLike & { update: (next: ModelDirectoryStateLike) => void }
 }
 
 /** Minimal cordis client context face capturing what apply() touches. */
 function makeCtx(api: RemoteApi, opts?: {
-  alphaStub?: unknown
   services?: Record<string, unknown>
   /** Give the fake locale service the shell's LocaleFace pair (rc.2 on). */
   localeFace?: boolean
@@ -181,17 +182,10 @@ function makeCtx(api: RemoteApi, opts?: {
         : {}),
     },
     get(name: string): unknown {
-      if (name === 'connection') return { api }
       return opts?.services?.[name]
     },
-    inject(names: string[], cb: () => void): void {
-      // Mirror cordis: the callback fires once the named service exists. The
-      // alpha.1 stub mounts synchronously in this fake; rc.2 has no such
-      // service and never calls back.
-      if (opts?.alphaStub !== undefined && names.includes('remote.settings')) cb()
-    },
     remote: {
-      ...(opts?.alphaStub !== undefined ? { settings: opts.alphaStub } : {}),
+      settings: api.settings,
       $on: (event: string, cb: (payload: unknown) => void) => track(remoteHandlers, event, cb),
     },
     slots: {
@@ -435,22 +429,18 @@ describe('client apply()', () => {
     }
   })
 
-  it('keeps the DOM bypass on alpha.1: the stub mounting retires nothing', async () => {
-    // Regression: the previous alpha.1 adaptation handed the editor over to
-    // the provider-card slot the moment the settings stub mounted, which
-    // parked the editors under the provider rows instead of inside the
-    // per-model disclosure. The stub must NOT retire the row injector.
+  it('keeps the per-row editors on the row DOM bypass under the footer-slot kernel', async () => {
+    // The rc.1 Models page ships the sanctioned settings.models.footer slot:
+    // the plugin takes it (the slider toggle's seat) — but the per-row
+    // editors still mount through the DOM bypass, never under a provider card.
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
-    const h = makeCtx(api, {
-      alphaStub: { describe: async () => ({ ok: true, value: { writable: true, hasDocument: false, namespaces: [] } }) },
-    })
+    const h = makeCtx(api)
     try {
       buildModelsDom()
       const { apply } = await import('../src/client/index.js')
       apply(h.ctx as unknown as Ctx)
 
-      // The alpha.1 probe DOES register the models footer slot (the slider
-      // toggle's sanctioned seat)…
+      // The footer slot registration happens at apply.
       expect(h.slotCalls.injected).toContain('settings.models.footer')
       expect(h.slotCalls.registered[0]).toMatchObject({ name: 'settings.models.footer', id: PLUGIN_ID + '-slider-toggle' })
 
@@ -628,42 +618,15 @@ describe('client apply()', () => {
     }
   })
 
-  it('mounts the boxed toggle into the rc.2 add area when no footer seat exists', async () => {
+  it('does not DOM-mount the toggle once the rc.1 footer slot is active', async () => {
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
     const h = makeCtx(api)
     try {
       const block = buildAddBlock().querySelector<HTMLElement>('.addBlock')!
       const { apply } = await import('../src/client/index.js')
       apply(h.ctx as unknown as Ctx)
-
-      await waitFor(() => block.querySelector('.bre-slider-setting') !== null)
-      expect(block.lastChild).toBe(block.querySelector('[data-bre-toggle="1"]'))
-
-      // React re-renders the add area (opening an add card replaces the
-      // actions): the reconcile re-appends the toggle below the new content.
-      block.innerHTML = '<div class="addCard"><input /></div>'
-      await waitFor(() => block.lastChild instanceof HTMLElement
-        && (block.lastChild as HTMLElement).dataset['breToggle'] === '1')
-
-      // Remove the page (settings dialog closed): the mount retires too.
-      block.closest('.section')!.remove()
-      await waitFor(() => block.querySelector('.bre-slider-setting') === null)
-    } finally {
-      h.disposeAll()
-    }
-  })
-
-  it('does not DOM-mount the toggle once the alpha.1 footer slot is active', async () => {
-    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
-    const h = makeCtx(api, {
-      alphaStub: { describe: async () => ({ ok: true, value: { writable: true, hasDocument: false, namespaces: [] } }) },
-    })
-    try {
-      const block = buildAddBlock().querySelector<HTMLElement>('.addBlock')!
-      const { apply } = await import('../src/client/index.js')
-      apply(h.ctx as unknown as Ctx)
-      // The slot registration happens synchronously in this fake; a later
-      // scan must not mount a second toggle into the DOM.
+      // The slot registration happens at apply; a later scan must not mount
+      // a second toggle into the DOM.
       await new Promise(resolve => setTimeout(resolve, 300))
       expect(block.querySelector('.bre-slider-setting')).toBeNull()
     } finally {

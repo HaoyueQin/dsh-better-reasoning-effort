@@ -13,15 +13,14 @@
  *   2. The composer reasoning-effort slider, mounted inside the OFFICIAL
  *      model menu opened from the bottom-right seat. The seat's trigger is
  *      never touched — the official "model · effort" display stays.
- *   3. The Models-page slider toggle below the add-provider actions
- *      (alpha.1 'settings.models.footer' slot; rc.2 DOM fallback since the
- *      rc.2 Models section declares no extension slots).
+ *   3. The Models-page slider toggle, taking the official
+ *      'settings.models.footer' slot (0.1.2-rc.1) unconditionally at apply.
  *   4. The stylesheet and copy dictionaries.
  *
  * @module dsh-better-reasoning-effort/client
  */
 
-import type { ClientContext, SlotRegistrarFace, WireContext, ModelDirectoryLike } from './types.js'
+import type { ClientContext, SlotRegistrarFace, ModelDirectoryLike } from './types.js'
 // Type-only: pulls the shell's locale/remote context merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -40,7 +39,6 @@ import { describeNamespace } from './ops.ts'
 import { ComposerSlider } from './ComposerSlider.js'
 import { SliderToggle } from './SliderToggle.js'
 import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabled } from './slider-pref.js'
-import { resolveWire } from './wire.js'
 import { STYLES } from './styles.ts'
 import type { RemoteApi } from './types.ts'
 
@@ -48,7 +46,7 @@ import type { RemoteApi } from './types.ts'
 export const name = PLUGIN_ID
 
 /** Cordis fiber dependencies of the browser half. */
-export const inject = ['slots', 'locale', 'connection', 'remote']
+export const inject = ['slots', 'locale', 'connection', 'remote', 'remote.settings']
 
 /** Dictionary namespace owning the Models page's copy (ui-settings-models). */
 const HOST_MODELS_NS = 'settings.models'
@@ -168,13 +166,10 @@ export function apply(ctx: ClientContext): void {
   document.head.appendChild(style)
   ctx.effect(() => () => style.remove(), 'dsh-better-reasoning-effort: stylesheet')
 
-  // Kernel-dual wire: alpha.1 answers on the 'remote.settings' service (Typert
-  // stub, mounted after boot; probed through ctx.get because its property read
-  // demands an inject declaration rc.2 can never satisfy), rc.2 on
-  // connection.api (IApiClient). Resolution is lazy — every scan and write
-  // re-probes — so a stub that mounts later is picked up without a re-apply.
-  // See client/wire.ts for the adapters.
-  const wire = (): RemoteApi | undefined => resolveWire(ctx as unknown as WireContext)
+  // The rc.1 kernel mounts the settings Remote as an injectable
+  // 'remote.settings' service, declared in the plugin's own inject above — so
+  // the face is available before apply runs. No runtime seat probing remains.
+  const settingsApi: RemoteApi = { settings: ctx.remote.settings }
   // The shell's Translate is `(key: string, params?: Record<string, unknown>)`;
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
@@ -230,9 +225,6 @@ export function apply(ctx: ClientContext): void {
   const scanState = createScanState()
   let scanTimer: number | undefined
   let observer: MutationObserver | undefined
-
-  /** Once true, the sanctioned alpha.1 footer slot owns the toggle; DOM retires. */
-  let footerSlotActive = false
 
   // ---- Composer slider mount (DOM path on both kernels) ----
   let sliderMount: ForeignMount | undefined
@@ -359,49 +351,6 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
-  // ---- Models-page slider toggle ----
-  let toggleMount: ForeignMount | undefined
-
-  /** rc.2 DOM seat: the boxed toggle after the add-provider actions. */
-  const reconcileToggle = (): void => {
-    if (footerSlotActive) {
-      // The alpha.1 sanctioned slot owns the toggle; the DOM seat is retired.
-      unmountReact(toggleMount)
-      toggleMount = undefined
-      return
-    }
-    // The Models page add area, scoped: the same 'addBlock' local class is
-    // also used by a credential-only editor (the first-run onboarding dialog,
-    // a body portaled open at the same time); the models section is the one
-    // that sits inside a section container and outside any dialog.
-    const block = Array.from(document.querySelectorAll<HTMLElement>('[class*="addBlock"]')).find(candidate =>
-      candidate.closest('[class*="section"]') !== null
-      && candidate.closest('[class*="dialog"]') === null)
-    if (block === undefined) {
-      unmountReact(toggleMount)
-      toggleMount = undefined
-      return
-    }
-    if (toggleMount === undefined) {
-      const wrapper = document.createElement('div')
-      wrapper.dataset['plugin'] = PLUGIN_ID
-      wrapper.dataset['breToggle'] = '1'
-      block.appendChild(wrapper)
-      toggleMount = mountReact(wrapper,
-        createElement(EffortBoundary, {
-          fallbackText: t('renderFailed'),
-          children: refreshed(() => createElement(SliderToggle, { t })),
-        }),
-      )
-      return
-    }
-    // React re-renders the add area (opening an add card, typing); keep the
-    // boxed toggle below whatever the block currently shows.
-    if (toggleMount.wrapper.parentElement !== block || block.lastChild !== toggleMount.wrapper) {
-      block.appendChild(toggleMount.wrapper)
-    }
-  }
-
   const scheduleScan = (): void => {
     if (scanTimer !== undefined) return
     // Debounce: the official page re-renders in bursts (typing, expanding,
@@ -410,10 +359,8 @@ export function apply(ctx: ClientContext): void {
       scanTimer = undefined
       const root = panelRoot()
       reconcile(root, {
-        wire,
-        // reconcile has already gated on the wire being up, so the read here
-        // always has a face; the assertion only satisfies the types.
-        describeNamespace: () => describeNamespace(wire() as RemoteApi),
+        api: settingsApi,
+        describeNamespace: () => describeNamespace(settingsApi),
         t,
         labels: hostLabels,
         mount(container, props) {
@@ -452,7 +399,6 @@ export function apply(ctx: ClientContext): void {
         },
       }, scanState)
       reconcileSlider()
-      reconcileToggle()
     }, SCAN_DEBOUNCE_MS)
   }
 
@@ -491,8 +437,6 @@ export function apply(ctx: ClientContext): void {
       scanState.mounted.clear()
       unmountReact(sliderMount)
       sliderMount = undefined
-      unmountReact(toggleMount)
-      toggleMount = undefined
       // Restore every wrapped directory's original select (the instances
       // outlive the fiber on disable/HMR and must submit officially again).
       for (const [, restore] of wiredDirectories) restore()
@@ -534,35 +478,23 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-better-reasoning-effort: slider preference')
 
-  // ---- alpha.1 footer slot ----
-  // The alpha.1 Models page grew a footer extension slot after the provider
-  // rows and the add controls ('settings.models.footer'). Once the alpha.1
-  // settings stub mounts, the boxed slider toggle takes that sanctioned seat;
-  // on rc.2 the stub never mounts, so the DOM fallback above remains the only
-  // path. One probe, two kernels, no version sniffing.
+  // ---- Models-page footer slot ----
+  // The 0.1.2-rc.1 Models page ships the sanctioned 'settings.models.footer'
+  // extension slot after the provider rows and the add controls, and the
+  // plugin's top-level inject already declares 'remote.settings' — its wired
+  // contract on this kernel — so the boxed slider toggle takes that seat
+  // unconditionally here; no DOM fallback exists.
   ctx.effect(() => {
-    let disposed = false
-    const host = ctx as unknown as {
-      inject?: (names: string[], cb: () => void) => unknown
-      slots?: SlotRegistrarFace
-    }
-    host.inject?.(['remote.settings'], () => {
-      if (disposed || footerSlotActive) return
-      footerSlotActive = true
-      // The sanctioned seat owns the toggle now: retire the DOM fallback.
-      unmountReact(toggleMount)
-      toggleMount = undefined
-      host.slots?.inject('settings.models.footer', () => {
-        host.slots?.register({
-          name: 'settings.models.footer',
-          id: PLUGIN_ID + '-slider-toggle',
-          order: 15,
-          inject: () => ({ t }),
-        }, SliderToggle)
-      })
+    const host = ctx as unknown as { slots?: SlotRegistrarFace }
+    host.slots?.inject('settings.models.footer', () => {
+      host.slots?.register({
+        name: 'settings.models.footer',
+        id: PLUGIN_ID + '-slider-toggle',
+        order: 15,
+        inject: () => ({ t }),
+      }, SliderToggle)
     })
-    return () => { disposed = true }
-  }, 'dsh-better-reasoning-effort: alpha.1 footer slot activation')
+  }, 'dsh-better-reasoning-effort: footer slot activation')
 }
 
 export type { BreKey }

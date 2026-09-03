@@ -267,24 +267,56 @@ function displayUrl(raw: string): string {
 }
 
 /**
+ * Probe-listing URL, mirroring the harness's own model discovery on the
+ * 0.1.2-rc.1 kernel: OpenAI-compatible protocols list at
+ * `{baseURL}/models`; Anthropic Messages uses its native route at
+ * `{root}/v1/models?limit=1000`, where the root is the base without trailing
+ * slashes and without one trailing `/v1` segment (gateway documentation
+ * publishes both spellings of the same root). Only this listing URL
+ * normalizes that segment.
+ */
+function probeListingUrl(baseURL: string, api: string): string {
+  const base = baseURL.replace(/\/+$/, '')
+  if (api !== 'anthropic-messages') return `${base}/models`
+  const root = base.endsWith('/v1') ? base.slice(0, -3) : base
+  return `${root}/v1/models?limit=${String(ANTHROPIC_MODEL_LIMIT)}`
+}
+
+/** Protocols whose model listing this module can read (rc.1 discovery set). */
+const LISTABLE_PROTOCOLS: ReadonlySet<string> = new Set([
+  'anthropic-messages',
+  'openai-completions',
+  'openai-responses',
+])
+
+/** Stable API version required by Anthropic's model-listing endpoint. */
+const ANTHROPIC_VERSION = '2023-06-01'
+
+/** Largest model-list page accepted by Anthropic's public endpoint. */
+const ANTHROPIC_MODEL_LIMIT = 1000
+
+/**
  * Compose the raw-models probe request's headers, mirroring the discipline of
- * the harness's own model discovery since 0.1.2-alpha.4: the provider
+ * the harness's own model discovery on the 0.1.2-rc.1 kernel: the provider
  * profile's configured request headers form the base (deployment-owned
  * credentials like `x-api-key` ride along), `accept` is always JSON, and a
  * resolved credential's Bearer overwrites a profile `authorization` — which
  * survives only when no credential resolves (a route may authenticate through
- * its configured headers alone). Entries Fetch would refuse are dropped
- * rather than failing the probe: alpha.4 hosts reject such profiles at
- * resolve time, but older kernels never validated, and a diagnostic must not
- * die on them. Harness attribution headers are deliberately not sent — this
- * is a same-origin diagnostic, not a harness request.
+ * its configured headers alone). Anthropic Messages answers through
+ * `x-api-key` plus a fixed `anthropic-version`, and its Bearer arm is never
+ * used (a profile `authorization` survives untouched there, exactly as the
+ * official discovery leaves it). Entries Fetch would refuse are dropped
+ * rather than failing the probe. Harness attribution headers are deliberately
+ * not sent — this is a same-origin diagnostic, not a harness request.
  * @param profileHeaders - the profile's raw `headers` dict (in the schema
  *   since rc.2; simply absent on older documents).
  * @param apiKey - the resolved credential, when one resolved.
+ * @param api - the profile's wire protocol.
  */
 export function composeProbeHeaders(
   profileHeaders: unknown,
   apiKey: string | undefined,
+  api: string,
 ): Record<string, string> {
   const headers = new Headers()
   if (isRecord(profileHeaders)) {
@@ -298,8 +330,86 @@ export function composeProbeHeaders(
     }
   }
   headers.set('accept', 'application/json')
-  if (apiKey !== undefined) headers.set('authorization', `Bearer ${apiKey}`)
+  if (api === 'anthropic-messages') {
+    headers.set('anthropic-version', ANTHROPIC_VERSION)
+    if (apiKey !== undefined) headers.set('x-api-key', apiKey)
+  } else if (apiKey !== undefined) {
+    headers.set('authorization', `Bearer ${apiKey}`)
+  }
   return Object.fromEntries(headers.entries())
+}
+
+/**
+ * Read a listing reply body, refusing one that outgrows the ceiling (the same
+ * bound the official discovery applies). A declared length is checked first
+ * so an honest server is turned away without transferring anything; the
+ * accumulated total is what actually enforces the bound.
+ */
+async function readBounded(response: Response, url: string): Promise<string> {
+  const declared = Number(response.headers.get('content-length') ?? Number.NaN)
+  if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+    await response.body?.cancel()
+    throw new Error(`${displayUrl(url)} overshoots the ${MAX_RESPONSE_BYTES}-byte listing ceiling`)
+  }
+  if (response.body === null) return ''
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_RESPONSE_BYTES) throw new Error(`${displayUrl(url)} overshoots the ${MAX_RESPONSE_BYTES}-byte listing ceiling`)
+      chunks.push(value)
+    }
+  } finally {
+    await reader.cancel().catch(() => {
+      // Cancel after a drained read, or after this function walked away from
+      // an oversized one, is cleanup; the reply is already decided either way.
+    })
+  }
+  const body = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    body.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(body)
+}
+
+/** Largest listing reply the probe accepts (same bound as official discovery). */
+const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+
+/**
+ * Normalize a supported listing reply into one entry array, mirroring the
+ * official rc.1 parser: the standard `data` array takes precedence; the
+ * enriched `models` map uses each property key as the endpoint-facing id
+ * (the nested `id` only falls back for an empty key — gateways may put a
+ * canonical identity there instead of the alias they accept on requests);
+ * only object-valued map entries are models, and entries without a usable id
+ * are dropped. Returns undefined when the listing names neither shape.
+ */
+function listingEntries(body: unknown): Record<string, unknown>[] | undefined {
+  const listing = isRecord(body) ? body : {}
+  const data = listing['data']
+  if (Array.isArray(data)) return data.filter(isRecord)
+  const models = listing['models']
+  if (isRecord(models)) {
+    return Object.entries(models)
+      .filter(([, raw]) => isRecord(raw))
+      .map(([key, raw]) => {
+        // The map key is the endpoint-facing id, but an EMPTY key falls back
+        // to the entry's own id exactly as the official parser's
+        // label(key, entry.id) does — gateways may put the canonical identity
+        // there instead of the alias they accept on requests.
+        const entry = raw as Record<string, unknown>
+        const ownId = typeof entry['id'] === 'string' && entry['id'].length > 0 ? entry['id'] : ''
+        return { ...entry, id: key.length > 0 ? key : ownId }
+      })
+      .filter(entry => typeof entry['id'] === 'string' && entry['id'].length > 0)
+  }
+  return undefined
 }
 
 /**
@@ -420,8 +530,27 @@ export function apply(ctx: Context, config: Config = {}): void {
               sendJson(res, 400, { ok: false, error: `provider route "${route}" has no baseURL` })
               return
             }
+            // The profile's wire protocol selects the listing route and the
+            // credential arm, exactly as the official discovery decides them
+            // (0.1.2-rc.1): only the protocols whose listing this mirror can
+            // read are interrogated; everything else reports that it cannot.
+            const api = typeof profile['api'] === 'string' ? profile['api'] : ''
+            if (api.length === 0) {
+              sendJson(res, 400, {
+                ok: false,
+                error: `provider route "${route}" names no API protocol to interrogate`,
+              })
+              return
+            }
+            if (!LISTABLE_PROTOCOLS.has(api)) {
+              sendJson(res, 400, {
+                ok: false,
+                error: `protocol "${api}" cannot be interrogated; enter this provider's models by hand`,
+              })
+              return
+            }
             const apiKeyEnv = typeof profile['apiKeyEnv'] === 'string' ? profile['apiKeyEnv'] : undefined
-            const listingURL = `${baseURL.replace(/\/+$/, '')}/models`
+            const listingURL = probeListingUrl(baseURL, api)
             let apiKey: string | undefined
             if (apiKeyEnv !== undefined) {
               try {
@@ -438,10 +567,12 @@ export function apply(ctx: Context, config: Config = {}): void {
               const upstream = await fetch(listingURL, {
                 method: 'GET',
                 // Header composition mirrors the harness's own model discovery
-                // (0.1.2-alpha.4): the profile's configured request headers ride
+                // (0.1.2-rc.1): the profile's configured request headers ride
                 // along, so a deployment that authenticates through a custom
-                // header probes here exactly as it lists officially.
-                headers: composeProbeHeaders(profile['headers'], apiKey),
+                // header probes here exactly as it lists officially — and an
+                // Anthropic endpoint answers through x-api-key + a fixed
+                // anthropic-version instead of a Bearer.
+                headers: composeProbeHeaders(profile['headers'], apiKey, api),
                 signal: AbortSignal.timeout(resolved.probeTimeoutMs),
               })
               if (!upstream.ok) {
@@ -449,12 +580,27 @@ export function apply(ctx: Context, config: Config = {}): void {
                 sendJson(res, 502, { ok: false, error: `${displayUrl(listingURL)} answered ${upstream.status}${hint}` })
                 return
               }
-              const body = (await upstream.json()) as { data?: unknown }
-              if (body === null || !Array.isArray(body['data'])) {
-                sendJson(res, 502, { ok: false, error: `${displayUrl(listingURL)} model listing has no "data" array` })
+              const text = await readBounded(upstream, listingURL)
+              let body: unknown
+              try {
+                body = JSON.parse(text) as unknown
+              } catch {
+                sendJson(res, 502, { ok: false, error: `${displayUrl(listingURL)} answered with a malformed JSON body` })
                 return
               }
-              sendJson(res, 200, { ok: true, url: displayUrl(listingURL), data: body['data'] })
+              // The official parser accepts the standard `data` array and the
+              // enriched `models` map; entries are passed through verbatim so
+              // the browser half sees the raw capability signals the sanctioned
+              // wire call strips.
+              const entries = listingEntries(body)
+              if (entries === undefined) {
+                sendJson(res, 502, {
+                  ok: false,
+                  error: `${displayUrl(listingURL)} model listing has neither a "data" array nor a "models" object`,
+                })
+                return
+              }
+              sendJson(res, 200, { ok: true, url: displayUrl(listingURL), data: entries })
             } catch (error) {
               sendJson(res, 502, {
                 ok: false,

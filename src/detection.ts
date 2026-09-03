@@ -100,6 +100,7 @@ export function analyzeListingEntry(entry: unknown): EndpointSignal {
   if (hasBoolean(entry, 'reasoning')) {
     return { ...signalParts(entry), reasoning: entry['reasoning'] as boolean, source: 'reasoning' }
   }
+
   // A present, meaningful effort field signals support; a null placeholder —
   // or an empty string, which some gateways emit as a filler — says nothing
   // and must stay 'unknown' (tri-state discipline).
@@ -109,6 +110,29 @@ export function analyzeListingEntry(entry: unknown): EndpointSignal {
     entry['supports_reasoning_effort'] === true
   ) {
     return { ...signalParts(entry), reasoning: true, source: 'reasoning_effort' }
+  }
+  // The nested capabilities object is the Anthropic Messages listing shape
+  // (interrogated since 0.1.2-rc.1): thinking.supported and effort.supported
+  // are the two disclosures that say a model reasons. An explicit false is a
+  // refusal, not silence.
+  const capabilities = isRecord(entry['capabilities']) ? entry['capabilities'] : undefined
+  if (capabilities !== undefined) {
+    const thinking = capabilities['thinking']
+    if (isRecord(thinking) && typeof thinking['supported'] === 'boolean') {
+      return {
+        ...signalParts(entry),
+        reasoning: thinking['supported'] as boolean,
+        source: 'capabilities.thinking.supported',
+      }
+    }
+    const effort = capabilities['effort']
+    if (isRecord(effort) && typeof effort['supported'] === 'boolean') {
+      return {
+        ...signalParts(entry),
+        reasoning: effort['supported'] as boolean,
+        source: 'capabilities.effort.supported',
+      }
+    }
   }
   return { ...signalParts(entry), reasoning: 'unknown', source: null }
 }
@@ -145,10 +169,26 @@ function signalParts(entry: Record<string, unknown>): Pick<EndpointSignal, 'inpu
     input = rawList(modalities?.['input'])
   }
   if (input === undefined) {
-    const visionFeatures = [entry['supported_features'], entry['capabilities']]
-      .filter(Array.isArray)
-      .some(list => list.some(item => typeof item === 'string' && item.toLowerCase() === 'vision'))
-    if (visionFeatures) input = ['image']
+    const capabilityArray = entry['capabilities']
+    const visionIn = (list: unknown): boolean =>
+      Array.isArray(list) && list.some(item => typeof item === 'string' && item.toLowerCase() === 'vision')
+    if (visionIn(entry['supported_features']) || visionIn(capabilityArray)) {
+      input = ['image']
+    } else if (isRecord(capabilityArray)) {
+      // The Anthropic Messages listing nests modality booleans as
+      // capabilities.<modality>.supported — the shape the 0.1.2-rc.1
+      // discovery added to the interrogations. An explicit false answers
+      // with the text floor (refusal, not silence).
+      const members: string[] = []
+      for (const key of ['image_input', 'video_input', 'pdf_input', 'file_input']) {
+        const slot = isRecord(capabilityArray[key]) ? capabilityArray[key] : undefined
+        if (slot === undefined || typeof slot['supported'] !== 'boolean') continue
+        const member = key.replace(/_input$/, '')
+        if (slot['supported'] === true) members.push(member)
+        else if (members.length === 0) members.push('text')
+      }
+      if (members.length > 0) input = members
+    }
   }
   if (input === undefined) {
     if (hasBoolean(entry, 'supports_vision')) input = entry['supports_vision'] === true ? ['image'] : []
@@ -160,6 +200,9 @@ function signalParts(entry: Record<string, unknown>): Pick<EndpointSignal, 'inpu
   // image claim instead of mistaking refusal for silence.
   if (input !== undefined) parts.input = input.length === 0 ? ['text'] : input
 
+  // Capacity conventions: top-level, OpenRouter's top_provider, the Anthropic
+  // native max_input_tokens (a 0 placeholder means 'not disclosed' — never a
+  // real zero), and the models-dev limit.context.
   const length = entry['context_length']
   if (typeof length === 'number' && Number.isFinite(length) && length > 0) {
     parts.contextLength = length
@@ -168,6 +211,17 @@ function signalParts(entry: Record<string, unknown>): Pick<EndpointSignal, 'inpu
     const nested = topProvider?.['context_length']
     if (typeof nested === 'number' && Number.isFinite(nested) && nested > 0) {
       parts.contextLength = nested
+    } else {
+      const maxInput = entry['max_input_tokens']
+      if (typeof maxInput === 'number' && Number.isFinite(maxInput) && maxInput > 0) {
+        parts.contextLength = maxInput
+      } else {
+        const limit = isRecord(entry['limit']) ? entry['limit'] : undefined
+        const limitContext = limit?.['context']
+        if (typeof limitContext === 'number' && Number.isFinite(limitContext) && limitContext > 0) {
+          parts.contextLength = limitContext
+        }
+      }
     }
   }
 

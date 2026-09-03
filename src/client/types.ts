@@ -1,17 +1,35 @@
 /**
  * Wire-surface types the browser half consumes: the settings Remote faces and
- * the pure seam the effort editor needs. The faces the browser writes through
- * are declared structurally: the rc.2 line exposed them through
- * `IApiClient['settings']` ('@deepseek-ai/dsh-api-remotes/client'), but the
- * alpha line replaced the fetch client with generated Typert remotes and
- * dropped that interface, so no export exists on both kernels to derive from.
- * Only the used members are pinned here, and the wire (client/wire.ts)
- * normalizes the alpha stub onto the rc.2 calling convention below.
+ * the pure seam the effort editor needs. The compilation baseline is the
+ * 0.1.2-rc.1 kernel line: the browser talks to the generated Typert
+ * `ctx.remote.settings` stub — `describe()` takes no argument, `mutate` takes
+ * positional `(ns, ops, expectedRevision)`, and every answer is the envelope
+ * `{ok, value | error}` with refusals coded `settings/conflict` /
+ * `settings/rejected` / `gateway/*`.
+ *
+ * The vocabulary views come from the official re-exports (`SettingsNamespaceView`
+ * / `SettingsPathOpView` / `SettingsDescribeValue`; the model-directory types
+ * from `@deepseek-ai/dsh-api-session-controller/types`), so a kernel change to
+ * those shapes shows up at typecheck rather than at runtime. The answer
+ * envelope is declared structurally — the official `RemoteResult` folds the
+ * typert-wide `RemoteErrorDetailsMap` merges, whose consumer-side declarations
+ * live in the settings-controller package; pinning that package here would
+ * widen the plugin's type graph for one refusal shape.
  *
  * @module dsh-better-reasoning-effort/types
  */
 
-import type { SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
+import type {
+  ModelCatalogModel,
+  ModelProviderGroup,
+  ModelReasoning,
+  ModelSelection,
+} from '@deepseek-ai/dsh-api-session-controller/types'
+import type { SettingsDescribeValue, SettingsNamespaceView, SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
+// Type-only: the per-session model directory service the composer slider
+// reads; the runtime instance is obtained through `ctx.get('modelDirectories')`,
+// never through this package's entry.
+import type { ModelDirectory, ModelDirectoryState } from '@deepseek-ai/dsh-client-ui-model-selection/client'
 import type {
   CompatSuggestion,
   InputModalities,
@@ -19,44 +37,19 @@ import type {
   ReasoningEfforts,
 } from '../knowledge.js'
 
-// Re-exported vocabulary both kernels still publish through the same subpath
-// (rc.2 / alpha.2 / alpha.3 checked; ConfigurableProviderView was dropped on the
-// alpha line and is not re-exported here).
-export type { SettingsPathOpView, RpcResponse } from
-  '@deepseek-ai/dsh-api-remotes/client'
+/** The settings answer envelope on the rc.1 kernel, in the official `RemoteResult` shape. */
+export type SettingsRemoteResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: { code: string; message: string; details?: unknown } }
 
-/** Error half of a settings-remote answer, in the rc.2 RpcError shape. */
-export interface SettingsRemoteError {
-  code: string
-  message: string
-  details?: unknown
-}
-
-/** The `settings.describe` answer value (the rc.2 describe response value, structural). */
-export interface SettingsDescribeValueView {
-  writable: boolean
-  hasDocument?: boolean
-  namespaces: SettingsNamespaceView[]
-}
-
-/** The result envelope both kernels answer with (`result` slot of a rc.2 RpcResponse). */
-export type SettingsRemoteResult<T> = {
-  result:
-    | { ok: true; value: T }
-    | { ok: false; error: SettingsRemoteError }
-}
-
-/** The rc.2 settings.mutate payload: ops plus the optimistic-lock revision. */
-export interface SettingsMutateInput {
-  ns: string
-  ops: SettingsPathOpView[]
-  expectedRevision?: number
-}
-
-/** The 'settings' Remote methods the browser half calls. */
+/** The 'settings' Remote methods the browser half calls (rc.1 Typert shape). */
 export interface SettingsRemoteApi {
-  describe(payload?: unknown): Promise<SettingsRemoteResult<SettingsDescribeValueView>>
-  mutate(input: SettingsMutateInput): Promise<SettingsRemoteResult<unknown>>
+  describe(): Promise<SettingsRemoteResult<SettingsDescribeValue>>
+  mutate(
+    ns: string,
+    ops: SettingsPathOpView[],
+    expectedRevision?: number,
+  ): Promise<SettingsRemoteResult<SettingsNamespaceView>>
 }
 
 /** The Remote faces the browser half consumes. */
@@ -64,6 +57,7 @@ export interface RemoteApi {
   settings: SettingsRemoteApi
 }
 
+export type { SettingsNamespaceView, SettingsPathOpView }
 /** The join the injector renders from: the pi-ai namespace plus writability. */
 export interface SettingsJoin {
   /** The pi-ai namespace view, when registered. */
@@ -72,75 +66,28 @@ export interface SettingsJoin {
   writable: boolean
 }
 
-export type { SettingsNamespaceView }
-
-// ---- Kernel-dual wire faces (see client/wire.ts) ----
-
-/** Error half of an alpha.1 Typert stub answer (code is best-effort on the wire). */
-export interface AlphaWireError {
-  code?: string
-  message?: string
-}
-
-/** alpha.1 Typert stub answers are top-level envelopes, not result-wrapped. */
-export interface AlphaEnvelope<V> {
-  ok: boolean
-  value?: V
-  error?: AlphaWireError
-}
-
-/**
- * Shape-erased face of the alpha.1 'ctx.remote.settings' Typert stub: describe
- * takes no argument and mutate takes positional (ns, ops, expectedRevision) —
- * both differing from the rc.2 IApiClient conventions the wire normalizes onto.
- */
-export interface AlphaSettingsStub {
-  describe(): Promise<AlphaEnvelope<SettingsDescribeValueView>>
-  mutate(
-    ns: string,
-    ops: unknown[],
-    expectedRevision: number | undefined,
-  ): Promise<AlphaEnvelope<unknown>>
-}
-
-/**
- * The service seats the wire probe reads, as a minimal structural type. Only
- * `get` — cordis' optional lookup — is used: on alpha.1 every
- * `remote.<namespace>` is a standalone service whose property read throws
- * without a matching `inject` declaration (which rc.2 could never satisfy;
- * see client/wire.ts), so the wire never touches context properties here.
- */
-export interface WireContext {
-  /** Optional service lookup: returns the service value or undefined. */
-  get?(name: string): unknown
-}
-
 /**
  * The client shell's context face, declared locally instead of imported: the
- * rc.2 line exports `ClientContext` from
- * '@deepseek-ai/dsh-client-runtime/client' (an alias of cordis `Context`, and
- * also the package declaring the 'connection/reset' event key), the alpha
- * line dropped that package and official client plugins take a plain cordis
- * `Context` with the same members merged in through the assembly packages.
- * Only the members the browser half calls are pinned here; `get`/`inject`/
- * `slots` are probed through casts below, so they stay optional structural
- * reads.
+ * assembly packages merge their services into cordis' `Context`, but a
+ * third-party client contribution pins only the members it calls. The
+ * `remote.settings` face is the official one; `get` / `inject` / `slots` stay
+ * optional structural reads (see client/index.ts).
  */
 export interface ClientContext {
   locale: {
     register(ns: string, dict: Record<string, unknown>): unknown
     bind(ns: string): unknown
     /**
-     * LocaleFace pair (present from rc.2 on): the revision moves on every
-     * active-language switch and dictionary registration. Absent on a kernel
-     * that only exposes register/bind — mounted copy then stays in the
-     * language it rendered in, which is the pre-existing behaviour.
+     * LocaleFace pair: the revision moves on every active-language switch
+     * and dictionary registration. Mounted copy then stays in the language
+     * it rendered in when absent — the pre-existing behaviour.
      */
     subscribe?(fn: () => void): () => void
     getSnapshot?(): { revision?: number }
   }
   remote: {
-    $on(event: 'settings/document-updated', listener: (ns: unknown) => void): () => void
+    $on(event: 'settings/document-updated', listener: (ns: unknown, revision?: number) => void): () => void
+    settings: SettingsRemoteApi
   }
   on(event: 'connection/reset', listener: () => void): () => void
   effect(fn: () => unknown, name?: string): unknown
@@ -148,14 +95,13 @@ export interface ClientContext {
   inject?(names: string[], callback: () => unknown): unknown
 }
 
-// ---- alpha.1 Models-page slot faces (locally declared; rc.2 types lack them) ----
+// ---- Models-page slot face (declared locally; the official types live in
+// ---- @deepseek-ai/dsh-client-ui-slots, whose runtime accepts the same calls) ----
 
 /**
- * Minimal 'ctx.slots' face the slot path needs, declared locally because the
- * rc.2 type baseline predates the Models extension slots. The runtime accepts
- * the same calls on both kernels; rc.2 never reaches them because the slot path
- * is gated on the alpha.1 wire probe (and rc.2's Models section declares no
- * slots at all).
+ * Minimal 'ctx.slots' face the footer-slot path needs. The runtime accepts
+ * these calls on the rc.1 kernel; the structural declaration keeps the
+ * plugin's slot seam independent of the slots package's own type surface.
  */
 export interface SlotRegistrarFace {
   inject(name: string, registrar: () => unknown): unknown
@@ -169,65 +115,30 @@ export interface SlotRegistrarFace {
   }, component: unknown): () => void
 }
 
-// ---- Composer slider faces (structurally typed; the directory's true types
-// ---- live in @deepseek-ai/dsh-client-ui-model-selection, which both kernels
-// ---- export with the same shape but which the rc.2 dev baseline could not
-// ---- pin alongside alpha.1 — so the seam stays structural.)
+// ---- Composer slider faces: the 0.1.2-rc.1 model-directory contract ----
+// The runtime instances come from `ctx.modelDirectories`; the type aliases
+// name the official declarations so a shape change surfaces at typecheck.
 
 /** One effort level exactly as the owning adapter advertised it. */
-export interface EffortLevelLike {
-  readonly id: string
-  readonly name: string
-}
+export type EffortLevelLike = ModelReasoning['efforts'][number]
 
 /** Per-model reasoning metadata the directory reports. */
-export interface ModelReasoningLike {
-  readonly defaultEffort?: string
-  readonly efforts?: readonly EffortLevelLike[]
-}
+export type ModelReasoningLike = ModelReasoning
 
 /** One directory model row. */
-export interface DirectoryModelLike {
-  readonly id: string
-  readonly name?: string
-  readonly reasoning?: ModelReasoningLike
-}
+export type DirectoryModelLike = ModelCatalogModel
 
 /** One provider group of directory models. */
-export interface DirectoryGroupLike {
-  readonly id: string
-  readonly name: string
-  readonly models: readonly DirectoryModelLike[]
-}
+export type DirectoryGroupLike = ModelProviderGroup
 
 /** The selection the host reports for the next assembled step. */
-export interface DirectoryCurrentLike {
-  readonly provider: string
-  readonly model: string
-  readonly reasoningEffort?: string
-}
+export type DirectoryCurrentLike = ModelSelection
 
-/** The directory snapshot both selection entries render from (see ui-model-selection). */
-export interface ModelDirectoryStateLike {
-  readonly current: DirectoryCurrentLike | null
-  readonly groups: readonly DirectoryGroupLike[]
-  readonly status: 'idle' | 'loading' | 'ready' | 'selecting' | 'error'
-  readonly error: string | null
-}
+/** The directory snapshot both selection entries render from. */
+export type ModelDirectoryStateLike = ModelDirectoryState
 
-/** Per-session model-selection directory face the slider needs (structural). */
-export interface ModelDirectoryLike {
-  readonly store: {
-    getSnapshot(): ModelDirectoryStateLike
-    subscribe(listener: () => void): () => void
-  }
-  load(): Promise<unknown>
-  select(selection: {
-    provider: string
-    model: string
-    reasoningEffort?: string
-  }): Promise<unknown>
-}
+/** Per-session model-selection directory face the slider needs. */
+export type ModelDirectoryLike = ModelDirectory
 
 // ---- (rest unchanged) ----
 
