@@ -29,7 +29,7 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "release $GITHUB_REF_NAME already exists; leaving its notes and assets untouched"
           elif [ -f "$BODY" ]; then
-            gh release create "$GITHUB_REF_NAME" --verify-tag --notes-file "$BODY"
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$BODY"
           else
-            gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
           fi
