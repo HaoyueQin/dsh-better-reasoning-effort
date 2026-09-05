@@ -22,3 +22,6 @@ Thumbs.db
 .tmp-rel/
 .mnemon/
 .workbuddy/
+
+# Localized release notes are not released with the package: .github/releases/ never ships
+.github/releases/
