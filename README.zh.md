@@ -58,11 +58,11 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 ## 安装
 
-需要 DeepSeek Harness **`0.1.2-rc.1` 或更新版本**（`@deepseek-ai/dsh-api-remotes@>=0.1.2-rc.1`；host 侧 peer 依赖 `@deepseek-ai/dsh-settings` 采用同一范围，另有 `@deepseek-ai/schemastery@^3.18.0`）。
+需要 DeepSeek Harness **`0.1.2-rc.1` 或 `0.1.3-alpha.1`**（当前 0.1.x 内核发布线；`@deepseek-ai/dsh-api-remotes@>=0.1.2-rc.1` 的 peer 范围已涵盖两者，host 侧 peer 依赖 `@deepseek-ai/dsh-settings` 采用同一范围，另有 `@deepseek-ai/schemastery@^3.18.0`）。
 
-> **还在用旧版 DeepSeek Harness？**本插件这条发布线只面向 `0.1.2-rc` 正式候选——`0.1.1-rc.x` 线与 `0.1.2-alpha.1`–`alpha.5` 预发布**均不再受支持**。请升级 Harness，或安装与内核匹配的本插件旧版本（例如 `0.1.1-rc` / `0.1.2-alpha` 线请用 `dsh-better-reasoning-effort@0.3.4`）。
+> **还在用旧版 DeepSeek Harness？**本插件这条发布线面向 `0.1.2-rc` 与 `0.1.3-alpha` 两条内核发布线——`0.1.1-rc.x` 线与 `0.1.2-alpha.1`–`alpha.5` 预发布**均不再受支持**。请升级 Harness，或安装与内核匹配的本插件旧版本（例如 `0.1.1-rc` / `0.1.2-alpha` 线请用 `dsh-better-reasoning-effort@0.3.4`）。
 
-以 `0.1.2-rc.1` 为编译基线，本插件依赖的每一处接缝都对照其源码验证：settings Remote 是生成的 Typert `ctx.remote.settings` stub（无参 `describe`、位置参数 `mutate(ns, ops, expectedRevision)`、`{ok, value | error}` 包络、`settings/conflict` / `settings/rejected` 拒绝码）；Models 页锚点（`Capacities`/容量、Model ID、Display name、Provider ID、Base URL、API protocol 与 `settings.models.footer` slot）全部原样；原始列表探测镜像内核自己的模型发现——同一协议集合（新含 **Anthropic Messages**，走原生 `/v1/models` 路由、`x-api-key` + `anthropic-version`）、同款 `data`/`models` 双形态解析、同款 4 MB 上限。client bundle 运行时不请求任何官方模块。
+以 `0.1.2-rc.1` 为编译基线；`0.1.3-alpha.1` 相对它，本插件依赖的每一处接缝均经源码级对比验证**零变化**（settings Remote wire、Models 页锚点、模型目录类型、slots / locale、llm-pi-ai 的 profile schema 全部原样），故同一份产物可运行于两个内核；待 `0.1.3-alpha.1` 发布到 npm 后建议补一次实测冒烟。接缝明细：settings Remote 是生成的 Typert `ctx.remote.settings` stub（无参 `describe`、位置参数 `mutate(ns, ops, expectedRevision)`、`{ok, value | error}` 包络、`settings/conflict` / `settings/rejected` 拒绝码）；Models 页锚点（`Capacities`/容量、Model ID、Display name、Provider ID、Base URL、API protocol 与 `settings.models.footer` slot）全部原样；原始列表探测镜像内核自己的模型发现——同一协议集合（新含 **Anthropic Messages**，走原生 `/v1/models` 路由、`x-api-key` + `anthropic-version`）、同款 `data`/`models` 双形态解析、同款 4 MB 上限。client bundle 运行时不请求任何官方模块。
 
 **模型行编辑器统一走 DOM bypass（不做版本号嗅探）：**注入器按官方容量折叠区锚点（`Capacities`/`容量`）定位，因此编辑器挂进每个展开的模型行下，就在*编辑 → 自定义设置*流程里，也覆盖未保存行（新建供应商卡片上的暂存、保存瞬间自动写入）。滑块开关占据官方 `settings.models.footer` slot，声明经插件自身的 `remote.settings` inject——与官方 Models 页消费的是同一服务契约。模型页余下的正规席位是 keyed `settings.models.provider-card`（按提供方卡片分发）——卡片级 UI 的迁移路径在它，但没有任何 slot 能触及单个模型行，这正是模型行编辑器保留 DOM bypass 的原因。
 
@@ -150,7 +150,7 @@ npm test            # vitest：知识库 / 推断 / autofill / DOM 注入 / 写�
 npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 ```
 
-契约版本：`@deepseek-ai/dsh-api-remotes@0.1.2-rc.1`（client 契约类型），已通过针对 `0.1.2-rc.1` 各包的 typecheck、测试套件与完整构建验证。
+契约版本：`@deepseek-ai/dsh-api-remotes@0.1.2-rc.1`（client 契约类型），已通过针对 `0.1.2-rc.1` 各包的 typecheck、测试套件与完整构建验证；`0.1.3-alpha.1` 的契约面经源码比对与 `0.1.2-rc.1` 一致，待其发布 npm 后补实测。
 
 ## 已知限制
 
@@ -176,7 +176,7 @@ Composer 思考强度滑块**改编自 [dsh-reasoning-effort](https://github.com
 - **只把滑块换成白色圆形。** chibi-runner“大肥鱼”滑块（把圆钮换成鱼形贴图）不带入；其余与上游逐字一致——渐变胶囊轨道、左侧裁剪的 canvas 辐射动效与 flare 辉光、拖动/键盘契约、乐观提交 + 被拒回滚。
 - **官方模型席位绝不被替换。** 上游插件把整个席位顶掉（自绘触发钮 + 菜单）；这里官方右下角 *模型 · 思考强度* 显示形式保持原样，滑块在官方菜单弹出时注入到其顶部。
 - **位置与设置项减少。** 上游的“推理强度滑块 / 大肥鱼滑块”两项在通用设置页；这里只保留 *推理强度滑块* 开关，放在**「模型」**页添加提供方按钮下方的带框容器内；“大肥鱼滑块”随功能一起移除。
-- **面向 `0.1.2-rc` 线维护。** 这是基于 harness wire 契约的精简重写（不是上游 bundle 的 fork）：无需上游的 `0.1.0-rc.6` 版本钉死，可跑在 `0.1.2-rc.1` 及更新版本上，整个挂载/卸载生命周期由本插件的 DOM 注入器管理。若上游项目恢复更新，留意两点：两个插件同时装会重复——上游再次顶掉官方席位，官方触发钮会再次消失。
+- **面向 `0.1.2-rc` 与 `0.1.3-alpha` 线维护。** 这是基于 harness wire 契约的精简重写（不是上游 bundle 的 fork）：无需上游的 `0.1.0-rc.6` 版本钉死，可跑在 `0.1.2-rc.1` 与 `0.1.3-alpha.1` 内核上（两者与插件所依赖的接缝一致，见上方兼容性说明），整个挂载/卸载生命周期由本插件的 DOM 注入器管理。若上游项目恢复更新，留意两点：两个插件同时装会重复——上游再次顶掉官方席位，官方触发钮会再次消失。
 
 如果你之前用过上游插件，请移除它，避免同席位上出现两套思考强度控制：
 

@@ -1,7 +1,8 @@
 /**
  * Wire-surface types the browser half consumes: the settings Remote faces and
  * the pure seam the effort editor needs. The compilation baseline is the
- * 0.1.2-rc.1 kernel line: the browser talks to the generated Typert
+ * 0.1.2-rc.1 kernel line, whose wire surface 0.1.3-alpha.1 leaves unchanged
+ * (verified source-level): the browser talks to the generated Typert
  * `ctx.remote.settings` stub — `describe()` takes no argument, `mutate` takes
  * positional `(ns, ops, expectedRevision)`, and every answer is the envelope
  * `{ok, value | error}` with refusals coded `settings/conflict` /
@@ -116,6 +117,7 @@ export interface SlotRegistrarFace {
 }
 
 // ---- Composer slider faces: the 0.1.2-rc.1 model-directory contract ----
+// (identical at 0.1.3-alpha.1)
 // The runtime instances come from `ctx.modelDirectories`; the type aliases
 // name the official declarations so a shape change surfaces at typecheck.
 

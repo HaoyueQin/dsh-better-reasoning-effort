@@ -2,7 +2,7 @@
  * Unit tests for the probe route's header composition (src/index.ts
  * composeProbeHeaders): the provider profile's configured request headers
  * ride along under the accept/credential decisions, mirroring the harness's
- * own model-discovery discipline on the 0.1.2-rc.1 kernel — Anthropic
+ * own model-discovery discipline (0.1.3-alpha.1) — Anthropic
  * Messages answers through x-api-key plus a fixed anthropic-version, OpenAI
  * protocols through a Bearer.
  */

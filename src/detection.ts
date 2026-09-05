@@ -111,8 +111,9 @@ export function analyzeListingEntry(entry: unknown): EndpointSignal {
   ) {
     return { ...signalParts(entry), reasoning: true, source: 'reasoning_effort' }
   }
-  // The nested capabilities object is the Anthropic Messages listing shape
-  // (interrogated since 0.1.2-rc.1): thinking.supported and effort.supported
+  // The nested capabilities object is the Anthropic Messages listing shape —
+  // the shape the kernel's own discovery picked up at 0.1.3-alpha.1 (this probe
+  // has read it since the 0.3.5 line): thinking.supported and effort.supported
   // are the two disclosures that say a model reasons. An explicit false is a
   // refusal, not silence.
   const capabilities = isRecord(entry['capabilities']) ? entry['capabilities'] : undefined
@@ -176,7 +177,7 @@ function signalParts(entry: Record<string, unknown>): Pick<EndpointSignal, 'inpu
       input = ['image']
     } else if (isRecord(capabilityArray)) {
       // The Anthropic Messages listing nests modality booleans as
-      // capabilities.<modality>.supported — the shape the 0.1.2-rc.1
+      // capabilities.<modality>.supported — the shape the 0.1.3-alpha.1
       // discovery added to the interrogations. An explicit false answers
       // with the text floor (refusal, not silence).
       const members: string[] = []

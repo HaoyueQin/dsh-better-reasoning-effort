@@ -267,8 +267,8 @@ function displayUrl(raw: string): string {
 }
 
 /**
- * Probe-listing URL, mirroring the harness's own model discovery on the
- * 0.1.2-rc.1 kernel: OpenAI-compatible protocols list at
+ * Probe-listing URL, mirroring the harness's own model discovery (the
+ * 0.1.3-alpha.1 kernel): OpenAI-compatible protocols list at
  * `{baseURL}/models`; Anthropic Messages uses its native route at
  * `{root}/v1/models?limit=1000`, where the root is the base without trailing
  * slashes and without one trailing `/v1` segment (gateway documentation
@@ -282,7 +282,7 @@ function probeListingUrl(baseURL: string, api: string): string {
   return `${root}/v1/models?limit=${String(ANTHROPIC_MODEL_LIMIT)}`
 }
 
-/** Protocols whose model listing this module can read (rc.1 discovery set). */
+/** Protocols whose model listing this module can read (0.1.3-alpha.1 discovery set). */
 const LISTABLE_PROTOCOLS: ReadonlySet<string> = new Set([
   'anthropic-messages',
   'openai-completions',
@@ -297,7 +297,7 @@ const ANTHROPIC_MODEL_LIMIT = 1000
 
 /**
  * Compose the raw-models probe request's headers, mirroring the discipline of
- * the harness's own model discovery on the 0.1.2-rc.1 kernel: the provider
+ * the harness's own model discovery (0.1.3-alpha.1): the provider
  * profile's configured request headers form the base (deployment-owned
  * credentials like `x-api-key` ride along), `accept` is always JSON, and a
  * resolved credential's Bearer overwrites a profile `authorization` — which
@@ -383,7 +383,7 @@ const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 /**
  * Normalize a supported listing reply into one entry array, mirroring the
- * official rc.1 parser: the standard `data` array takes precedence; the
+ * official 0.1.3-alpha.1 parser: the standard `data` array takes precedence; the
  * enriched `models` map uses each property key as the endpoint-facing id
  * (the nested `id` only falls back for an empty key — gateways may put a
  * canonical identity there instead of the alias they accept on requests);
@@ -532,7 +532,7 @@ export function apply(ctx: Context, config: Config = {}): void {
             }
             // The profile's wire protocol selects the listing route and the
             // credential arm, exactly as the official discovery decides them
-            // (0.1.2-rc.1): only the protocols whose listing this mirror can
+            // (0.1.3-alpha.1): only the protocols whose listing this mirror can
             // read are interrogated; everything else reports that it cannot.
             const api = typeof profile['api'] === 'string' ? profile['api'] : ''
             if (api.length === 0) {
@@ -567,7 +567,7 @@ export function apply(ctx: Context, config: Config = {}): void {
               const upstream = await fetch(listingURL, {
                 method: 'GET',
                 // Header composition mirrors the harness's own model discovery
-                // (0.1.2-rc.1): the profile's configured request headers ride
+                // (0.1.3-alpha.1): the profile's configured request headers ride
                 // along, so a deployment that authenticates through a custom
                 // header probes here exactly as it lists officially — and an
                 // Anthropic endpoint answers through x-api-key + a fixed
