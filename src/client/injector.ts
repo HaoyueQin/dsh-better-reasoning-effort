@@ -454,7 +454,11 @@ function hasLabeledInput(card: HTMLElement, labels: readonly string[]): boolean 
  * in the settings document yet. Match the key first (exact, unambiguous),
  * then the create card's typed id, then the display name (a create card never
  * reaches the name arm: its Provider ID input marks it, and its fixed heading
- * could otherwise collide with a provider's display name).
+ * could otherwise collide with a provider's display name), and finally the
+ * title itself as a route key: a provider that never set a display name
+ * renders the route id as its title and hides the `.editorRoute` tag (the
+ * two are then equal), so only this last arm can resolve it. A create card
+ * never reaches the last arm either — its Provider ID input already returned.
  */
 function routeOfCard(
   card: HTMLElement,
@@ -470,7 +474,16 @@ function routeOfCard(
   const title = card.querySelector<HTMLElement>('[class*="editorTitle"], [class*="rowName"]')?.textContent?.trim()
   if (title === undefined || title.length === 0) return undefined
   const byName = Object.entries(providers).find(([, profile]) => profile['displayName'] === title)
-  return byName === undefined ? undefined : { route: byName[0], staged: false }
+  if (byName !== undefined) return { route: byName[0], staged: false }
+  // A provider that never set a display name resolves to its route key, and
+  // the host hides the .editorRoute tag while that key equals the title
+  // (ProviderEditor renders it only when the name differs) — so neither arm
+  // above can find the route. The title is then the route key itself, which
+  // is exact: resolve it directly. A create card never reaches this arm (its
+  // Provider ID input already returned), so an editor-title/key collision
+  // with the fixed create heading cannot occur.
+  if (hasOwn(providers, title)) return { route: title, staged: false }
+  return undefined
 }
 
 /**

@@ -334,6 +334,73 @@ describe('reconcile', () => {
     expect(props[0].route).toBe('aliyun')
   })
 
+  it('mounts a provider that never set a display name by its route-key title', async () => {
+    // A nameless provider renders its ROUTE KEY as the card title AND hides
+    // the .editorRoute tag (the host falls back to the key and only prints the
+    // tag while the name differs), so the display-name arm alone can never
+    // resolve it: the route must fall back to the title as a route key.
+    const nameless: SettingsJoin = structuredClone(join)
+    const providers = (nameless.namespace!.value as { providers: Record<string, unknown> }).providers
+    delete providers['aliyun']
+    providers['opencode-zen'] = {
+      api: 'openai-responses',
+      baseURL: 'https://opencode.ai/zen/v1',
+      models: [{ id: 'muse-spark-1.3-contributor-free' }],
+    }
+    const deps = makeDeps({ describeNamespace: async () => nameless })
+    const state = createScanState()
+    document.body.innerHTML = `
+      <div class="section">
+        <div class="editor">
+          <div class="editorHeader"><span class="editorTitle">opencode-zen</span></div>
+          <div class="modelCatalog">
+            <div class="modelEntry">
+              <div class="modelRow">
+                <input aria-label="Model ID" value="muse-spark-1.3-contributor-free" />
+                <button aria-label="Capacities 1"></button>
+              </div>
+              <div class="modelAdvanced" style="display:block">
+                <label><span>Context window</span><input /></label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`
+    const root = document.querySelector('.section') as HTMLElement
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).toHaveBeenCalledTimes(1)
+    const props = vi.mocked(deps.mount).mock.calls[0]![1] as EditorMountProps
+    expect(props.route).toBe('opencode-zen')
+    expect(props.staged).toBe(false)
+    expect(props.modelId).toBe('muse-spark-1.3-contributor-free')
+    expect(props.routeDisplayName).toBe('opencode-zen')
+  })
+
+  it('still refuses a title that is neither a route key nor a display name', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    document.body.innerHTML = `
+      <div class="section">
+        <div class="editor">
+          <div class="editorHeader"><span class="editorTitle">ghost</span></div>
+          <div class="modelCatalog">
+            <div class="modelEntry">
+              <div class="modelRow">
+                <input aria-label="Model ID" value="qwen-max" />
+                <button aria-label="Capacities 1"></button>
+              </div>
+              <div class="modelAdvanced" style="display:block">
+                <label><span>Context window</span><input /></label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`
+    const root = document.querySelector('.section') as HTMLElement
+    await settle(() => reconcile(root, deps, state), state)
+    expect(deps.mount).not.toHaveBeenCalled()
+  })
+
   it('skips the describe read while no capacity rows are present', async () => {
     // Most mutations in a running app fire nowhere near the Models page;
     // the scan gate must not spend a wire read on them.
