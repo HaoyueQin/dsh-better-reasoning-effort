@@ -120,6 +120,8 @@ The host half accepts optional configuration on its profile row (the values belo
         probeTimeoutMs: 15000
         # Boot-fill retry backoff schedule; [] means "try exactly once".
         bootRetryDelaysMs: [1000, 2000, 4000, 8000, 16000, 30000]
+        # Map effort-less calls on forced-thinking ladders to the vendor default.
+        defaultGuard: true
 ```
 
 Set `autofill: false` to disable the silent auto-fill entirely — the browser-side **Auto-adapt** button keeps working.
@@ -163,6 +165,8 @@ Contract version: `@deepseek-ai/dsh-api-remotes@0.1.2-rc.1` (client contract typ
 - The knowledge base is not exhaustive — spellings drift as vendors ship models, and families without an effort ladder carry no entry at all; unlisted models fall back to protocol inference + generic levels and can be adjusted by hand.
 - The modality vocabulary follows pi-ai's core (`text` / `image` today). Wider support some gateways serve (PDF, audio, video) is recorded per family until the core vocabulary grows — declaring them is impossible today by design, not oversight.
 - Name-heuristic modality advice (vision-flavored ids like `*-vl*` / `*vision*` / `gpt-4o`) is deliberately low-confidence and labeled as such — verify before relying on it.
+- Self-hosted relays: auto-fill and Auto-adapt pin `supportsDeveloperRole: false` on `openai-completions` routes no official host claims, so the system prompt keeps the `system` role (some upstreams reject `developer` with 角色信息不正确). Explicit values are never overwritten. Uncheck every level + Apply clears a declaration back to bare provider-default requests, which is the compatibility mode for relays that reject thinking parameters.
+- Forced-thinking models (ladders without `off`, e.g. GLM-5.3): provider tests and Default calls would otherwise send `thinking: disabled` and fail (e.g. 1210) — the host maps them to the ladder's vendor default instead. Set `defaultGuard: false` to restore the old behavior.
 
 ## Acknowledgements
 

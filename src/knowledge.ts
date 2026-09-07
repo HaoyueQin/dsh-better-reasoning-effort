@@ -62,6 +62,13 @@ export interface CompatSuggestion {
   /** Whether the endpoint accepts a reasoning-effort-style parameter. */
   supportsReasoningEffort?: boolean
   /**
+   * Whether pi-ai may rewrite the system prompt to the developer role for
+   * reasoning models. Self-hosted relays get an explicit false (their
+   * upstreams reject role:developer); official endpoints keep pi-ai's own
+   * detection default by omitting the field.
+   */
+  supportsDeveloperRole?: boolean
+  /**
    * Anthropic-messages protocol only: force adaptive thinking so the
    * declared efforts dispatch as `output_config.effort` instead of falling
    * into the older budget-based thinking path. pi-ai offers this field on
@@ -1271,6 +1278,67 @@ function compatForRoute(entry: KnowledgeEntry, route: RouteFacts): CompatSuggest
   return undefined
 }
 
+/**
+ * Official endpoint roots pi-ai already recognizes by provider id or URL
+ * (last-two-parts match, mirroring {@link NATIVE_DIALECT_DOMAINS}). Hosts
+ * outside this set are self-hosted relays pi-ai cannot identify, so its
+ * detected supportsDeveloperRole stays true there.
+ */
+const OFFICIAL_RELAY_DOMAINS: readonly string[] = [
+  'openai.com',
+  'deepseek.com',
+  'openrouter.ai',
+  'z.ai',
+  'bigmodel.cn',
+  'moonshot.ai',
+  'moonshot.cn',
+  'aliyuncs.com',
+  'anthropic.com',
+  'x.ai',
+  'together.ai',
+  'together.xyz',
+  'nvidia.com',
+  'cerebras.ai',
+  'cloudflare.com',
+]
+
+/**
+ * Whether a route is a self-hosted relay whose upstreams cannot be assumed
+ * to accept role:developer: openai-completions protocol on a baseURL whose
+ * host no official root claims. Absent or malformed URLs answer false --
+ * with nothing to judge the host by, pi-ai's detection default stands.
+ */
+export function isSelfHostedRelay(route: RouteFacts): boolean {
+  if (normalize(route.api) !== COMPAT_CAPABLE_PROTOCOL) return false
+  const baseURL = route.baseURL
+  if (baseURL === undefined || baseURL.length === 0) return false
+  try {
+    const parts = new URL(baseURL).hostname.toLowerCase().split('.')
+    if (parts.length < 2) return false
+    return !OFFICIAL_RELAY_DOMAINS.includes(parts.slice(-2).join('.'))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Pin the system role on self-hosted relays: merge
+ * `supportsDeveloperRole: false` into a compat block that would otherwise
+ * let pi-ai rewrite the system prompt to role:developer (issue #2 -- the
+ * upstream answers 角色信息不正确). An explicitly declared value always
+ * wins; non-reasoning suggestions (efforts === false) never carry compat.
+ */
+function withRolePin(
+  compat: CompatSuggestion | undefined,
+  route: RouteFacts,
+  reasons: boolean,
+): CompatSuggestion | undefined {
+  if (compat === undefined || !reasons) return compat
+  if (compat.supportsDeveloperRole !== undefined) return compat
+  if (!isSelfHostedRelay(route)) return compat
+  return { ...compat, supportsDeveloperRole: false }
+}
+
 /** Conservative ladder offered when the endpoint confirms reasoning but nothing names the levels. */
 const ENDPOINT_CONFIRMED_LADDER: ReasoningEfforts = { off: null, low: 'low', medium: 'medium', high: 'high' }
 
@@ -1403,7 +1471,7 @@ export function suggestEfforts(
   }
 
   if (entry !== undefined) {
-    const compat = compatForRoute(entry, route)
+    const compat = withRolePin(compatForRoute(entry, route), route, entry.efforts !== false)
     return {
       efforts: entry.efforts,
       // The vendor default rides along only when the suggested ladder
@@ -1434,9 +1502,10 @@ export function suggestEfforts(
   const compatBase: CompatSuggestion | undefined = normalize(route.api) === COMPAT_CAPABLE_PROTOCOL
     ? { thinkingFormat: 'openai', supportsReasoningEffort: true }
     : undefined
-  const compat = compatBase !== undefined && isSelfHostedEndpoint(route.baseURL)
+  const compatWithBudget = compatBase !== undefined && isSelfHostedEndpoint(route.baseURL)
     ? { ...compatBase, thinkingTokenBudgetField: 'thinking_token_budget' as const }
     : compatBase
+  const compat = withRolePin(compatWithBudget, route, true)
   if (endpoint?.reasoning === true) {
     return {
       efforts: { ...ENDPOINT_CONFIRMED_LADDER },

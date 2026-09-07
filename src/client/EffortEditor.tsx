@@ -29,6 +29,8 @@ import {
   sameEfforts,
   type DraftLevels,
 } from './effort.js'
+import { defaultWireRisk } from './wire-preview.js'
+import { suggestEfforts } from '../knowledge.js'
 import type { EffortEditorApi } from './types.js'
 
 /** Thousands-grouped token counts, matching the official capacity inputs. */
@@ -367,6 +369,16 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setMessage(undefined)
   }
 
+  // Default-wire warning (issue #2): a stored forced-thinking ladder sends
+  // an off-equivalent on Default/test calls. The format prefers the just
+  // applied suggestion, else the knowledge base for this route.
+  const wireFormat = appliedCompatRef.current?.thinkingFormat
+    ?? suggestEfforts(modelId, {
+      ...(routeApi === undefined ? {} : { api: routeApi }),
+      ...(routeBaseURL === undefined ? {} : { baseURL: routeBaseURL }),
+    }).compat?.thinkingFormat
+  const wireRisk = defaultWireRisk(initialEfforts, wireFormat)
+
   const disabled = readOnly || busy
 
   return (
@@ -496,6 +508,16 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       ) : null}
       {staged ? <p className="bre-effort-note">{t('stagedHint')}</p> : null}
       {initialEfforts === false ? <p className="bre-effort-note">{t('reasoningDisabled')}</p> : null}
+      {wireRisk === undefined
+        ? null
+        : <p className="bre-effort-note">{t(wireRisk === 'thinking-disabled' ? 'defaultRiskDisabled' : 'defaultRiskQwen')}</p>}
+      {/* Unsetting says what it does: the save path below turns an
+          all-off draft over a stored declaration into the durable unset
+          marker, i.e. bare provider-default requests (the relay-compat
+          mode of issue #2). Never-declared rows map to keep, so the hint
+          stays hidden there exactly as the write does. */}
+      {buildIntent(draft) === undefined && initialEfforts !== undefined
+        ? <p className="bre-effort-note">{t('bareHint')}</p> : null}
       {suggested !== undefined ? (
         <div className="bre-suggestion">
           <p className="bre-effort-note">

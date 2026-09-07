@@ -63,6 +63,57 @@ describe('buildAutofillPatch', () => {
     }
   })
 
+  it('backfills supportsDeveloperRole:false on declared relay models (issue #2)', () => {
+    // The one versioned exception to never-touch-declared: rows whose
+    // compat lacks the role pin on a self-hosted relay get exactly that
+    // field merged in -- the declaration itself is untouched.
+    const patch = buildAutofillPatch({
+      suiyue: {
+        api: 'openai-completions',
+        baseURL: 'https://api.suiyue.site/v1',
+        models: [{
+          id: 'glm-5.3-flash',
+          input: ['text'],
+          reasoningEfforts: { low: 'low', high: 'high', max: 'max' },
+          compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
+        }],
+      },
+    })
+    const models = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).suiyue.models
+    expect(models[0]['reasoningEfforts']).toEqual({ low: 'low', high: 'high', max: 'max' })
+    expect(models[0]['compat']).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true, supportsDeveloperRole: false })
+  })
+
+  it('backfill respects explicit values, bare rows, markers, and official hosts', () => {
+    // Explicit true stays true; false rows, unset markers, and official
+    // bases are never touched -- together they yield no patch at all.
+    const quiet = buildAutofillPatch({
+      suiyue: {
+        api: 'openai-completions',
+        baseURL: 'https://api.suiyue.site/v1',
+        models: [
+          { id: 'a', input: ['text'], reasoningEfforts: { high: 'high' }, compat: { thinkingFormat: 'zai', supportsDeveloperRole: true } },
+          { id: 'b', input: ['text'], reasoningEfforts: false },
+          { id: 'c', reasoningEffortsUnset: true },
+        ],
+      },
+    })
+    expect(quiet).toBeUndefined()
+    const official = buildAutofillPatch({
+      zhipu: {
+        api: 'openai-completions',
+        baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+        models: [{
+          id: 'glm-5.3-flash',
+          input: ['text'],
+          reasoningEfforts: { low: 'low', high: 'high', max: 'max' },
+          compat: { thinkingFormat: 'zai', supportsReasoningEffort: true },
+        }],
+      },
+    })
+    expect(official).toBeUndefined()
+  })
+
   it('returns undefined when nothing needs filling', () => {
     const allDeclared = {
       route: { models: [{ id: 'a', reasoningEfforts: { high: 'high' } }] },

@@ -174,7 +174,9 @@ describe('createEditorApi', () => {
     })
     expect(reply.ok).toBe(true)
     if (reply.ok) {
-      expect(reply.suggestion.compat).toEqual({ thinkingFormat: 'deepseek', supportsReasoningEffort: true })
+      // gw.example.com is a self-hosted relay: the role pin rides along,
+      // and the host fill writes these same bytes (parity holds).
+      expect(reply.suggestion.compat).toEqual({ thinkingFormat: 'deepseek', supportsReasoningEffort: true, supportsDeveloperRole: false })
     }
   })
 
