@@ -65,6 +65,14 @@ export function inputOf(models: Record<string, unknown>[], modelId: string): Inp
   return (members.length > 0 ? members : undefined) as InputModalities | undefined
 }
 
+/** The stored compat block of one model in a route's models (unvalidated passthrough). */
+export function compatOf(models: Record<string, unknown>[], modelId: string): CompatSuggestion | undefined {
+  const entry = models.find(model => model['id'] === modelId)
+  const compat = entry?.['compat']
+  if (!isRecord(compat)) return undefined
+  return { ...(compat as CompatSuggestion) }
+}
+
 /** The display name of one model in a route's models. */
 export function nameOf(models: Record<string, unknown>[], modelId: string): string | undefined {
   const entry = models.find(model => model['id'] === modelId)
@@ -164,7 +172,13 @@ export function createEditorApi(
       // describe and mutate. Re-reading and retrying with the fresh revision
       // is the same recovery the official settings form uses; anything else
       // surfaces as-is.
-      for (let attempt = 0; attempt < 2; attempt++) {
+      // Downgrade once for 0.1.2-rc.1: a `settings/rejected` refusal naming
+      // an unknown compat key means the kernel predates the 0.1.3 schema.
+      // Stripping the three 0.1.3-only keys and retrying keeps one artifact
+      // writable on both kernel lines with no version sniffing.
+      let compatForWrite = compat;
+      let downgraded = false;
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const join = await describe()
           if (join.namespace === undefined) return { ok: false, error: 'no-namespace' }
@@ -196,10 +210,14 @@ export function createEditorApi(
                 copy['reasoningEfforts'] = false
               } else {
                 copy['reasoningEfforts'] = { ...efforts }
-                // The compat belongs to the declaration: write it only when
-                // one was supplied (a hand-tuned compat already in the
-                // document survives a declaration edit that carries none).
-                if (compat !== undefined) copy['compat'] = { ...compat }
+                // The compat belongs to the declaration: merge it over the
+                // stored block so hand-tuned keys (incl. 0.1.3-only fields
+                // the suggestion never names) survive a declaration edit.
+                // A suggestion key never deletes a stored key.
+                if (compatForWrite !== undefined) {
+                  const stored = isRecord(model['compat']) ? (model['compat'] as Record<string, unknown>) : {}
+                  copy['compat'] = { ...stored, ...compatForWrite }
+                }
               }
             }
             // The modality part rides the same mutate. An omitted intent
@@ -232,6 +250,15 @@ export function createEditorApi(
             // retrying with the fresh revision is the same recovery the
             // official settings form uses; anything else surfaces as-is.
             if (attempt === 0 && response.error.code === 'settings/conflict') continue
+            const msg = response.error.message.toLowerCase()
+            const looksCompat = response.error.code === 'settings/rejected' && (msg.includes('compat') || msg.includes('thinkingtokenbudget') || msg.includes('vllmpriority') || msg.includes('supportsmaxoutput'))
+            if (!downgraded && looksCompat && compatForWrite !== undefined) {
+              const stripped: Record<string, unknown> = { ...(compatForWrite as Record<string, unknown>) }
+              for (const key of ['thinkingTokenBudgetField', 'vllmPriority', 'supportsMaxOutputTokens'] as const) delete stripped[key]
+              compatForWrite = (Object.keys(stripped).length === 0 ? undefined : stripped) as typeof compat
+              downgraded = true
+              continue
+            }
             return { ok: false, error: response.error.message }
           }
           return { ok: true }

@@ -434,3 +434,43 @@ describe('EffortEditor modality', () => {
     expect(container.querySelector('.bre-reference')).toBeNull()
   })
 })
+
+describe('EffortEditor compat controls (0.1.3)', () => {
+  it('shows budget + priority controls on openai-completions only', async () => {
+    const { container } = await renderEditor(baseProps({ routeApi: 'openai-completions' }))
+    expect(container.textContent).toContain(t('budgetFieldLabel'))
+    expect(container.textContent).toContain(t('priorityLabel'))
+    expect(container.textContent).not.toContain(t('maxOutputLabel'))
+  })
+  it('shows the max_output control on openai-responses only', async () => {
+    const { container } = await renderEditor(baseProps({ routeApi: 'openai-responses' }))
+    expect(container.textContent).toContain(t('maxOutputLabel'))
+    expect(container.textContent).not.toContain(t('budgetFieldLabel'))
+  })
+  it('shows no compat controls without a protocol', async () => {
+    const { container } = await renderEditor(baseProps({}))
+    expect(container.textContent).not.toContain(t('budgetFieldLabel'))
+    expect(container.textContent).not.toContain(t('maxOutputLabel'))
+  })
+  it('flags the legacy alias for migration', async () => {
+    const { container } = await renderEditor(baseProps({
+      routeApi: 'openai-completions',
+      compat: { supportsThinkingTokenBudget: true },
+    }))
+    expect(container.textContent).toContain(t('aliasMigrated'))
+  })
+  it('writes the compat draft alongside the ladder', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({
+      api,
+      routeApi: 'openai-completions',
+      efforts: { high: 'high' },
+      compat: { thinkingTokenBudgetField: 'thinking_budget' },
+    }))
+    await act(async () => { checkboxes(container)[2]!.click() })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(api.writeEfforts).toHaveBeenCalled()
+    const compat = (api.writeEfforts.mock.calls[0] as unknown[])[3] as Record<string, unknown>
+    expect(compat).toMatchObject({ thinkingTokenBudgetField: 'thinking_budget' })
+  })
+})

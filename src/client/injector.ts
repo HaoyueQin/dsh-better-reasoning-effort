@@ -30,7 +30,7 @@ import { INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../constants.js'
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../knowledge.js'
 import { modelsOf, routeFactsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
-import { createEditorApi, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
+import { compatOf, createEditorApi, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
 import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
@@ -135,6 +135,8 @@ export interface EditorMountProps {
   efforts?: false | ReasoningEfforts
   /** The model's current input-modality declaration. */
   input?: InputModalities
+  /** The model's stored compat block (passthrough; the editor merges suggestions over it). */
+  compat?: CompatSuggestion
   /** Row ordinal among the models found in this scan (for aria labels). */
   index: number
   /** True while the row is unsaved (a create card's draft route, or a new
@@ -430,6 +432,14 @@ function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
     && a.staged === b.staged
     && sameEfforts(a.efforts, b.efforts)
     && sameInput(a.input, b.input)
+    && sameCompat(a.compat, b.compat)
+}
+
+/** Semantic equality of two compat blocks (key-order-insensitive). */
+function sameCompat(a: CompatSuggestion | undefined, b: CompatSuggestion | undefined): boolean {
+  if (a === b) return true
+  if (a === undefined || b === undefined) return false
+  return JSON.stringify({ ...a }, Object.keys({ ...a, ...b }).sort()) === JSON.stringify({ ...b }, Object.keys({ ...a, ...b }).sort())
 }
 
 /** Semantic equality of two modality declarations (order-insensitive). */
@@ -636,6 +646,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       const input = staged
         ? state.pending.get(route)?.get(target.modelId)?.input
         : inputOf(models, target.modelId)
+      const compat = staged
+        ? state.pending.get(route)?.get(target.modelId)?.compat
+        : compatOf(models, target.modelId)
       // An unsaved row has no stored declaration to name it, but the user may
       // have typed a Display name on the row already -- suggestion inference
       // and knowledge-base matching lose that signal without it. The read is
@@ -663,6 +676,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ...modelName === undefined ? {} : { modelName },
         ...efforts === undefined ? {} : { efforts },
         ...input === undefined ? {} : { input },
+        ...compat === undefined ? {} : { compat },
         index,
         staged,
         api: createEditorApi(deps.api, undefined, (r, m, e, c, i) => { stageEffortsInto(state, r, m, e, c, i) }),

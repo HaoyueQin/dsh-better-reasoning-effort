@@ -51,6 +51,10 @@ export type ReasoningEfforts = Partial<Record<ThinkingLevel, WireSpelling>>
 /** A full input-modality declaration value: the modalities a model accepts. */
 export type InputModalities = readonly InputModality[]
 
+/** Reasoning-budget request-field spellings pi-ai 0.1.3 accepts (0.1.2-rc.1 rejects them). */
+export const THINKING_TOKEN_BUDGET_FIELDS = ['thinking_token_budget', 'thinking_budget', 'thinking_budget_tokens'] as const
+export type ThinkingTokenBudgetField = (typeof THINKING_TOKEN_BUDGET_FIELDS)[number]
+
 /** The compat fields this plugin may suggest (a subset of the profile schema). */
 export interface CompatSuggestion {
   /** Wire format the endpoint speaks; omitted when unknown. */
@@ -65,7 +69,13 @@ export interface CompatSuggestion {
    * take an effort ladder all have adaptive thinking.
    */
   forceAdaptiveThinking?: boolean
+  thinkingTokenBudgetField?: ThinkingTokenBudgetField
+  supportsThinkingTokenBudget?: boolean
+  vllmPriority?: number
+  supportsMaxOutputTokens?: boolean
 }
+
+export const NEW_COMPAT_KEYS = ['thinkingTokenBudgetField', 'vllmPriority', 'supportsMaxOutputTokens'] as const
 
 /** One knowledge-base entry: which model families it matches and what to declare. */
 export interface KnowledgeEntry {
@@ -1192,10 +1202,69 @@ export function inferProtocol(route: RouteFacts): string {
 const COMPAT_CAPABLE_PROTOCOL = 'openai-completions'
 const ANTHROPIC_PROTOCOL = 'anthropic-messages'
 
+/** Whether a baseURL names a self-hosted endpoint (loopback, private LAN, .local, custom port). */
+export function isSelfHostedEndpoint(baseURL: string | undefined): boolean {
+  if (baseURL === undefined || baseURL.length === 0) return false
+  let host = ''
+  try {
+    host = new URL(baseURL).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+  if (host === 'localhost' || host === '::1' || host.endsWith('.local') || host.endsWith('.internal')) return true
+  if (/^(127\.|10\.|192\.168\.)/.test(host)) return true
+  if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(host)) return true
+  return host.includes(':')
+}
+
+/** Strip 0.1.3-only keys for a 0.1.2-rc.1 write (downgrade retry). */
+export function stripNewCompatKeys(compat: CompatSuggestion): CompatSuggestion {
+  const copy = { ...compat }
+  for (const key of NEW_COMPAT_KEYS) delete (copy as Record<string, unknown>)[key]
+  return copy
+}
+
+/** Drop catalog-withheld keys pi-ai never accepts from a profile (defensive). */
+export function sanitizeCompatForProtocol(compat: CompatSuggestion, api: string): CompatSuggestion | undefined {
+  const norm = normalize(api)
+  const copy: Record<string, unknown> = { ...compat }
+  delete copy['supportsMidConvoEffort']
+  delete copy['allowedFallbackModels']
+  if (norm === ANTHROPIC_PROTOCOL) {
+    for (const key of ['thinkingFormat', 'supportsReasoningEffort', 'thinkingTokenBudgetField', 'supportsThinkingTokenBudget', 'vllmPriority', 'supportsMaxOutputTokens'] as const) delete copy[key]
+    if (copy['forceAdaptiveThinking'] === undefined) return undefined
+    return { forceAdaptiveThinking: copy['forceAdaptiveThinking'] as boolean }
+  }
+  if (norm === 'openai-responses') {
+    for (const key of ['thinkingFormat', 'supportsReasoningEffort', 'thinkingTokenBudgetField', 'supportsThinkingTokenBudget', 'vllmPriority'] as const) delete copy[key]
+    if (copy['supportsMaxOutputTokens'] === undefined) return undefined
+    return { supportsMaxOutputTokens: copy['supportsMaxOutputTokens'] as boolean }
+  }
+  if (norm !== COMPAT_CAPABLE_PROTOCOL) return undefined
+  delete copy['forceAdaptiveThinking']
+  delete copy['supportsMaxOutputTokens']
+  return Object.keys(copy).length === 0 ? undefined : (copy as CompatSuggestion)
+}
+
+/** Migrate a stored alias to the explicit 0.1.3 field (explicit wins upstream). */
+export function migrateBudgetAlias(compat: Record<string, unknown>): Record<string, unknown> {
+  if (compat['thinkingTokenBudgetField'] !== undefined || compat['supportsThinkingTokenBudget'] !== true) return compat
+  return { ...compat, thinkingTokenBudgetField: 'thinking_token_budget' }
+}
+
 /** Gate a compat block against the route's real protocol. */
 function compatForRoute(entry: KnowledgeEntry, route: RouteFacts): CompatSuggestion | undefined {
   const api = normalize(route.api)
-  if (api === COMPAT_CAPABLE_PROTOCOL) return entry.compat
+  if (api === COMPAT_CAPABLE_PROTOCOL) {
+    let compat = entry.compat
+    if (compat !== undefined) compat = sanitizeCompatForProtocol(compat, api) ?? undefined
+    if (compat === undefined && !isSelfHostedEndpoint(route.baseURL)) return undefined
+    if (compat === undefined) return { thinkingTokenBudgetField: 'thinking_token_budget' }
+    if (compat.thinkingTokenBudgetField === undefined && compat.supportsThinkingTokenBudget !== true && isSelfHostedEndpoint(route.baseURL)) {
+      return { ...compat, thinkingTokenBudgetField: 'thinking_token_budget' }
+    }
+    return compat
+  }
   if (api === ANTHROPIC_PROTOCOL && entry.anthropicAdaptive === true) {
     return { forceAdaptiveThinking: true }
   }
@@ -1362,9 +1431,12 @@ export function suggestEfforts(
   // level set and spellings are inferred, so the user should double-check.
   const protocol = inferProtocol(route)
   const efforts = PROTOCOL_INFERENCE[protocol] ?? GENERIC_FALLBACK
-  const compat = normalize(route.api) === COMPAT_CAPABLE_PROTOCOL
+  const compatBase: CompatSuggestion | undefined = normalize(route.api) === COMPAT_CAPABLE_PROTOCOL
     ? { thinkingFormat: 'openai', supportsReasoningEffort: true }
     : undefined
+  const compat = compatBase !== undefined && isSelfHostedEndpoint(route.baseURL)
+    ? { ...compatBase, thinkingTokenBudgetField: 'thinking_token_budget' as const }
+    : compatBase
   if (endpoint?.reasoning === true) {
     return {
       efforts: { ...ENDPOINT_CONFIRMED_LADDER },

@@ -74,6 +74,8 @@ export interface EffortEditorProps {
   efforts?: false | ReasoningEfforts
   /** The model's current input-modality declaration. */
   input?: InputModalities
+  /** The model's stored compat block (passthrough; suggestions merge over it). */
+  compat?: CompatSuggestion
   /** Model row index (for aria labels). */
   index: number
   /**
@@ -123,7 +125,7 @@ function sameModality(draft: DraftModality, stored: InputModalities | undefined)
  * checkboxes, the modality toggle, the auto-adapt action, and the
  * apply/reset actions that own both sections.
  */
-export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
+export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [modality, setModality] = useState<DraftModality>(() => modalityFrom(initialInput))
   const [busy, setBusy] = useState(false)
@@ -141,6 +143,10 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   // Modality + capacity parts of the applied suggestion. Capacities are
   // DISPLAY-ONLY: they render in the reference block and never touch the
   // official capacity inputs.
+  const [budgetField, setBudgetField] = useState<string>(() => initialCompat?.thinkingTokenBudgetField ?? '')
+  const [priorityText, setPriorityText] = useState<string>(() => initialCompat?.vllmPriority === undefined ? '' : String(initialCompat.vllmPriority))
+  const [maxOutput, setMaxOutput] = useState<string>(() => initialCompat?.supportsMaxOutputTokens === undefined ? '' : String(initialCompat.supportsMaxOutputTokens))
+  const previousCompat = useRef<CompatSuggestion | undefined>(initialCompat)
   const [suggestedInput, setSuggestedInput] = useState<InputModalities | undefined>(undefined)
   const [suggestedInputSource, setSuggestedInputSource] = useState<InputSource | undefined>(undefined)
   const [referenceContext, setReferenceContext] = useState<number | undefined>(undefined)
@@ -164,10 +170,36 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       // draft -- same contract as the level grid above.
       if (!dirtyRef.current) setModality(modalityFrom(initialInput))
     }
-  }, [initialEfforts, initialInput])
+    if (JSON.stringify(previousCompat.current ?? null) !== JSON.stringify(initialCompat ?? null)) {
+      previousCompat.current = initialCompat
+      if (!dirtyRef.current) {
+        setBudgetField(initialCompat?.thinkingTokenBudgetField ?? '')
+        setPriorityText(initialCompat?.vllmPriority === undefined ? '' : String(initialCompat.vllmPriority))
+        setMaxOutput(initialCompat?.supportsMaxOutputTokens === undefined ? '' : String(initialCompat.supportsMaxOutputTokens))
+      }
+    }
+  }, [initialEfforts, initialInput, initialCompat])
 
+  const compatDraft = (): CompatSuggestion | undefined => {
+    const out: CompatSuggestion = {}
+    if (budgetField !== '') out.thinkingTokenBudgetField = budgetField as CompatSuggestion['thinkingTokenBudgetField']
+    const pruned = priorityText.trim()
+    if (pruned !== '' && /^-?\d+$/.test(pruned)) out.vllmPriority = Number.parseInt(pruned, 10)
+    if (maxOutput === 'true') out.supportsMaxOutputTokens = true
+    else if (maxOutput === 'false') out.supportsMaxOutputTokens = false
+    return Object.keys(out).length === 0 ? undefined : out
+  }
+  const compatChanged = (): boolean => {
+    const draftOut = compatDraft()
+    return JSON.stringify(draftOut ?? null) !== JSON.stringify({
+      ...(initialCompat?.thinkingTokenBudgetField === undefined ? {} : { thinkingTokenBudgetField: initialCompat.thinkingTokenBudgetField }),
+      ...(initialCompat?.vllmPriority === undefined ? {} : { vllmPriority: initialCompat.vllmPriority }),
+      ...(initialCompat?.supportsMaxOutputTokens === undefined ? {} : { supportsMaxOutputTokens: initialCompat.supportsMaxOutputTokens }),
+    })
+  }
   const changed = !sameEfforts(buildIntent(draft), initialEfforts)
     || !sameModality(modality, initialInput)
+    || compatChanged()
 
   const markDirty = (): void => {
     dirtyRef.current = true
@@ -275,6 +307,12 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     // no-op, NOT an unset -- sending undefined here would stamp the durable
     // unset marker onto a never-declared model and silence host auto-fill.
     const effortsIntent = next === undefined && initialEfforts === undefined ? 'keep' as const : next
+    const manualCompat = compatDraft()
+    const baseCompat = appliedCompatRef.current
+    let writeCompat = baseCompat !== undefined ? { ...baseCompat, ...(manualCompat ?? {}) } : manualCompat
+    if (initialCompat?.supportsThinkingTokenBudget === true && initialCompat?.thinkingTokenBudgetField === undefined && writeCompat?.thinkingTokenBudgetField === undefined && (routeApi ?? '').toLowerCase() === 'openai-completions') {
+      writeCompat = { ...(writeCompat ?? {}), thinkingTokenBudgetField: 'thinking_token_budget' }
+    }
     setBusy(true)
     setMessage(undefined)
     try {
@@ -282,12 +320,12 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       // route id; the settings write happens when the injector sees the
       // saved route appear.
       if (staged) {
-        api.stageEfforts(route, modelId, effortsIntent, appliedCompatRef.current, nextInput ?? undefined)
+        api.stageEfforts(route, modelId, effortsIntent, writeCompat, nextInput ?? undefined)
         dirtyRef.current = false
         setMessage({ kind: 'success', text: t('staged') })
         return
       }
-      const reply = await api.writeEfforts(route, modelId, effortsIntent, appliedCompatRef.current, nextInput)
+      const reply = await api.writeEfforts(route, modelId, effortsIntent, writeCompat, nextInput)
       if (!reply.ok) {
         setMessage({
           kind: 'error',
@@ -315,6 +353,9 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     dirtyRef.current = false
     setDraft(draftFrom(initialEfforts))
     setModality(modalityFrom(initialInput))
+    setBudgetField(initialCompat?.thinkingTokenBudgetField ?? '')
+    setPriorityText(initialCompat?.vllmPriority === undefined ? '' : String(initialCompat.vllmPriority))
+    setMaxOutput(initialCompat?.supportsMaxOutputTokens === undefined ? '' : String(initialCompat.supportsMaxOutputTokens))
     setSuggested(undefined)
     setSuggestedSource('')
     setSuggestedConfidence('low')
@@ -401,6 +442,58 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         </label>
         {!modality.declared ? <p className="bre-modality-note">{t('modalityInherit')}</p> : null}
       </div>
+      {(routeApi ?? '').toLowerCase() === 'openai-completions' ? (
+        <div className="bre-compat">
+          <span className="bre-effort-title">{t('compatTitle')}</span>
+          <label className="bre-modality-row">
+            <span className="bre-effort-level">{t('budgetFieldLabel')}</span>
+            <select
+              disabled={disabled}
+              aria-label={t('budgetFieldLabel') + ' ' + String(index + 1)}
+              value={budgetField}
+              onChange={(event) => { markDirty(); setBudgetField(event.target.value); setMessage(undefined) }}
+            >
+              <option value="">{t('budgetUnset')}</option>
+              <option value="thinking_token_budget">thinking_token_budget</option>
+              <option value="thinking_budget">thinking_budget</option>
+              <option value="thinking_budget_tokens">thinking_budget_tokens</option>
+            </select>
+          </label>
+          <label className="bre-modality-row">
+            <span className="bre-effort-level">{t('priorityLabel')}</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              className="bre-effort-wire"
+              value={priorityText}
+              disabled={disabled}
+              placeholder={t('priorityPlaceholder')}
+              aria-label={t('priorityLabel') + ' ' + String(index + 1)}
+              onChange={(event) => { markDirty(); setPriorityText(event.target.value); setMessage(undefined) }}
+            />
+          </label>
+          {priorityText.trim() !== '' && !/^-?\d+$/.test(priorityText.trim()) ? <p className="bre-effort-note">{t('priorityInvalid')}</p> : null}
+          {initialCompat?.supportsThinkingTokenBudget === true && initialCompat?.thinkingTokenBudgetField === undefined ? <p className="bre-effort-note">{t('aliasMigrated')}</p> : null}
+        </div>
+      ) : null}
+      {(routeApi ?? '').toLowerCase() === 'openai-responses' ? (
+        <div className="bre-compat">
+          <span className="bre-effort-title">{t('compatTitle')}</span>
+          <label className="bre-modality-row">
+            <span className="bre-effort-level">{t('maxOutputLabel')}</span>
+            <select
+              disabled={disabled}
+              aria-label={t('maxOutputLabel') + ' ' + String(index + 1)}
+              value={maxOutput}
+              onChange={(event) => { markDirty(); setMaxOutput(event.target.value); setMessage(undefined) }}
+            >
+              <option value="">{t('maxOutputUnset')}</option>
+              <option value="true">{t('maxOutputOn')}</option>
+              <option value="false">{t('maxOutputOff')}</option>
+            </select>
+          </label>
+        </div>
+      ) : null}
       {staged ? <p className="bre-effort-note">{t('stagedHint')}</p> : null}
       {initialEfforts === false ? <p className="bre-effort-note">{t('reasoningDisabled')}</p> : null}
       {suggested !== undefined ? (

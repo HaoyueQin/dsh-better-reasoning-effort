@@ -114,7 +114,10 @@ export function buildAutofillPatch(
       if (!effortsDeclared && fillEfforts) {
         touched = true
         fill['reasoningEfforts'] = suggestion.efforts as JsonObject
-        if (suggestion.compat !== undefined) fill['compat'] = suggestion.compat as JsonObject
+        if (suggestion.compat !== undefined) {
+          const stored = isRecord(model['compat']) ? (model['compat'] as JsonObject) : {}
+          fill['compat'] = { ...stored, ...(suggestion.compat as JsonObject) }
+        }
       }
       if (!inputDeclared && fillModalities && suggestion.input !== undefined) {
         touched = true
@@ -130,6 +133,36 @@ export function buildAutofillPatch(
     if (changed) patchRoutes[route] = { models: nextModels }
   }
   return Object.keys(patchRoutes).length === 0 ? undefined : { providers: patchRoutes }
+}
+
+/** Strip 0.1.3-only compat keys from an autofill patch (0.1.2-rc.1 downgrade). */
+function stripNewCompatKeysDeep(patch: JsonObject): JsonObject | undefined {
+  const providers = isRecord(patch['providers']) ? (patch['providers'] as JsonObject) : undefined
+  if (providers === undefined) return undefined
+  let strippedAny = false
+  const nextProviders: JsonObject = {}
+  for (const [route, profile] of Object.entries(providers)) {
+    if (!isRecord(profile) || !Array.isArray(profile['models'])) {
+      nextProviders[route] = profile as JsonObject
+      continue
+    }
+    nextProviders[route] = {
+      ...(profile as JsonObject),
+      models: (profile['models'] as JsonObject[]).map(model => {
+        if (!isRecord(model) || !isRecord(model['compat'])) return model
+        const compat = { ...(model['compat'] as JsonObject) }
+        for (const key of ['thinkingTokenBudgetField', 'vllmPriority', 'supportsMaxOutputTokens'] as const) {
+          if (key in compat) {
+            delete compat[key]
+            strippedAny = true
+          }
+        }
+        return { ...model, compat }
+      }),
+    }
+  }
+  if (!strippedAny) return undefined
+  return { providers: nextProviders }
 }
 
 /**
@@ -450,15 +483,24 @@ export function apply(ctx: Context, config: Config = {}): void {
       const user = descriptor?.user
       const userProviders = isRecord(user) && isRecord(user['providers']) ? user['providers'] : undefined
       if (userProviders === undefined) return true
-      const patch = buildAutofillPatch(userProviders, () => true, { modalities: resolved.modalityAutofill })
-      if (patch === undefined) return true
+      const fullPatch = buildAutofillPatch(userProviders, () => true, { modalities: resolved.modalityAutofill })
+      if (fullPatch === undefined) return true
       // Optimistic lock: only write while the namespace has not moved past
       // this read. The fill is a background suggestion — losing the race to a
       // user edit is fine, the next `settings/updated` retries it. Without
       // the lock, every fill bumps the revision and invalidates the revision
       // the settings page read, surfacing as SettingsConflictError on the
       // next user save.
-      await settings.update(PI_NS, patch, descriptor?.revision)
+      try {
+        await settings.update(PI_NS, fullPatch, descriptor?.revision)
+      } catch (error) {
+        const msg = String(error instanceof Error ? error.message : error).toLowerCase()
+        const looksCompat = msg.includes('compat') || msg.includes('thinkingtokenbudget') || msg.includes('vllmpriority') || msg.includes('supportsmaxoutput')
+        if (!looksCompat) throw error
+        const stripped = stripNewCompatKeysDeep(fullPatch)
+        if (stripped === undefined) throw error
+        await settings.update(PI_NS, stripped, settings.describe().find(entry => entry.ns === PI_NS)?.revision)
+      }
       return true
     }
 
