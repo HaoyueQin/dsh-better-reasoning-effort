@@ -1,0 +1,66 @@
+name: Sync to Gitee
+
+# GitHub 为主仓，Gitee 只读镜像：push 代码自动镜像，发布 Release 自动同步。
+# 需要在 GitHub 仓库 Settings > Secrets and variables > Actions 中添加：
+#   GITEE_PRIVATE_TOKEN = Gitee 私人令牌（需 projects + issues + pull_requests 权限）
+
+on:
+  push:
+    branches: [master]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  mirror-code:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push branches and tags to Gitee
+        run: |
+          git remote add gitee "https://oauth2:${GITEE_PRIVATE_TOKEN}@gitee.com/${{ github.repository }}.git"
+          git push gitee --all
+          git push gitee --tags
+        env:
+          GITEE_PRIVATE_TOKEN: ${{ secrets.GITEE_PRIVATE_TOKEN }}
+
+  sync-release:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push tags to Gitee first
+        run: |
+          git remote add gitee "https://oauth2:${GITEE_PRIVATE_TOKEN}@gitee.com/${{ github.repository }}.git"
+          git push gitee --all
+          git push gitee --tags
+        env:
+          GITEE_PRIVATE_TOKEN: ${{ secrets.GITEE_PRIVATE_TOKEN }}
+      - name: Download release assets
+        run: |
+          mkdir -p assets
+          gh release download "${{ github.event.release.tag_name }}" --dir assets --repo "${{ github.repository }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Create Gitee release and upload assets
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          OWNER_REPO="${{ github.repository }}"
+          NOTES_FILE="$(mktemp)"
+          printf '%s' "${{ github.event.release.body }}" > "$NOTES_FILE"
+          PAYLOAD="$(jq -n --arg tag "$TAG" --arg body "$(cat "$NOTES_FILE")" '{tag_name:$tag,name:$tag,body:$body,target_commitish:$tag,prerelease:false}')"
+          RID="$(curl -sS -X POST "https://gitee.com/api/v5/repos/${OWNER_REPO}/releases?access_token=${GITEE_PRIVATE_TOKEN}" -H 'Content-Type: application/json' -d "$PAYLOAD" | jq -r .id)"
+          echo "Gitee release id: $RID"
+          for f in assets/*; do
+            [ -e "$f" ] || continue
+            echo "Uploading $f"
+            curl -sS -X POST "https://gitee.com/api/v5/repos/${OWNER_REPO}/releases/${RID}/attach_files?access_token=${GITEE_PRIVATE_TOKEN}" -F "file=@$f"
+            echo
+          done
+        env:
+          GITEE_PRIVATE_TOKEN: ${{ secrets.GITEE_PRIVATE_TOKEN }}
