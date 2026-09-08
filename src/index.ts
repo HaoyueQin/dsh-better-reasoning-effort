@@ -26,7 +26,9 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
 import { INPUT_UNSET_MARKER, PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
-import { suggestEfforts } from './knowledge.js'
+import { isSelfHostedRelay, suggestEfforts } from './knowledge.js'
+import type { ReasoningEfforts } from './knowledge.js'
+import { resolveGuardEffort } from './guard.js'
 import { isRecord, routeFactsOf } from './shared.js'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
@@ -88,7 +90,16 @@ export function buildAutofillPatch(
       const effortsDeclared = model['reasoningEfforts'] !== undefined || model[UNSET_MARKER] === true
       const inputDeclared = declaresInput(model) || model[INPUT_UNSET_MARKER] === true
       if ((effortsDeclared || !fillEfforts) && (inputDeclared || !fillModalities)) {
-        nextModels.push(model)
+        // Versioned exception to never-touch-declared (issue #2): a declared
+        // ladder whose compat lacks the role pin on a self-hosted relay gets
+        // exactly that field merged in -- the declaration itself is untouched.
+        const backfilled = backfillRolePin(model, providers, route)
+        if (backfilled !== undefined) {
+          changed = true
+          nextModels.push(backfilled)
+        } else {
+          nextModels.push(model)
+        }
         continue
       }
       const id = typeof model['id'] === 'string' ? model['id'] : ''
@@ -166,6 +177,29 @@ function stripNewCompatKeysDeep(patch: JsonObject): JsonObject | undefined {
 }
 
 /**
+ * Merge the role pin into one declared model row, or refuse it.
+ *
+ * Refusals (all silent, all deliberate): the row carries no ladder dict
+ * (`false`, absent, or a deliberate-unset marker -- bare rows keep the bare
+ * wire behavior they were chosen for); its compat already names an explicit
+ * role value; or the route is not a self-hosted relay. A refusal changes
+ * nothing; an acceptance touches exactly one compat field.
+ */
+function backfillRolePin(
+  model: Record<string, unknown>,
+  providers: unknown,
+  route: string,
+): JsonObject | undefined {
+  if (!isRecord(model['reasoningEfforts'])) return undefined
+  if (model[UNSET_MARKER] === true) return undefined
+  const compat = model['compat']
+  const base: JsonObject = isRecord(compat) ? { ...compat } : {}
+  if (base['supportsDeveloperRole'] !== undefined) return undefined
+  if (!isSelfHostedRelay(routeFactsOf(providers, route))) return undefined
+  return { ...model, compat: { ...base, supportsDeveloperRole: false } }
+}
+
+/**
  * Exponential backoff for the boot fill: llm-pi-ai may register its namespace
  * well after this plugin on a slow start, and registration emits no event of
  * its own — the schedule must outlast a realistically slow profile instead of
@@ -196,6 +230,13 @@ export interface Config {
    * "try exactly once" (default [1000, 2000, 4000, 8000, 16000, 30000]).
    */
   bootRetryDelaysMs?: number[]
+  /**
+   * Rewrite effort-less calls to forced-thinking ladders into the ladder's
+   * vendor default (default true). Only the request class that today becomes
+   * `thinking: {type: disabled}` on a ladder that cannot switch thinking off
+   * is rewritten (issue #2); everything else passes through byte-identical.
+   */
+  defaultGuard?: boolean
 }
 
 /** Schemastery schema: Cordis validates the row config and fills defaults before apply(). */
@@ -204,6 +245,7 @@ export const Config: Schema<Config> = Schema.object({
   modalityAutofill: Schema.boolean().default(true),
   probeTimeoutMs: Schema.natural().min(1).default(PROBE_TIMEOUT_MS),
   bootRetryDelaysMs: Schema.array(Schema.natural().min(1)).default([...BOOT_RETRY_DELAYS_MS]),
+  defaultGuard: Schema.boolean().default(true),
 })
 
 interface CredentialsService {
@@ -446,6 +488,54 @@ function listingEntries(body: unknown): Record<string, unknown>[] | undefined {
 }
 
 /**
+ * The llm-service surface the default-guard wraps: only the two dispatch
+ * entries, typed structurally so no new dependency is needed.
+ */
+interface LlmDispatchLike {
+  prepareCall(config: Record<string, unknown>, signal?: unknown): Promise<Record<string, unknown>>
+  stream(options: Record<string, unknown>): AsyncIterable<unknown>
+}
+
+/**
+ * Fill one call config with the vendor default when it names no effort and
+ * its declared ladder cannot switch thinking off (issue #2).
+ *
+ * Reads the resolved pi-ai section (never the user layer -- this only reads).
+ * Fails open: any unreadable shape returns the config untouched, reproducing
+ * today's behavior exactly.
+ */
+function guardCallConfig(cfg: Record<string, unknown>, section: unknown): Record<string, unknown> {
+  try {
+    if (typeof cfg['reasoningEffort'] !== 'undefined') return cfg
+    const provider = cfg['provider']
+    const modelId = cfg['model']
+    if (typeof provider !== 'string' || typeof modelId !== 'string') return cfg
+    if (!isRecord(section)) return cfg
+    const providers = section['providers']
+    if (!isRecord(providers)) return cfg
+    const profile = providers[provider]
+    if (!isRecord(profile)) return cfg
+    const rawModels = profile['models']
+    if (!Array.isArray(rawModels)) return cfg
+    const row = rawModels.find((candidate): candidate is Record<string, unknown> =>
+      isRecord(candidate) && candidate['id'] === modelId)
+    if (row === undefined || !isRecord(row['reasoningEfforts'])) return cfg
+    const profileDefault = typeof profile['reasoning'] === 'string' ? profile['reasoning'] : undefined
+    const facts = routeFactsOf({ providers: { [provider]: profile } }, provider)
+    const suggestion = suggestEfforts(modelId, facts)
+    const level = resolveGuardEffort({
+      declared: row['reasoningEfforts'] as ReasoningEfforts,
+      vendorDefault: suggestion.defaultEffort,
+      profileDefault,
+      requested: undefined,
+    })
+    return level === undefined ? cfg : { ...cfg, reasoningEffort: level }
+  } catch {
+    return cfg
+  }
+}
+
+/**
  * Apply the plugin: autofill undeclared models on boot and after every commit
  * that touches the pi-ai namespace.
  * @param ctx - host context.
@@ -457,6 +547,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     modalityAutofill: config.modalityAutofill !== false,
     probeTimeoutMs: config.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
     bootRetryDelaysMs: config.bootRetryDelaysMs ?? [...BOOT_RETRY_DELAYS_MS],
+    defaultGuard: config.defaultGuard !== false,
   }
 
   // Module-level `inject` already guarantees the settings service; using it
@@ -534,6 +625,28 @@ export function apply(ctx: Context, config: Config = {}): void {
     // Then after every commit that touches the pi-ai namespace.
     ctx.on('settings/updated', (ns) => {
       if (ns === PI_NS) void autofillOnce().catch(logFailure)
+    })
+  }
+
+  // Default-guard (issue #2): wrap the llm dispatch entries so effort-less
+  // calls to forced-thinking ladders ride the ladder's vendor default instead
+  // of the wire's off-equivalent. Deferred inject: the wrap lands whenever
+  // the llm service registers, and ctx.effect restores the originals on
+  // dispose (disable/HMR leaves no trace).
+  if (resolved.defaultGuard) {
+    ctx.inject(['llm'], (llmCtx) => {
+      const llm = (llmCtx as unknown as { llm?: unknown }).llm as LlmDispatchLike | undefined
+      if (llm === undefined || typeof llm.prepareCall !== 'function' || typeof llm.stream !== 'function') return
+      // Unbound originals: restore assigns back the exact references, and
+      // dispatch keeps the service as receiver through .call.
+      const origPrepare = llm.prepareCall
+      const origStream = llm.stream
+      llm.prepareCall = (callConfig, signal) => origPrepare.call(llm, guardCallConfig(callConfig, piSection()), signal)
+      llm.stream = (options) => origStream.call(llm, guardCallConfig(options, piSection()))
+      ctx.effect(() => () => {
+        llm.prepareCall = origPrepare
+        llm.stream = origStream
+      }, 'dsh-better-reasoning-effort: default-guard')
     })
   }
 

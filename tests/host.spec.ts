@@ -48,14 +48,16 @@ const hostCleanups: Array<() => void> = []
 /** Minimal cordis context face capturing what apply() touches. */
 function fakeHost(
   settings: ReturnType<typeof fakeSettings>,
-  options?: { credentials?: { resolve(ref: string): Promise<{ value?: string } | undefined> } },
+  options?: { credentials?: { resolve(ref: string): Promise<{ value?: string } | undefined> }; llm?: unknown },
 ): {
   ctx: HostCtx
   emitUpdated: (ns: unknown) => void
   routes: Map<string, (req: unknown, res: unknown) => Promise<void>>
+  dispose: () => void
 } {
   const listeners: Array<(ns: unknown) => void> = []
   const routes = new Map<string, (req: unknown, res: unknown) => Promise<void>>()
+  const disposers: Array<() => void> = []
   const ctx = {
     // apply reads the settings service directly (module-level inject already
     // guarantees it); the inner inject remains for webServer only.
@@ -63,6 +65,7 @@ function fakeHost(
     inject(deps: string[], cb: (injected: Record<string, unknown>) => void): void {
       const injected: Record<string, unknown> = {}
       if (deps.includes('settings')) injected['settings'] = settings
+      if (deps.includes('llm') && options?.llm !== undefined) injected['llm'] = options.llm
       if (deps.includes('webServer')) {
         injected['webServer'] = {
           register(route: { path: string; handler: (req: unknown, res: unknown) => Promise<void> }): () => void {
@@ -78,7 +81,10 @@ function fakeHost(
       // retry timers must be cleared with the test instead of firing into the
       // next test's world (previously the cleanup was silently dropped).
       const disposer = setup()
-      if (typeof disposer === 'function') hostCleanups.push(disposer)
+      if (typeof disposer === 'function') {
+        hostCleanups.push(disposer)
+        disposers.push(disposer)
+      }
     },
     on(event: string, cb: (ns: unknown) => void): void {
       if (event === 'settings/updated') listeners.push(cb)
@@ -87,7 +93,13 @@ function fakeHost(
       return name === 'credentials' ? options?.credentials : undefined
     },
   } as unknown as HostCtx
-  return { ctx, emitUpdated: (ns) => { for (const listener of listeners) listener(ns) }, routes }
+  // dispose() is idempotent with the afterEach drain (restores assign the
+  // same originals twice); it lets one test assert the uninstall-clean
+  // contract without waiting for teardown.
+  const dispose = (): void => {
+    for (const disposer of disposers.splice(0)) disposer()
+  }
+  return { ctx, emitUpdated: (ns) => { for (const listener of listeners) listener(ns) }, routes, dispose }
 }
 
 const PROVIDERS = {
@@ -734,5 +746,126 @@ describe('apply() probe route', () => {
       // The marker survives: the absence stays a decision.
       expect(model.inputUnset).toBe(true)
     })
+  })
+})
+
+describe('apply() default-guard', () => {
+  const GUARD_PROVIDERS = {
+    suiyue: {
+      api: 'openai-completions',
+      baseURL: 'https://api.suiyue.site/v1',
+      models: [
+        { id: 'glm-5.3-flash', reasoningEfforts: { low: 'low', high: 'high', max: 'max' } },
+        { id: 'qwen3.8-flash', reasoningEfforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' } },
+      ],
+    },
+  }
+
+  function fakeLlm(): {
+    svc: {
+      prepareCall(config: Record<string, unknown>): Promise<Record<string, unknown>>
+      stream(options: Record<string, unknown>): AsyncIterable<unknown>
+    }
+    prepared: Array<Record<string, unknown>>
+    streamed: Array<Record<string, unknown>>
+  } {
+    const prepared: Array<Record<string, unknown>> = []
+    const streamed: Array<Record<string, unknown>> = []
+    return {
+      svc: {
+        async prepareCall(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+          prepared.push(config)
+          return { ...config }
+        },
+        stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+          streamed.push(options)
+          return (async function* (): AsyncGenerator<unknown> {})()
+        },
+      },
+      prepared,
+      streamed,
+    }
+  }
+
+  it('injects the vendor default into effort-less calls on forced ladders', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    // The model-pro test shape: no effort named (issue #2).
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash', maxTokens: 16, temperature: 0 })
+    expect(llm.prepared[0]).toMatchObject({
+      provider: 'suiyue',
+      model: 'glm-5.3-flash',
+      maxTokens: 16,
+      temperature: 0,
+      reasoningEffort: 'max',
+    })
+    llm.svc.stream({ provider: 'suiyue', model: 'glm-5.3-flash', maxTokens: 16, messages: [] })
+    expect(llm.streamed[0]).toMatchObject({ reasoningEffort: 'max' })
+  })
+
+  it('leaves explicit selections and off-capable ladders alone', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash', reasoningEffort: 'low' })
+    expect(llm.prepared[0]).toMatchObject({ reasoningEffort: 'low' })
+    // Qwen carries off:null: Default must stay Default.
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'qwen3.8-flash' })
+    expect('reasoningEffort' in llm.prepared[1]).toBe(false)
+    // Unknown routes/models pass through (fail open).
+    await llm.svc.prepareCall({ provider: 'nope', model: 'glm-5.3-flash' })
+    expect('reasoningEffort' in llm.prepared[2]).toBe(false)
+  })
+
+  it('yields to a route-level reasoning default', async () => {
+    const settings = fakeSettings({
+      suiyue: {
+        api: 'openai-completions',
+        baseURL: 'https://api.suiyue.site/v1',
+        reasoning: 'low',
+        models: [{ id: 'glm-5.3-flash', reasoningEfforts: { low: 'low', high: 'high', max: 'max' } }],
+      },
+    })
+    const llm = fakeLlm()
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    // DSH core materializes profile.reasoning itself; the guard must not
+    // clobber the deployment's explicit choice with the vendor default.
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    expect('reasoningEffort' in llm.prepared[0]).toBe(false)
+  })
+
+  it('stays off the wire when defaultGuard is false', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const origPrepare = llm.svc.prepareCall
+    const origStream = llm.svc.stream
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { defaultGuard: false })
+    expect(llm.svc.prepareCall).toBe(origPrepare)
+    expect(llm.svc.stream).toBe(origStream)
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    expect('reasoningEffort' in llm.prepared[0]).toBe(false)
+  })
+
+  it('restores the originals on dispose (uninstall-clean)', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const origPrepare = llm.svc.prepareCall
+    const origStream = llm.svc.stream
+    const { ctx, dispose } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    expect(llm.svc.prepareCall).not.toBe(origPrepare)
+    dispose()
+    expect(llm.svc.prepareCall).toBe(origPrepare)
+    expect(llm.svc.stream).toBe(origStream)
   })
 })

@@ -62,6 +62,13 @@ export interface CompatSuggestion {
   /** Whether the endpoint accepts a reasoning-effort-style parameter. */
   supportsReasoningEffort?: boolean
   /**
+   * Whether pi-ai may rewrite the system prompt to the developer role for
+   * reasoning models. Self-hosted relays get an explicit false (their
+   * upstreams reject role:developer); official endpoints keep pi-ai's own
+   * detection default by omitting the field.
+   */
+  supportsDeveloperRole?: boolean
+  /**
    * Anthropic-messages protocol only: force adaptive thinking so the
    * declared efforts dispatch as `output_config.effort` instead of falling
    * into the older budget-based thinking path. pi-ai offers this field on
@@ -1271,6 +1278,82 @@ function compatForRoute(entry: KnowledgeEntry, route: RouteFacts): CompatSuggest
   return undefined
 }
 
+/**
+ * Official endpoint roots where pi-ai may send role:developer, so no pin is
+ * needed. Matching is a DNS-suffix match, so multi-level roots (e.g.
+ * openai.azure.com) work while a relay merely hosted on the same cloud
+ * (e.g. *.cloudapp.azure.com) still counts as self-hosted.
+ *
+ * Deliberately fail-safe: hosts outside this set get the pin. `system` is
+ * accepted everywhere, `developer` is not, so an unknown host keeps the
+ * universally accepted role -- the pin is harmless on official endpoints
+ * too. Only add a root after verifying its endpoints accept
+ * role:developer (vendor docs or a wire capture); when in doubt, leave it
+ * out. The pi-ai-parity entries change no bytes (pi-ai already detects
+ * those hosts as nonstandard, i.e. supportsDeveloperRole false); they are
+ * listed so the two detectors cannot drift apart silently.
+ */
+const OFFICIAL_RELAY_DOMAINS: readonly string[] = [
+  // First-party OpenAI-compatible endpoints (developer accepted).
+  'openai.com',
+  'openai.azure.com',
+  'deepseek.com',
+  'openrouter.ai',
+  'z.ai',
+  'bigmodel.cn',
+  'moonshot.ai',
+  'moonshot.cn',
+  'aliyuncs.com',
+  'anthropic.com',
+  'x.ai',
+  'together.ai',
+  'together.xyz',
+  'nvidia.com',
+  'cerebras.ai',
+  'cloudflare.com',
+  // pi-ai-parity: detected nonstandard upstream (pin would be a no-op).
+  'chutes.ai',
+  'opencode.ai',
+  'ant-ling.com',
+]
+
+/**
+ * Whether a route is a self-hosted relay whose upstreams cannot be assumed
+ * to accept role:developer: openai-completions protocol on a baseURL whose
+ * host no official root claims. Absent or malformed URLs answer false --
+ * with nothing to judge the host by, pi-ai's detection default stands.
+ */
+export function isSelfHostedRelay(route: RouteFacts): boolean {
+  if (normalize(route.api) !== COMPAT_CAPABLE_PROTOCOL) return false
+  const baseURL = route.baseURL
+  if (baseURL === undefined || baseURL.length === 0) return false
+  try {
+    const host = new URL(baseURL).hostname.toLowerCase()
+    if (!host.includes('.')) return false
+    return !OFFICIAL_RELAY_DOMAINS.some((root) => host === root || host.endsWith('.' + root))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Pin the system role on self-hosted relays: merge
+ * `supportsDeveloperRole: false` into a compat block that would otherwise
+ * let pi-ai rewrite the system prompt to role:developer (issue #2 -- the
+ * upstream answers 角色信息不正确). An explicitly declared value always
+ * wins; non-reasoning suggestions (efforts === false) never carry compat.
+ */
+function withRolePin(
+  compat: CompatSuggestion | undefined,
+  route: RouteFacts,
+  reasons: boolean,
+): CompatSuggestion | undefined {
+  if (compat === undefined || !reasons) return compat
+  if (compat.supportsDeveloperRole !== undefined) return compat
+  if (!isSelfHostedRelay(route)) return compat
+  return { ...compat, supportsDeveloperRole: false }
+}
+
 /** Conservative ladder offered when the endpoint confirms reasoning but nothing names the levels. */
 const ENDPOINT_CONFIRMED_LADDER: ReasoningEfforts = { off: null, low: 'low', medium: 'medium', high: 'high' }
 
@@ -1403,7 +1486,7 @@ export function suggestEfforts(
   }
 
   if (entry !== undefined) {
-    const compat = compatForRoute(entry, route)
+    const compat = withRolePin(compatForRoute(entry, route), route, entry.efforts !== false)
     return {
       efforts: entry.efforts,
       // The vendor default rides along only when the suggested ladder
@@ -1434,9 +1517,10 @@ export function suggestEfforts(
   const compatBase: CompatSuggestion | undefined = normalize(route.api) === COMPAT_CAPABLE_PROTOCOL
     ? { thinkingFormat: 'openai', supportsReasoningEffort: true }
     : undefined
-  const compat = compatBase !== undefined && isSelfHostedEndpoint(route.baseURL)
+  const compatWithBudget = compatBase !== undefined && isSelfHostedEndpoint(route.baseURL)
     ? { ...compatBase, thinkingTokenBudgetField: 'thinking_token_budget' as const }
     : compatBase
+  const compat = withRolePin(compatWithBudget, route, true)
   if (endpoint?.reasoning === true) {
     return {
       efforts: { ...ENDPOINT_CONFIRMED_LADDER },

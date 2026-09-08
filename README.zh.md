@@ -120,6 +120,8 @@ host 侧接受可选的配置项（以下是默认值）：
         probeTimeoutMs: 15000
         # 启动填充的重试退避表；[] 表示只尝试一次。
         bootRetryDelaysMs: [1000, 2000, 4000, 8000, 16000, 30000]
+        # 无档位调用在强制思考梯子上自动落厂商默认档。
+        defaultGuard: true
 ```
 
 设 `autofill: false` 可完全关闭静默自动填充——浏览器里的 **Auto-adapt（自动适配）** 按钮不受影响。
@@ -161,6 +163,8 @@ npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 - 知识库覆盖面有限——各家上新后拼写会漂移，不吃 effort 档的家族则完全无条目；未收录的模型走协议推断 + 通用档位，可手动调整。
 - 模态词表跟随 pi-ai 核心（当前为 `text` / `image`）。部分网关支持的更宽能力（PDF、音频、视频）已按家族记录在案，等核心词表扩充后再开放声明——今天声明不了是设计使然，不是疏漏。
 - 名字启发式的模态建议（`*-vl*` / `*vision*` / `gpt-4o` 一类视觉味 id）刻意标注为低置信度——使用前请核对。
+- 自建中转：自动填充与自动适配会在无法归属官方的 `openai-completions` 路由上钉死 `supportsDeveloperRole: false`，系统提示保持 `system`（部分上游拒绝 `developer`，报角色信息不正确）。已有显式值永不覆盖。全部取消勾选 + 应用可清除声明回到裸请求（提供方默认），即中转兼容模式。
+- 强制思考模型（无 `off` 档的梯子，如 GLM-5.3）：提供商测试与 Default 调用原本会发送 `thinking: disabled` 而失败（如 1210）——host 侧会将其映射到梯子的厂商默认档。设 `defaultGuard: false` 可恢复旧行为。
 
 ## 致谢
 

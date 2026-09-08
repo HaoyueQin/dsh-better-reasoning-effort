@@ -230,6 +230,59 @@ describe('suggestEfforts', () => {
     expect(anthropic.compat).toBeUndefined()
   })
 
+  it('pins supportsDeveloperRole:false on self-hosted relays (issue #2)', () => {
+    // A self-hosted relay is not in pi-ai's provider/URL detection, so the
+    // detected supportsDeveloperRole stays true and pi-ai rewrites the
+    // system prompt to role:developer for every reasoning model -- upstreams
+    // behind such relays reject it (\u89d2\u8272\u4fe1\u606f\u4e0d\u6b63\u786e).
+    // Pinning false keeps system as system.
+    const relay = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://api.suiyue.site/v1' })
+    expect(relay.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true, supportsDeveloperRole: false })
+    const qwen = suggestEfforts('qwen3.8-flash', { api: 'openai-completions', baseURL: 'https://api.suiyue.site/v1' })
+    expect(qwen.compat).toEqual({ thinkingFormat: 'qwen', supportsReasoningEffort: true, supportsDeveloperRole: false })
+  })
+
+  it('keeps official endpoints on the pi-ai detection default (no role pin)', () => {
+    // Official bases stay untouched: the pin is only for hosts pi-ai cannot
+    // recognize (unknown/self-hosted relays).
+    const zhipu = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://open.bigmodel.cn/api/paas/v4' })
+    expect(zhipu.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true })
+    const dashscope = suggestEfforts('qwen3.8-flash', { api: 'openai-completions', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1' })
+    expect(dashscope.compat).toEqual({ thinkingFormat: 'qwen', supportsReasoningEffort: true })
+    // No baseURL at all: nothing to judge the host by, keep detection default.
+    const noserver = suggestEfforts('glm-5.3-flash', { api: 'openai-completions' })
+    expect(noserver.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true })
+  })
+
+  it('covers multi-level official roots and cloud-hosted relays (review follow-up)', () => {
+    // Azure OpenAI speaks the OpenAI API (developer accepted): no pin.
+    const azure = suggestEfforts('gpt-5.3', { api: 'openai-completions', baseURL: 'https://myres.openai.azure.com/openai/deployments/gpt-53' })
+    expect(azure.compat).toEqual({ thinkingFormat: 'openai', supportsReasoningEffort: true })
+    // pi-ai-parity roots: detected nonstandard upstream, the pin would be a
+    // no-op -- listed so the detectors cannot drift apart silently.
+    const chutes = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://api.chutes.ai/v1' })
+    expect(chutes.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true })
+    const antling = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://api.ant-ling.com/v1' })
+    expect(antling.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true })
+    // A relay merely hosted on Azure is still a relay: the suffix match
+    // keeps the pin (a bare azure.com root would have misclassified it).
+    const cloudhosted = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://myrelay.eastus.cloudapp.azure.com/v1' })
+    expect(cloudhosted.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true, supportsDeveloperRole: false })
+  })
+
+  it('pins the role on inferred ladders for self-hosted relays', () => {
+    // L2-miss path: the endpoint confirms reasoning, levels are inferred --
+    // the model will still reason, so the developer rewrite still triggers.
+    const inferred = suggestEfforts('zz-custom-think-9000', { api: 'openai-completions', baseURL: 'https://relay.example.com/v1' }, { reasoning: true, source: 'supported_features' })
+    expect(inferred.matched).toBe(false)
+    expect(inferred.compat).toEqual({ thinkingFormat: 'openai', supportsReasoningEffort: true, supportsDeveloperRole: false })
+  })
+
+  it('does not pin the role on protocols whose gate takes no such field', () => {
+    const responses = suggestEfforts('glm-5.3-flash', { api: 'openai-responses', baseURL: 'https://api.suiyue.site/v1' })
+    expect(responses.compat).toBeUndefined()
+  })
+
   it('pins forceAdaptiveThinking on anthropic-messages routes for adaptive families only', () => {
     // Adaptive-thinking models declared on the anthropic-messages protocol
     // get the compat that makes pi-ai dispatch efforts as output_config.effort.

@@ -115,6 +115,54 @@ describe('EffortEditor', () => {
     expect(wires[1]!.value).toBe('high')
   })
 
+  it('names the bare-relay outcome when clearing a stored declaration', async () => {
+    const { container } = await renderEditor(baseProps({
+      efforts: { off: null, high: 'high' },
+    }))
+    // Armed draft: no clearing hint (nothing would be cleared).
+    expect(container.textContent).not.toContain(en.bareHint)
+    // Uncheck every armed level: the save below would write the unset
+    // intent (bare provider-default requests, the relay-compat mode).
+    const boxes = checkboxes(container)
+    await act(async () => {
+      boxes[0]!.click()
+      boxes[4]!.click()
+    })
+    expect(container.textContent).toContain(en.bareHint)
+  })
+
+  it('warns about the Default wire bytes on forced-thinking relay ladders', async () => {
+    // Stored glm ladder (no off) on a self-hosted relay: Default sends the
+    // disabled object the model rejects (issue #2).
+    const { container } = await renderEditor(baseProps({
+      routeApi: 'openai-completions',
+      routeBaseURL: 'https://api.suiyue.site/v1',
+      modelId: 'glm-5.3-flash',
+      efforts: { low: 'low', high: 'high', max: 'max' },
+    }))
+    expect(container.textContent).toContain(en.defaultRiskDisabled)
+  })
+
+  it('shows no Default warning for off-capable ladders and official hosts', async () => {
+    const off = await renderEditor(baseProps({
+      routeApi: 'openai-completions',
+      routeBaseURL: 'https://api.suiyue.site/v1',
+      efforts: { off: null, high: 'high' },
+    }))
+    expect(off.container.textContent).not.toContain(en.defaultRiskDisabled)
+    expect(off.container.textContent).not.toContain(en.defaultRiskQwen)
+    const official = await renderEditor(baseProps({
+      routeApi: 'openai-completions',
+      routeBaseURL: 'https://open.bigmodel.cn/api/paas/v4',
+      modelId: 'glm-5.3-flash',
+      efforts: { low: 'low', high: 'high', max: 'max' },
+    }))
+    // Official hosts keep pi-ai detection default... except the knowledge
+    // base still resolves the zai format, whose Default is the disabled
+    // object -- the warning correctly stays: format, not host, decides it.
+    expect(official.container.textContent).toContain(en.defaultRiskDisabled)
+  })
+
   it('applies an auto-adapt suggestion and labels its source and confidence', async () => {
     const api = baseApi()
     api.suggest.mockResolvedValue({
