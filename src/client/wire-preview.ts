@@ -20,7 +20,7 @@ import type { ReasoningEfforts } from '../knowledge.js'
 export type DefaultWireRisk =
   /** `thinking: {type: disabled}` -- rejected with 1210-class errors. */
   | 'thinking-disabled'
-  /** `enable_thinking: false` -- rejected by upstreams that restrict it to true. */
+  /** `enable_thinking: false` -- rejected only where the upstream requires thinking on. */
   | 'enable-thinking-false'
 
 /**

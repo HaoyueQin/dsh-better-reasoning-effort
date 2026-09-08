@@ -254,6 +254,22 @@ describe('suggestEfforts', () => {
     expect(noserver.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true })
   })
 
+  it('covers multi-level official roots and cloud-hosted relays (review follow-up)', () => {
+    // Azure OpenAI speaks the OpenAI API (developer accepted): no pin.
+    const azure = suggestEfforts('gpt-5.3', { api: 'openai-completions', baseURL: 'https://myres.openai.azure.com/openai/deployments/gpt-53' })
+    expect(azure.compat).toEqual({ thinkingFormat: 'openai', supportsReasoningEffort: true })
+    // pi-ai-parity roots: detected nonstandard upstream, the pin would be a
+    // no-op -- listed so the detectors cannot drift apart silently.
+    const chutes = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://api.chutes.ai/v1' })
+    expect(chutes.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true })
+    const antling = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://api.ant-ling.com/v1' })
+    expect(antling.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true })
+    // A relay merely hosted on Azure is still a relay: the suffix match
+    // keeps the pin (a bare azure.com root would have misclassified it).
+    const cloudhosted = suggestEfforts('glm-5.3-flash', { api: 'openai-completions', baseURL: 'https://myrelay.eastus.cloudapp.azure.com/v1' })
+    expect(cloudhosted.compat).toEqual({ thinkingFormat: 'zai', supportsReasoningEffort: true, supportsDeveloperRole: false })
+  })
+
   it('pins the role on inferred ladders for self-hosted relays', () => {
     // L2-miss path: the endpoint confirms reasoning, levels are inferred --
     // the model will still reason, so the developer rewrite still triggers.

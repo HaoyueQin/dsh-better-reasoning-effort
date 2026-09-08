@@ -1279,13 +1279,24 @@ function compatForRoute(entry: KnowledgeEntry, route: RouteFacts): CompatSuggest
 }
 
 /**
- * Official endpoint roots pi-ai already recognizes by provider id or URL
- * (last-two-parts match, mirroring {@link NATIVE_DIALECT_DOMAINS}). Hosts
- * outside this set are self-hosted relays pi-ai cannot identify, so its
- * detected supportsDeveloperRole stays true there.
+ * Official endpoint roots where pi-ai may send role:developer, so no pin is
+ * needed. Matching is a DNS-suffix match, so multi-level roots (e.g.
+ * openai.azure.com) work while a relay merely hosted on the same cloud
+ * (e.g. *.cloudapp.azure.com) still counts as self-hosted.
+ *
+ * Deliberately fail-safe: hosts outside this set get the pin. `system` is
+ * accepted everywhere, `developer` is not, so an unknown host keeps the
+ * universally accepted role -- the pin is harmless on official endpoints
+ * too. Only add a root after verifying its endpoints accept
+ * role:developer (vendor docs or a wire capture); when in doubt, leave it
+ * out. The pi-ai-parity entries change no bytes (pi-ai already detects
+ * those hosts as nonstandard, i.e. supportsDeveloperRole false); they are
+ * listed so the two detectors cannot drift apart silently.
  */
 const OFFICIAL_RELAY_DOMAINS: readonly string[] = [
+  // First-party OpenAI-compatible endpoints (developer accepted).
   'openai.com',
+  'openai.azure.com',
   'deepseek.com',
   'openrouter.ai',
   'z.ai',
@@ -1300,6 +1311,10 @@ const OFFICIAL_RELAY_DOMAINS: readonly string[] = [
   'nvidia.com',
   'cerebras.ai',
   'cloudflare.com',
+  // pi-ai-parity: detected nonstandard upstream (pin would be a no-op).
+  'chutes.ai',
+  'opencode.ai',
+  'ant-ling.com',
 ]
 
 /**
@@ -1313,9 +1328,9 @@ export function isSelfHostedRelay(route: RouteFacts): boolean {
   const baseURL = route.baseURL
   if (baseURL === undefined || baseURL.length === 0) return false
   try {
-    const parts = new URL(baseURL).hostname.toLowerCase().split('.')
-    if (parts.length < 2) return false
-    return !OFFICIAL_RELAY_DOMAINS.includes(parts.slice(-2).join('.'))
+    const host = new URL(baseURL).hostname.toLowerCase()
+    if (!host.includes('.')) return false
+    return !OFFICIAL_RELAY_DOMAINS.some((root) => host === root || host.endsWith('.' + root))
   } catch {
     return false
   }
