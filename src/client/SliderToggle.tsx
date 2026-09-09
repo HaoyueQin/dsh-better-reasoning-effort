@@ -3,9 +3,8 @@
  * plugin's setting row ported VERBATIM (title, description, state, switch —
  * colors, sizes and spacing included), wrapped in the requested boxed
  * container on the Models settings page below the add-provider and
- * add-custom-provider actions. Mounted through two seats: the alpha.1
- * 'settings.models.footer' slot, and the rc.2 DOM fallback (the rc.2 Models
- * section declares no extension slots).
+ * add-custom-provider actions. Mounted through the official
+ * 'settings.models.footer' slot.
  *
  * The big-fish slider setting is deliberately gone: that feature was not
  * carried into this integration.

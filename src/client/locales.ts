@@ -56,7 +56,7 @@ export const en = {
   sliderEffortTitle: 'Reasoning effort · {name}',
   sliderEffortTitleError: 'Reasoning effort failed: {error}',
   sliderNoCurrent: 'No model selected.',
-  compatTitle: 'Endpoint compatibility (0.1.3)',
+  compatTitle: 'Endpoint compatibility',
   budgetFieldLabel: 'Reasoning budget field',
   budgetUnset: 'Unset',
   priorityLabel: 'vLLM priority',
@@ -66,7 +66,7 @@ export const en = {
   maxOutputUnset: 'Default (send)',
   maxOutputOn: 'Send',
   maxOutputOff: 'Omit',
-  aliasMigrated: 'Legacy alias detected — saving writes the explicit budget field on 0.1.3.',
+  aliasMigrated: 'Legacy alias detected — saving writes the explicit budget field.',
 }
 
 /** The plugin's locale key union. */
@@ -128,7 +128,7 @@ export const zh: { [Key in keyof typeof en]: string } = {
   sliderEffortTitle: '思考强度 · {name}',
   sliderEffortTitleError: '思考强度设置失败：{error}',
   sliderNoCurrent: '当前无选择中的模型。',
-  compatTitle: '端点兼容（0.1.3）',
+  compatTitle: '端点兼容',
   budgetFieldLabel: '推理预算字段',
   budgetUnset: '未设置',
   priorityLabel: 'vLLM 优先级',
@@ -138,5 +138,5 @@ export const zh: { [Key in keyof typeof en]: string } = {
   maxOutputUnset: '默认（发送）',
   maxOutputOn: '发送',
   maxOutputOff: '省略',
-  aliasMigrated: '检测到旧别名——在 0.1.3 上保存时会写入显式预算字段。',
+  aliasMigrated: '检测到旧别名——保存时会写入显式预算字段。',
 }

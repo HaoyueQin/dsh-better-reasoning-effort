@@ -5,16 +5,15 @@
  *   1. The DOM bypass injector: a MutationObserver over the whole document
  *      keeps the official Models page's model rows equipped with the
  *      thinking-effort editor, wherever the page lives in the settings
- *      surface (a panel, a dialog, a portal). This is the SINGLE path on
- *      both kernel lines: on alpha.1 the official per-model disclosure kept
- *      the same anchors (Capacities / 容量), so the sanctioned slot mode is
- *      gone and the editor lives under each model row again instead of on
- *      the provider card.
+ *      surface (a panel, a dialog, a portal). This is the SINGLE path:
+ *      the official per-model disclosure keeps the same anchors
+ *      (Capacities / 容量), so the editor lives under each model row
+ *      rather than on the provider card.
  *   2. The composer reasoning-effort slider, mounted inside the OFFICIAL
  *      model menu opened from the bottom-right seat. The seat's trigger is
  *      never touched — the official "model · effort" display stays.
  *   3. The Models-page slider toggle, taking the official
- *      'settings.models.footer' slot (0.1.2-rc.1) unconditionally at apply.
+ *      'settings.models.footer' slot unconditionally at apply.
  *   4. The stylesheet and copy dictionaries.
  *
  * @module dsh-better-reasoning-effort/client
@@ -124,16 +123,40 @@ interface SliderContext {
   get?(name: string): unknown
 }
 
-/** The official composer model menu: the seat root's open popover. */
-function modelMenuOf(): HTMLElement | undefined {
-  for (const menu of Array.from(document.querySelectorAll<HTMLElement>('[data-composer-card] [role="menu"]'))) {
-    // The seat renders [trigger button, open menu]; any other menu in the
-    // composer card (attachments, commands) does not sit right after a
-    // menu-triggering button, so the sibling check disambiguates across
-    // kernels and locales without reading copy text.
+/**
+ * The official composer model menu: the seat root's open popover.
+ *
+ * Shape-tolerant across kernels: 0.1.5 portals the menu to document.body
+ * and links it from the seat trigger via aria-controls, while older kernels
+ * render it inline right after the trigger. Both shapes keep
+ * aria-haspopup="menu" on the trigger and role="menu" on the menu, so the
+ * controls link is the primary route and the sibling check stays as the
+ * fallback. Trigger search stays scoped to the composer card, so other
+ * seats' menus never match; no copy text is read, so every locale matches.
+ */
+export function findModelMenu(doc: Document = document): HTMLElement | undefined {
+  const card = doc.querySelector('[data-composer-card]')
+  const scope: ParentNode = card ?? doc
+  for (const trigger of Array.from(scope.querySelectorAll<HTMLElement>('button[aria-haspopup="menu"][aria-controls]'))) {
+    const id = trigger.getAttribute('aria-controls')
+    if (id === null || id.length === 0) continue
+    const menu = doc.getElementById(id)
+    if (menu !== null && menu.getAttribute('role') === 'menu') return menu
+  }
+  // Fallback: the pre-portal inline shape — the menu sits right after its
+  // trigger button, which disambiguates it from other menus in the card.
+  const menus = card === null
+    ? Array.from(doc.querySelectorAll<HTMLElement>('[role="menu"]'))
+    : Array.from(card.querySelectorAll<HTMLElement>('[role="menu"]'))
+  for (const menu of menus) {
     if (menu.previousElementSibling?.matches('button[aria-haspopup="menu"]')) return menu
   }
   return undefined
+}
+
+/** The official composer model menu: the seat root's open popover. */
+function modelMenuOf(): HTMLElement | undefined {
+  return findModelMenu()
 }
 
 interface ForeignMount {
@@ -166,7 +189,7 @@ export function apply(ctx: ClientContext): void {
   document.head.appendChild(style)
   ctx.effect(() => () => style.remove(), 'dsh-better-reasoning-effort: stylesheet')
 
-  // The rc.1 kernel mounts the settings Remote as an injectable
+  // The kernel mounts the settings Remote as an injectable
   // 'remote.settings' service, declared in the plugin's own inject above — so
   // the face is available before apply runs. No runtime seat probing remains.
   const settingsApi: RemoteApi = { settings: ctx.remote.settings }
@@ -174,8 +197,8 @@ export function apply(ctx: ClientContext): void {
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
 
-  // The locale service is also its own LocaleFace (getSnapshot/subscribe) from
-  // rc.2 on. Without those two members a language switch cannot reach copy
+  // The locale service is also its own LocaleFace (getSnapshot/subscribe).
+  // Without those two members a language switch cannot reach copy
   // that is already on screen — the pre-existing behaviour, not a failure.
   const localeFace = (): LocaleFace | undefined => {
     const locale = ctx.locale
@@ -226,7 +249,7 @@ export function apply(ctx: ClientContext): void {
   let scanTimer: number | undefined
   let observer: MutationObserver | undefined
 
-  // ---- Composer slider mount (DOM path on both kernels) ----
+  // ---- Composer slider mount (DOM path) ----
   let sliderMount: ForeignMount | undefined
   let sliderDirectory: { sessionId: string; directory: ModelDirectoryLike } | undefined
   // One effort-memory wiretap per directory instance, with each original
@@ -266,8 +289,8 @@ export function apply(ctx: ClientContext): void {
       // The preference flipped off while the menu stayed open: the host menu
       // must go back to the official content-sized box AND its root cells
       // must become visible again (the active branch hides them inline).
-      const hostMenu = document.querySelector<HTMLElement>('[data-composer-card] [role="menu"]')
-      if (hostMenu !== null) {
+      const hostMenu = modelMenuOf()
+      if (hostMenu !== undefined) {
         hostMenu.classList.remove('bre-model-menu-host')
         for (const el of Array.from(hostMenu.children)) {
           if (el instanceof HTMLButtonElement && el.getAttribute('role') === 'menuitem') {
@@ -479,7 +502,7 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-better-reasoning-effort: slider preference')
 
   // ---- Models-page footer slot ----
-  // The 0.1.2-rc.1 Models page ships the sanctioned 'settings.models.footer'
+  // The Models page ships the sanctioned 'settings.models.footer'
   // extension slot after the provider rows and the add controls, and the
   // plugin's top-level inject already declares 'remote.settings' — its wired
   // contract on this kernel — so the boxed slider toggle takes that seat

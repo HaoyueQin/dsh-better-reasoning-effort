@@ -172,10 +172,10 @@ export function createEditorApi(
       // describe and mutate. Re-reading and retrying with the fresh revision
       // is the same recovery the official settings form uses; anything else
       // surfaces as-is.
-      // Downgrade once for 0.1.2-rc.1: a `settings/rejected` refusal naming
-      // an unknown compat key means the kernel predates the 0.1.3 schema.
-      // Stripping the three 0.1.3-only keys and retrying keeps one artifact
-      // writable on both kernel lines with no version sniffing.
+      // Downgrade once for older kernels: a `settings/rejected` refusal naming
+      // an unknown compat key means the kernel predates the newer compat schema.
+      // Stripping the newer-only keys and retrying keeps one artifact
+      // writable across kernel lines with no version sniffing.
       let compatForWrite = compat;
       let downgraded = false;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -211,7 +211,7 @@ export function createEditorApi(
               } else {
                 copy['reasoningEfforts'] = { ...efforts }
                 // The compat belongs to the declaration: merge it over the
-                // stored block so hand-tuned keys (incl. 0.1.3-only fields
+                // stored block so hand-tuned keys (incl. newer-only fields
                 // the suggestion never names) survive a declaration edit.
                 // A suggestion key never deletes a stored key.
                 if (compatForWrite !== undefined) {
@@ -237,7 +237,7 @@ export function createEditorApi(
           const response = await api.settings.mutate(
             PI_AI_NS,
             // The rebuilt models array is JSON-shaped by construction (a
-            // settings document is JSON); the value is JsonValue on the rc.1
+            // settings document is JSON); the value is JsonValue on this
             // baseline, so the set op asserts once instead of rebuilding the
             // row's type.
             [{ op: 'set', path: ['providers', route, 'models'], value: nextModels } as unknown as SettingsPathOpView],
@@ -245,7 +245,7 @@ export function createEditorApi(
           )
           if (!response.ok) {
             // The stable wire code, not the message prose: 'settings/conflict'
-            // (the rc.1 Typert refusal code) means a concurrent writer moved
+            // (the Typert refusal code) means a concurrent writer moved
             // the namespace between our describe and mutate. Re-reading and
             // retrying with the fresh revision is the same recovery the
             // official settings form uses; anything else surfaces as-is.

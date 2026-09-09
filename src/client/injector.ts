@@ -3,8 +3,8 @@
  * *inside* the official Models page's model rows.
  *
  * The official Models-page slot contract's two sanctioned seats are both
- * coarser than a model row: `settings.models.provider-card` (keyed, since
- * 0.1.2-alpha.1) renders per provider card and `settings.models.footer`
+ * coarser than a model row: the keyed `settings.models.provider-card`
+ * renders per provider card and `settings.models.footer`
  * renders after the rows — neither reaches a single model row's editor
  * internals, so this plugin mounts its editor as a DOM contribution next to
  * the official per-model capacity disclosure. The anchor is the official
@@ -90,7 +90,7 @@ interface FoundModel {
 /** The join the injector renders from. */
 export interface InjectorDeps {
   /**
-   * The settings Remote face for THIS scan/write. The rc.1 kernel mounts
+   * The settings Remote face for THIS scan/write. The kernel mounts
    * `remote.settings` as an injectable service, so the plugin's own top-level
    * `inject` declaration guarantees it before apply runs — no runtime seat
    * probing remains.

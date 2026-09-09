@@ -14,9 +14,8 @@ function fakeApi(initial: unknown): {
   mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[]; expectedRevision?: number }[]
   namespace(): SettingsNamespaceView | undefined
 } {
-  // The alpha.2 SettingsNamespaceView pinned value/user to JsonValue while the
-  // rc.2 type left them unknown; fixtures are plain JSON shapes, so the view
-  // asserts once instead of per-field.
+  // The SettingsNamespaceView pins value/user to JsonValue; fixtures are
+  // plain JSON shapes, so the view asserts once instead of per-field.
   const namespace = {
     ns: 'llm-pi-ai',
     schema: {},
@@ -288,7 +287,7 @@ describe('createEditorApi', () => {
     expect(reply).toEqual({ ok: false, error: 'model-not-found' })
   })
 
-  // The rc.1 Typert refusal code is 'settings/conflict' — the retry must
+  // The Typert refusal code is 'settings/conflict' — the retry must
   // trigger on it and re-read a fresh revision.
   it('retries once on a settings/conflict using the fresh revision', async () => {
     let revision = 7

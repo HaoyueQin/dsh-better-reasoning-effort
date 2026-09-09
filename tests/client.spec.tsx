@@ -18,9 +18,8 @@ import type { ModelDirectoryLike, ModelDirectoryStateLike, RemoteApi, SettingsJo
 /** A settings join shaped like the real wire view. */
 function makeJoin(providers: Record<string, unknown>): SettingsJoin {
   return {
-    // The alpha.2 SettingsNamespaceView pinned value/user to JsonValue while
-    // the rc.2 type left them unknown; the fixtures are plain JSON shapes, so
-    // the view asserts once instead of per-field.
+    // The SettingsNamespaceView pins value/user to JsonValue; the fixtures
+    // are plain JSON shapes, so the view asserts once instead of per-field.
     namespace: {
       ns: PI_AI_NS,
       schema: {},
@@ -110,7 +109,7 @@ function directoryFixture(): ModelDirectoryLike & { update: (next: ModelDirector
 /** Minimal cordis client context face capturing what apply() touches. */
 function makeCtx(api: RemoteApi, opts?: {
   services?: Record<string, unknown>
-  /** Give the fake locale service the shell's LocaleFace pair (rc.2 on). */
+  /** Give the fake locale service the shell's LocaleFace pair. */
   localeFace?: boolean
   /** When false, the 'settings.models' namespace is unregistered (bind echoes keys). */
   hostDict?: boolean
@@ -125,7 +124,7 @@ function makeCtx(api: RemoteApi, opts?: {
   }
   const t = (key: string): string => (en as Record<string, string>)[key] ?? key
   // The ui-settings-models dictionary values hostLabels() resolves through
-  // (verified against the rc.2 and alpha.5 sources; customRoute is 'Provider
+  // (verified against the host sources; customRoute is 'Provider
   // ID' in BOTH host languages).
   const hostModelsEn: Record<string, string> = {
     modelAdvanced: 'Capacities',
@@ -269,7 +268,7 @@ function buildComposerMenu(): HTMLElement {
   return card
 }
 
-/** The rc.2 models page add area (no footer slot exists there). */
+/** The models page add area (the toggle never mounts there). */
 function buildAddBlock(): HTMLElement {
   const section = document.createElement('div')
   section.className = 'section'
@@ -430,7 +429,7 @@ describe('client apply()', () => {
   })
 
   it('keeps the per-row editors on the row DOM bypass under the footer-slot kernel', async () => {
-    // The rc.1 Models page ships the sanctioned settings.models.footer slot:
+    // The Models page ships the sanctioned settings.models.footer slot:
     // the plugin takes it (the slider toggle's seat) — but the per-row
     // editors still mount through the DOM bypass, never under a provider card.
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
@@ -618,7 +617,7 @@ describe('client apply()', () => {
     }
   })
 
-  it('does not DOM-mount the toggle once the rc.1 footer slot is active', async () => {
+  it('does not DOM-mount the toggle once the footer slot is active', async () => {
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
     const h = makeCtx(api)
     try {
