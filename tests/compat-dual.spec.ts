@@ -1,6 +1,6 @@
 /**
- * Dual-kernel (0.1.2-rc.1 + 0.1.3) compat tests: new-schema keys, merge writes,
- * downgrade retry, and the provider-level memory tier.
+ * Compat tests: new-schema keys, merge writes, downgrade retry,
+ * and the provider-level memory tier.
  */
 
 // @vitest-environment jsdom
@@ -68,13 +68,13 @@ describe('sanitizeCompatForProtocol', () => {
 })
 
 describe('migrateBudgetAlias / stripNewCompatKeys', () => {
-  it('migrates the legacy alias to the explicit 0.1.3 field', () => {
+  it('migrates the legacy alias to the explicit budget field', () => {
     expect(migrateBudgetAlias({ supportsThinkingTokenBudget: true }))
       .toEqual({ supportsThinkingTokenBudget: true, thinkingTokenBudgetField: 'thinking_token_budget' })
     expect(migrateBudgetAlias({ thinkingTokenBudgetField: 'thinking_budget' }))
       .toEqual({ thinkingTokenBudgetField: 'thinking_budget' })
   })
-  it('strips only the three 0.1.3-only keys', () => {
+  it('strips only the three newer-only keys', () => {
     expect(stripNewCompatKeys({
       thinkingFormat: 'openai',
       thinkingTokenBudgetField: 'thinking_token_budget',
@@ -138,7 +138,7 @@ describe('writeEfforts dual-kernel', () => {
     const reply = await editor.writeEfforts('r', 'a', { high: 'high' }, { thinkingFormat: 'openai' }, undefined)
     expect(reply).toEqual({ ok: true })
   })
-  it('strips 0.1.3-only keys and retries after a compat rejection', async () => {
+  it('strips newer-only keys and retries after a compat rejection', async () => {
     const initial = { providers: { r: { api: 'openai-completions', models: [{ id: 'a' }] } } }
     const { api, writeCount } = fakeApi(initial, true)
     const editor = createEditorApi(api)

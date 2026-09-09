@@ -20,9 +20,9 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: the `declare module '@deepseek-ai/cordis'` merge that types
 // `ctx.settings` as `SettingsProvider` (describe() returns one descriptor per
 // registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
-// 0.1.2-alpha.2 dropped the `settingsNamespace` value export (it became a
-// private parse + a compile-time SettingsNamespaceInput); the brand is a
-// compile-time concept on every kernel line, so a typed constant is enough.
+// The kernel ships no `settingsNamespace` value export (it is a private parse
+// + a compile-time SettingsNamespaceInput); the brand is a compile-time
+// concept, so a typed constant is enough.
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
 import { INPUT_UNSET_MARKER, PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
@@ -146,7 +146,7 @@ export function buildAutofillPatch(
   return Object.keys(patchRoutes).length === 0 ? undefined : { providers: patchRoutes }
 }
 
-/** Strip 0.1.3-only compat keys from an autofill patch (0.1.2-rc.1 downgrade). */
+/** Strip newer-only compat keys from an autofill patch (older-kernel downgrade). */
 function stripNewCompatKeysDeep(patch: JsonObject): JsonObject | undefined {
   const providers = isRecord(patch['providers']) ? (patch['providers'] as JsonObject) : undefined
   if (providers === undefined) return undefined
@@ -342,8 +342,8 @@ function displayUrl(raw: string): string {
 }
 
 /**
- * Probe-listing URL, mirroring the harness's own model discovery (the
- * 0.1.3-alpha.1 kernel): OpenAI-compatible protocols list at
+ * Probe-listing URL, mirroring the harness's own model discovery:
+ * OpenAI-compatible protocols list at
  * `{baseURL}/models`; Anthropic Messages uses its native route at
  * `{root}/v1/models?limit=1000`, where the root is the base without trailing
  * slashes and without one trailing `/v1` segment (gateway documentation
@@ -357,7 +357,7 @@ function probeListingUrl(baseURL: string, api: string): string {
   return `${root}/v1/models?limit=${String(ANTHROPIC_MODEL_LIMIT)}`
 }
 
-/** Protocols whose model listing this module can read (0.1.3-alpha.1 discovery set). */
+/** Protocols whose model listing this module can read (the harness discovery set). */
 const LISTABLE_PROTOCOLS: ReadonlySet<string> = new Set([
   'anthropic-messages',
   'openai-completions',
@@ -372,7 +372,7 @@ const ANTHROPIC_MODEL_LIMIT = 1000
 
 /**
  * Compose the raw-models probe request's headers, mirroring the discipline of
- * the harness's own model discovery (0.1.3-alpha.1): the provider
+ * the harness's own model discovery: the provider
  * profile's configured request headers form the base (deployment-owned
  * credentials like `x-api-key` ride along), `accept` is always JSON, and a
  * resolved credential's Bearer overwrites a profile `authorization` — which
@@ -383,8 +383,8 @@ const ANTHROPIC_MODEL_LIMIT = 1000
  * official discovery leaves it). Entries Fetch would refuse are dropped
  * rather than failing the probe. Harness attribution headers are deliberately
  * not sent — this is a same-origin diagnostic, not a harness request.
- * @param profileHeaders - the profile's raw `headers` dict (in the schema
- *   since rc.2; simply absent on older documents).
+ * @param profileHeaders - the profile's raw `headers` dict (simply absent
+ *   on older documents).
  * @param apiKey - the resolved credential, when one resolved.
  * @param api - the profile's wire protocol.
  */
@@ -458,7 +458,7 @@ const MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 
 /**
  * Normalize a supported listing reply into one entry array, mirroring the
- * official 0.1.3-alpha.1 parser: the standard `data` array takes precedence; the
+ * official parser: the standard `data` array takes precedence; the
  * enriched `models` map uses each property key as the endpoint-facing id
  * (the nested `id` only falls back for an empty key — gateways may put a
  * canonical identity there instead of the alias they accept on requests);
@@ -686,9 +686,9 @@ export function apply(ctx: Context, config: Config = {}): void {
               return
             }
             // The profile's wire protocol selects the listing route and the
-            // credential arm, exactly as the official discovery decides them
-            // (0.1.3-alpha.1): only the protocols whose listing this mirror can
-            // read are interrogated; everything else reports that it cannot.
+            // credential arm, exactly as the official discovery decides them:
+            // only the protocols whose listing this mirror can read are
+            // interrogated; everything else reports that it cannot.
             const api = typeof profile['api'] === 'string' ? profile['api'] : ''
             if (api.length === 0) {
               sendJson(res, 400, {
@@ -721,8 +721,8 @@ export function apply(ctx: Context, config: Config = {}): void {
             try {
               const upstream = await fetch(listingURL, {
                 method: 'GET',
-                // Header composition mirrors the harness's own model discovery
-                // (0.1.3-alpha.1): the profile's configured request headers ride
+                // Header composition mirrors the harness's own model discovery:
+                // the profile's configured request headers ride
                 // along, so a deployment that authenticates through a custom
                 // header probes here exactly as it lists officially — and an
                 // Anthropic endpoint answers through x-api-key + a fixed

@@ -16,7 +16,7 @@
  * carries — because the same model id under two providers names two models,
  * and display names are editable and never unique. Two delivery paths share
  * one fallback chain (the target model's own remembered level, else the last
- * PROVIDER-NATIVE sighting from a 0.1.3 replay when it names an advertised
+ * PROVIDER-NATIVE sighting from a replay when it names an advertised
  * level, else the VENDOR'S documented default from the knowledge base, else
  * the official no-effort behaviour):
  *   - the wrapped `select`: a model switch submitted without a level rides
@@ -49,7 +49,7 @@ const EFFORT_MEMORY_KEY = 'dsh-better-reasoning-effort.slider.efforts'
 /** Marker guarding against double-wrapping one directory instance (HMR re-apply). */
 const WIRED_MARKER = 'breSelectWired'
 
-/** Provider-native effort sightings (0.1.3 `providerThinkingLevel` replay): "provider/model-id" → native level. */
+/** Provider-native effort sightings (`providerThinkingLevel` replay): "provider/model-id" → native level. */
 const PROVIDER_LEVEL_KEY = 'dsh-better-reasoning-effort.slider.provider-levels'
 
 type ProviderLevelMemory = Record<string, string>
@@ -70,7 +70,7 @@ function readProviderLevels(): ProviderLevelMemory {
   }
 }
 
-/** Record a provider-native effort sighting (e.g. from a 0.1.3 replay envelope). */
+/** Record a provider-native effort sighting (e.g. from a replay envelope). */
 export function noteProviderLevel(provider: string, model: string, level: string): void {
   const trimmed = level.trim()
   if (trimmed.length === 0) return

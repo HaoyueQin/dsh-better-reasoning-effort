@@ -483,7 +483,7 @@ describe('EffortEditor modality', () => {
   })
 })
 
-describe('EffortEditor compat controls (0.1.3)', () => {
+describe('EffortEditor compat controls', () => {
   it('shows budget + priority controls on openai-completions only', async () => {
     const { container } = await renderEditor(baseProps({ routeApi: 'openai-completions' }))
     expect(container.textContent).toContain(t('budgetFieldLabel'))

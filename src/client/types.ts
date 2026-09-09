@@ -1,8 +1,8 @@
 /**
  * Wire-surface types the browser half consumes: the settings Remote faces and
  * the pure seam the effort editor needs. The compilation baseline is the
- * 0.1.2-rc.1 kernel line, whose wire surface 0.1.3 leaves unchanged
- * (verified source-level; 0.1.3 only extends the llm-pi-ai compat schema):
+ * 0.1.5-alpha.1 kernel line (a downgrade retry for older kernels' narrower
+ * compat schema is kept as a safety net):
  * the browser talks to the generated Typert
  * `ctx.remote.settings` stub — `describe()` takes no argument, `mutate` takes
  * positional `(ns, ops, expectedRevision)`, and every answer is the envelope
@@ -39,12 +39,12 @@ import type {
   ReasoningEfforts,
 } from '../knowledge.js'
 
-/** The settings answer envelope on the rc.1 kernel, in the official `RemoteResult` shape. */
+/** The settings answer envelope, in the official `RemoteResult` shape. */
 export type SettingsRemoteResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: { code: string; message: string; details?: unknown } }
 
-/** The 'settings' Remote methods the browser half calls (rc.1 Typert shape). */
+/** The 'settings' Remote methods the browser half calls (Typert shape). */
 export interface SettingsRemoteApi {
   describe(): Promise<SettingsRemoteResult<SettingsDescribeValue>>
   mutate(
@@ -102,7 +102,7 @@ export interface ClientContext {
 
 /**
  * Minimal 'ctx.slots' face the footer-slot path needs. The runtime accepts
- * these calls on the rc.1 kernel; the structural declaration keeps the
+ * these calls; the structural declaration keeps the
  * plugin's slot seam independent of the slots package's own type surface.
  */
 export interface SlotRegistrarFace {
@@ -117,8 +117,7 @@ export interface SlotRegistrarFace {
   }, component: unknown): () => void
 }
 
-// ---- Composer slider faces: the 0.1.2-rc.1 model-directory contract ----
-// (identical at 0.1.3)
+// ---- Composer slider faces: the model-directory contract ----
 // The runtime instances come from `ctx.modelDirectories`; the type aliases
 // name the official declarations so a shape change surfaces at typecheck.
 

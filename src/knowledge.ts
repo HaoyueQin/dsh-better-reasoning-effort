@@ -51,7 +51,7 @@ export type ReasoningEfforts = Partial<Record<ThinkingLevel, WireSpelling>>
 /** A full input-modality declaration value: the modalities a model accepts. */
 export type InputModalities = readonly InputModality[]
 
-/** Reasoning-budget request-field spellings pi-ai 0.1.3 accepts (0.1.2-rc.1 rejects them). */
+/** Reasoning-budget request-field spellings pi-ai accepts (older kernels reject them). */
 export const THINKING_TOKEN_BUDGET_FIELDS = ['thinking_token_budget', 'thinking_budget', 'thinking_budget_tokens'] as const
 export type ThinkingTokenBudgetField = (typeof THINKING_TOKEN_BUDGET_FIELDS)[number]
 
@@ -1224,7 +1224,7 @@ export function isSelfHostedEndpoint(baseURL: string | undefined): boolean {
   return host.includes(':')
 }
 
-/** Strip 0.1.3-only keys for a 0.1.2-rc.1 write (downgrade retry). */
+/** Strip newer-only keys for an older-kernel write (downgrade retry). */
 export function stripNewCompatKeys(compat: CompatSuggestion): CompatSuggestion {
   const copy = { ...compat }
   for (const key of NEW_COMPAT_KEYS) delete (copy as Record<string, unknown>)[key]
@@ -1253,7 +1253,7 @@ export function sanitizeCompatForProtocol(compat: CompatSuggestion, api: string)
   return Object.keys(copy).length === 0 ? undefined : (copy as CompatSuggestion)
 }
 
-/** Migrate a stored alias to the explicit 0.1.3 field (explicit wins upstream). */
+/** Migrate a stored alias to the explicit budget field (explicit wins upstream). */
 export function migrateBudgetAlias(compat: Record<string, unknown>): Record<string, unknown> {
   if (compat['thinkingTokenBudgetField'] !== undefined || compat['supportsThinkingTokenBudget'] !== true) return compat
   return { ...compat, thinkingTokenBudgetField: 'thinking_token_budget' }

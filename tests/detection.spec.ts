@@ -122,7 +122,7 @@ describe('modality + capacity disclosures', () => {
   })
 })
 
-describe('Anthropic capabilities disclosures (0.1.3-alpha.1 discovery shape)', () => {
+describe('Anthropic capabilities disclosures (kernel discovery shape)', () => {
   it('reads capabilities.thinking.supported both ways', () => {
     expect(analyzeListingEntry({ capabilities: { thinking: { supported: true } } })).toEqual({
       reasoning: true,
