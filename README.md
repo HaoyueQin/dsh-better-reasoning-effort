@@ -148,6 +148,18 @@ Browser (lib/client.js)                  Host (lib/index.js)
 - **Writing**: `createEditorApi()` in `src/client/ops.ts` rewrites `providers.<route>.models[i].reasoningEfforts` — and, when an intent travels, `.input` — via `settings.mutate`, preserving every other row field; on a revision conflict it re-reads and retries once (the same recovery the official settings form uses).
 - **Shared constants**: `src/constants.ts` carries the plugin id, settings namespace, and DOM marker used by both halves.
 
+## Releasing
+
+Pushing a `v*` tag **is** the release decision: the `release` workflow turns that tag into a GitHub release page and nothing else.
+
+Release-note drafts live in `.github/releases/<tag>.md`, which is **gitignored and never tracked**. The workflow reads the file if it happens to exist in the checkout, and otherwise falls back to GitHub's generated notes — so a tag pushed from a machine that has the draft gives the written notes, while the repository itself carries no per-release documents. Keep it that way: the directory is a local working area, and re-adding a note with `git add -f` would both break that convention and publish a release document the repository deliberately does not carry.
+
+```bash
+# Draft the body (optional, local only), then:
+git tag vX.Y.Z && git push origin vX.Y.Z   # → GitHub release page
+npm publish                                 # → the registry
+```
+
 ## Development
 
 ```bash
