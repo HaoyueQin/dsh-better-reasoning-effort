@@ -380,7 +380,7 @@ describe('EffortEditor', () => {
     await act(async () => { checkboxes(container)[4]!.click() })
     await act(async () => { buttonByText(container, t('apply')).click() })
 
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined)
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [])
   })
 })
 
@@ -396,7 +396,7 @@ describe('EffortEditor modality', () => {
     // unset intent, which would stamp a durable marker onto nothing.
     await act(async () => { boxes[7].click() })
     await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, ['text'])
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, ['text'], [])
   })
 
   it('clearing the declaration writes the durable unset', async () => {
@@ -405,7 +405,7 @@ describe('EffortEditor modality', () => {
     await act(async () => { buttonByText(container, t('clearDeclaration')).click() })
     expect(container.textContent).toContain(t('modalityInherit'))
     await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, null)
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, null, [])
   })
 
   it('renders a resolved-layer empty input array as inheriting', async () => {
@@ -426,7 +426,7 @@ describe('EffortEditor modality', () => {
     await act(async () => { buttonByText(container, t('apply')).click() })
     // An untouched modality row omits the intent entirely -- an effort-only
     // apply must never stamp inputUnset onto a decision the user never made.
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined)
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [])
   })
 
   it('auto-adapt renders the zoned reference block and provenance hints', async () => {
@@ -495,6 +495,22 @@ describe('EffortEditor compat controls', () => {
     expect(container.textContent).toContain(t('maxOutputLabel'))
     expect(container.textContent).not.toContain(t('budgetFieldLabel'))
   })
+  it('renders the responses control as an official-shaped field with a hint', async () => {
+    const { container } = await renderEditor(baseProps({ routeApi: 'openai-responses' }))
+    const select = container.querySelector<HTMLSelectElement>('select.bre-select')
+    expect(select).not.toBeNull()
+    // The same control shape the official capacity/enum fields use: a caption
+    // above, the picker capped at the official enum width, a hint below.
+    expect(select!.getAttribute('aria-label')).toBe(t('maxOutputLabel') + ' 1')
+    expect(container.querySelector('.bre-compat-label')?.textContent).toBe(t('maxOutputLabel'))
+    expect(container.querySelector('.bre-compat-hint')?.textContent).toBe(t('maxOutputHint'))
+    // The three intents, spelled so that "no value" is not the odd one out.
+    expect(Array.from(select!.options).map(option => option.textContent)).toEqual([
+      t('maxOutputUnset'), t('maxOutputOn'), t('maxOutputOff'),
+    ])
+    // The old inline-row shape is gone: the label no longer shares the control's line.
+    expect(container.querySelector('.bre-compat-row .bre-effort-level')).toBeNull()
+  })
   it('shows no compat controls without a protocol', async () => {
     const { container } = await renderEditor(baseProps({}))
     expect(container.textContent).not.toContain(t('budgetFieldLabel'))
@@ -507,6 +523,24 @@ describe('EffortEditor compat controls', () => {
     }))
     expect(container.textContent).toContain(t('aliasMigrated'))
   })
+  it('clearing the responses picker asks the seam to clear the key it owns', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({
+      api,
+      routeApi: 'openai-responses',
+      efforts: { high: 'high' },
+      compat: { supportsMaxOutputTokens: false },
+    }))
+    // Back to "Unset": the choice has to be removable, not sticky forever.
+    await act(async () => {
+      const select = container.querySelector('select.bre-select') as HTMLSelectElement
+      select.value = ''
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, ['supportsMaxOutputTokens'])
+  })
+
   it('writes the compat draft alongside the ladder', async () => {
     const api = baseApi()
     const { container } = await renderEditor(baseProps({

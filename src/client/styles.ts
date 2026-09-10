@@ -21,9 +21,9 @@ export const STYLES = `
   gap: 8px;
   margin: 8px 0 4px;
   padding: 10px 12px;
-  border: 1px solid var(--dsh-border, rgba(128,128,128,0.25));
+  border: 0.5px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
-  background: var(--dsh-surface, rgba(128,128,128,0.06));
+  background: var(--dsw-alias-bg-layer-2);
   box-sizing: border-box;
 }
 .bre-effort-head {
@@ -35,14 +35,14 @@ export const STYLES = `
 .bre-effort-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--dsh-text, inherit);
+  color: var(--dsw-alias-label-secondary);
 }
 .bre-link-button {
   background: none;
   border: none;
   padding: 2px 6px;
   font-size: 12px;
-  color: var(--dsh-accent, #4a90d9);
+  color: var(--dsw-alias-link);
   cursor: pointer;
   border-radius: 4px;
 }
@@ -69,19 +69,25 @@ export const STYLES = `
   width: 18px;
   height: 18px;
   margin: 0;
-  accent-color: var(--dsh-accent, #4a90d9);
+  accent-color: var(--dsw-alias-brand-primary);
   cursor: pointer;
 }
-.bre-effort-level { color: var(--dsh-text-secondary, inherit); }
+.bre-effort-level { color: var(--dsw-alias-label-tertiary); }
 .bre-effort-wire {
+  box-sizing: border-box;
   min-width: 0;
   height: 24px;
   padding: 0 6px;
-  border: 1px solid var(--dsh-border, rgba(128,128,128,0.35));
+  border: 0.5px solid var(--dsw-alias-border-l4);
   border-radius: 4px;
-  background: var(--dsh-input, #fff);
-  color: inherit;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
   font-size: 12px;
+}
+.bre-effort-wire:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
 }
 .bre-effort-empty { min-height: 24px; }
 .bre-effort-actions {
@@ -95,11 +101,11 @@ export const STYLES = `
   border-radius: 6px;
   font-size: 12px;
   cursor: pointer;
-  border: 1px solid var(--dsh-border, rgba(128,128,128,0.35));
+  border: 0.5px solid var(--dsw-alias-border-l3);
 }
 .bre-primary-button {
-  background: var(--dsh-accent, #4a90d9);
-  color: #fff;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
   border-color: transparent;
 }
 .bre-primary-button:disabled, .bre-secondary-button:disabled { opacity: 0.5; cursor: default; }
@@ -107,8 +113,8 @@ export const STYLES = `
 .bre-effort-message { font-size: 12px; margin: 0; }
 .bre-effort-message.bre-success { color: #2e7d32; }
 .bre-effort-message.bre-error { color: #c62828; }
-.bre-effort-message.bre-info { color: var(--dsh-accent, #4a90d9); }
-.bre-effort-note { font-size: 11px; margin: 0; color: var(--dsh-text-secondary, inherit); }
+.bre-effort-message.bre-info { color: var(--dsw-alias-link); }
+.bre-effort-note { font-size: 11px; margin: 0; color: var(--dsw-alias-label-tertiary); }
 /* ---- Input-modality section ---- */
 .bre-modality {
   display: flex;
@@ -125,11 +131,74 @@ export const STYLES = `
   width: 18px;
   height: 18px;
   margin: 0;
-  accent-color: var(--dsh-accent, #4a90d9);
+  accent-color: var(--dsw-alias-brand-primary);
   cursor: pointer;
 }
 .bre-modality-clear { margin-left: auto; }
-.bre-modality-note { font-size: 11px; margin: 0; color: var(--dsh-text-secondary, inherit); }
+.bre-modality-note { font-size: 11px; margin: 0; color: var(--dsw-alias-label-tertiary); }
+/* ---- Endpoint-compatibility controls ----
+   Same shape as the official capacity fields the editor sits under: a caption
+   above the control, the control capped at the official enum width (a field
+   width dropdown reads as a text field the user is expected to fill), and a
+   hint line beneath. Tokens are the official ones — the plugin's own --dsh-*
+   names are defined nowhere in this app, so their light-mode literals used to
+   render in both themes. */
+.bre-compat {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.bre-compat-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.bre-compat-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.bre-compat-label {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.bre-compat-hint {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.bre-select, .bre-text-input {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 240px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0.5px solid var(--dsw-alias-border-l4);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+}
+.bre-text-input::placeholder { color: var(--dsw-alias-label-dimmed); }
+.bre-select:focus, .bre-text-input:focus {
+  outline: none;
+  border-color: var(--dsw-alias-brand-primary);
+}
+.bre-select:disabled, .bre-text-input:disabled { opacity: 0.6; cursor: default; }
+.bre-select {
+  cursor: pointer;
+  /* The OS arrow sits flush against the right edge; the official select swaps
+     it for the shared 12px chevron inset on the same right pad. Data-URI SVGs
+     cannot resolve CSS variables, so the stroke is the caption gray both
+     themes share. */
+  appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 12px 12px;
+}
+.bre-error { color: var(--dsw-alias-state-error-primary); }
 /* ---- Zoned suggestion display ---- */
 .bre-suggestion {
   display: flex;
@@ -142,10 +211,10 @@ export const STYLES = `
   align-items: baseline;
   gap: 4px 14px;
   padding: 6px 8px;
-  border: 1px dashed var(--dsh-border, rgba(128,128,128,0.35));
+  border: 1px dashed var(--dsw-alias-border-l3);
   border-radius: 6px;
   font-size: 11px;
-  color: var(--dsh-text-secondary, inherit);
+  color: var(--dsw-alias-label-tertiary);
 }
 .bre-reference-title { font-weight: 600; }
 .bre-reference-values { display: inline-flex; gap: 14px; }

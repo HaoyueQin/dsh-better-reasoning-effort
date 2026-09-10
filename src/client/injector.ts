@@ -29,6 +29,7 @@
 import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../constants.js'
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../knowledge.js'
 import { modelsOf, routeFactsOf } from '../shared.js'
+import { clearedCompatKeys } from './EffortEditor.js'
 import { sameEfforts } from './effort.js'
 import { compatOf, createEditorApi, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
 import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from './types.js'
@@ -234,12 +235,22 @@ export interface EffectiveStagedIntents {
   efforts: EffortWriteIntent
   compat?: CompatSuggestion
   input?: InputModalities
+  /**
+   * Compat fields this staging OWNS and left empty, so "unset" can mean unset
+   * instead of keeping the last choice forever. Computed by the editor's own
+   * `clearedCompatKeys` against the route's protocol, never against the whole
+   * stored block: a hand-tuned field the editor never showed survives.
+   */
+  clearCompatKeys?: readonly string[]
 }
+
+
 
 export function effectiveStagedIntents(
   declaration: StagedDeclaration,
   current: Record<string, unknown> | undefined,
   autofill?: AutofillFootprint,
+  api?: string,
 ): EffectiveStagedIntents | null {
   if (current === undefined) return null
   // Ladder part: a declaration or a deliberate-unset marker on the row owns
@@ -285,10 +296,12 @@ export function effectiveStagedIntents(
   const efforts: EffortWriteIntent = ladderTaken ? 'keep' : declaration.efforts
   const input = inputTaken ? undefined : declaration.input
   if (efforts === 'keep' && input === undefined) return null
+  const clearCompatKeys = clearedCompatKeys(api, declaration.compat)
   return {
     efforts,
     ...(declaration.compat === undefined ? {} : { compat: declaration.compat }),
     ...(input === undefined ? {} : { input }),
+    ...(clearCompatKeys.length === 0 ? {} : { clearCompatKeys }),
   }
 }
 
@@ -337,7 +350,6 @@ async function flushRoute(
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
 ): Promise<void> {
-
   // Snapshot: stageEffortsInto below mutates the stored map as writes land.
   for (const [modelId, declaration] of [...models]) {
     const join = await deps.describeNamespace()
@@ -361,7 +373,7 @@ async function flushRoute(
     const effective = effectiveStagedIntents(declaration, current, {
       ...(suggestion.efforts === undefined ? {} : { efforts: suggestion.efforts }),
       ...(suggestion.input === undefined ? {} : { input: suggestion.input }),
-    })
+    }, routeInfo.api)
     if (effective === null) {
       stageEffortsInto(state, route, modelId, undefined)
       continue
@@ -378,7 +390,7 @@ async function flushRoute(
       }
       return describeNamespace(deps.api)
     })
-    const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input)
+    const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input, effective.clearCompatKeys)
     if (reply.ok || reply.error === 'model-not-found') {
       stageEffortsInto(state, route, modelId, undefined)
     } else {

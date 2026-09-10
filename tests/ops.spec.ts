@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createEditorApi, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
 import { modelsOf } from '../src/shared.js'
+import { AUTOFILL_MARKER } from '../src/constants.js'
 import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
 
 /** A minimal settings Remote that records mutate calls. */
@@ -261,6 +262,76 @@ describe('createEditorApi', () => {
     const models = mutates[0].ops[0].value as Record<string, unknown>[]
     expect(models[0].reasoningEfforts).toEqual({ high: 'high' })
     expect(models[0].reasoningEffortsUnset).toBeUndefined()
+  })
+
+  it('clears the named compat keys while keeping fields the editor never showed', async () => {
+    const stored = {
+      providers: {
+        aliyun: {
+          displayName: 'Aliyun',
+          api: 'openai-responses',
+          models: [{
+            id: 'qwen-max',
+            reasoningEfforts: { high: 'high' },
+            compat: { supportsMaxOutputTokens: false, supportsStore: true },
+          }],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(stored)
+    const editor = createEditorApi(api)
+    // The editor's picker was switched back to "Unset": it owns
+    // supportsMaxOutputTokens on this protocol, and nothing else.
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, ['supportsMaxOutputTokens'])
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0]['compat']).toEqual({ supportsStore: true })
+  })
+
+  it('drops the compat block entirely when every key was cleared', async () => {
+    const stored = {
+      providers: {
+        aliyun: { api: 'openai-responses', models: [{ id: 'qwen-max', reasoningEfforts: { high: 'high' }, compat: { supportsMaxOutputTokens: true } }] },
+      },
+    }
+    const { api, mutates } = fakeApi(stored)
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, ['supportsMaxOutputTokens'])
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0]['compat']).toBeUndefined()
+  })
+
+  it('a declaration retires the autofill provenance marker', async () => {
+    // These bytes are the user's decision now, so the browser flush must stop
+    // reading them as the knowledge base's suggestion: otherwise a later
+    // staging would be allowed to override a deliberate hand edit.
+    const autofilled = {
+      providers: {
+        aliyun: {
+          displayName: 'Aliyun',
+          api: 'openai-completions',
+          models: [{
+            id: 'qwen-max',
+            name: 'Qwen Max',
+            reasoningEfforts: { off: null, high: 'high' },
+            input: ['text'],
+            [AUTOFILL_MARKER]: 12,
+          }],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(autofilled)
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', { off: null, high: 'high', max: 'max' }, undefined, ['text', 'image'])
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0].reasoningEfforts).toEqual({ off: null, high: 'high', max: 'max' })
+    expect(models[0][AUTOFILL_MARKER]).toBeUndefined()
+    // A ladder-untouched ('keep') edit must not silence provenance either: it
+    // writes no ladder, so there is nothing it could have taken over.
+    const kept = await editor.writeEfforts('aliyun', 'qwen-max', 'keep', undefined, ['text'])
+    expect(kept).toEqual({ ok: true })
   })
 
   it('refuses to rewrite a route whose model list carries a malformed row', async () => {

@@ -146,6 +146,42 @@ describe('writeEfforts dual-kernel', () => {
     expect(reply).toEqual({ ok: true })
     expect(writeCount()).toBe(2)
   })
+  it('recognizes the exact refusal 0.1.5-rc.1 words for a protocol-incompatible compat key', async () => {
+    // Captured verbatim from the installed adapter's own validator
+    // (llm-pi-ai/catalog.ts assertOfferedCompatFields -> resolveModelCompat).
+    // The downgrade detector keys off this prose, so a kernel that rewords it
+    // must fail HERE rather than silently leaving a model unwritable.
+    const refusal = 'llm-pi-ai: provider "r" model "a" sets compat "thinkingTokenBudgetField",'
+      + ' but its api is "openai-responses", which does not take it; that switch exists on'
+      + ' openai-completions, and "openai-responses" offers supportsDeveloperRole, supportsMaxOutputTokens'
+    expect(refusal.toLowerCase()).toMatch(/compat|thinkingtokenbudget|vllmpriority|supportsmaxoutput/)
+    const initial = { providers: { r: { api: 'openai-responses', models: [{ id: 'a' }] } } }
+    let writes = 0
+    const namespace = {
+      ns: 'llm-pi-ai', schema: {}, value: initial, user: initial, revision: 3, applies: 'live', secrets: [],
+    } as unknown as SettingsNamespaceView
+    const api: RemoteApi = {
+      settings: {
+        async describe() {
+          return { ok: true, value: { writable: true, hasDocument: true, namespaces: [namespace] } }
+        },
+        async mutate(_ns, ops, _rev) {
+          writes += 1
+          const value = (ops[0] as { value: Record<string, unknown>[] }).value
+          const compat = value[0]['compat'] as Record<string, unknown> | undefined
+          if (writes === 1 && compat?.['thinkingTokenBudgetField'] !== undefined) {
+            return { ok: false, error: { code: 'settings/rejected', message: refusal } }
+          }
+          namespace.value = { providers: { r: { models: value } } } as unknown as typeof namespace.value
+          return { ok: true, value: namespace }
+        },
+      },
+    }
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('r', 'a', { high: 'high' }, { thinkingTokenBudgetField: 'thinking_token_budget', supportsMaxOutputTokens: false }, undefined)
+    expect(reply).toEqual({ ok: true })
+    expect(writes).toBe(2)
+  })
 })
 
 describe('effort-memory provider tier', () => {

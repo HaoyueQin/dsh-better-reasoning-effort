@@ -115,6 +115,30 @@ function buildModalityIntent(draft: DraftModality): InputModalities | null {
   return draft.image ? ['text', 'image'] : ['text']
 }
 
+/**
+ * The compat fields this editor can SET, per protocol — which is also the set
+ * it may clear. A key from neither list survives an apply untouched: a
+ * hand-tuned field the UI never showed is not this editor's to drop. Clearing
+ * a picker means unset, not "keep whatever was chosen last".
+ */
+export const OWNED_COMPAT_KEYS: Readonly<Record<string, readonly string[]>> = {
+  'openai-completions': ['thinkingTokenBudgetField', 'supportsThinkingTokenBudget', 'vllmPriority'],
+  'openai-responses': ['supportsMaxOutputTokens'],
+}
+
+/** The compat fields clearable on one protocol (empty = this edit owns none). */
+export function ownedCompatKeys(routeApi: string | undefined): readonly string[] {
+  return OWNED_COMPAT_KEYS[(routeApi ?? '').toLowerCase()] ?? []
+}
+
+/** The owned compat fields the draft actually left EMPTY. */
+export function clearedCompatKeys(routeApi: string | undefined, draft: CompatSuggestion | undefined): readonly string[] {
+  const owned = ownedCompatKeys(routeApi)
+  if (owned.length === 0) return []
+  const set = new Set<string>(draft === undefined ? [] : Object.keys(draft))
+  return owned.filter(key => !set.has(key))
+}
+
 /** Semantic equality between a modality draft and a stored declaration. */
 function sameModality(draft: DraftModality, stored: InputModalities | undefined): boolean {
   if (!draft.declared) return stored === undefined
@@ -327,7 +351,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
         setMessage({ kind: 'success', text: t('staged') })
         return
       }
-      const reply = await api.writeEfforts(route, modelId, effortsIntent, writeCompat, nextInput)
+      const reply = await api.writeEfforts(route, modelId, effortsIntent, writeCompat, nextInput, clearedCompatKeys(routeApi, writeCompat))
       if (!reply.ok) {
         setMessage({
           kind: 'error',
@@ -457,9 +481,10 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
       {(routeApi ?? '').toLowerCase() === 'openai-completions' ? (
         <div className="bre-compat">
           <span className="bre-effort-title">{t('compatTitle')}</span>
-          <label className="bre-modality-row">
-            <span className="bre-effort-level">{t('budgetFieldLabel')}</span>
+          <label className="bre-compat-row">
+            <span className="bre-compat-label">{t('budgetFieldLabel')}</span>
             <select
+              className="bre-select"
               disabled={disabled}
               aria-label={t('budgetFieldLabel') + ' ' + String(index + 1)}
               value={budgetField}
@@ -470,30 +495,35 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
               <option value="thinking_budget">thinking_budget</option>
               <option value="thinking_budget_tokens">thinking_budget_tokens</option>
             </select>
+            <span className="bre-compat-hint">{t('budgetFieldHint')}</span>
           </label>
-          <label className="bre-modality-row">
-            <span className="bre-effort-level">{t('priorityLabel')}</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              className="bre-effort-wire"
-              value={priorityText}
-              disabled={disabled}
-              placeholder={t('priorityPlaceholder')}
-              aria-label={t('priorityLabel') + ' ' + String(index + 1)}
-              onChange={(event) => { markDirty(); setPriorityText(event.target.value); setMessage(undefined) }}
-            />
-          </label>
-          {priorityText.trim() !== '' && !/^-?\d+$/.test(priorityText.trim()) ? <p className="bre-effort-note">{t('priorityInvalid')}</p> : null}
+          <div className="bre-compat-row">
+            <label className="bre-compat-field">
+              <span className="bre-compat-label">{t('priorityLabel')}</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className="bre-text-input"
+                value={priorityText}
+                disabled={disabled}
+                placeholder={t('priorityPlaceholder')}
+                aria-label={t('priorityLabel') + ' ' + String(index + 1)}
+                onChange={(event) => { markDirty(); setPriorityText(event.target.value); setMessage(undefined) }}
+              />
+            </label>
+            <span className="bre-compat-hint">{t('priorityHint')}</span>
+            {priorityText.trim() !== '' && !/^-?\d+$/.test(priorityText.trim()) ? <p className="bre-effort-note bre-error">{t('priorityInvalid')}</p> : null}
+          </div>
           {initialCompat?.supportsThinkingTokenBudget === true && initialCompat?.thinkingTokenBudgetField === undefined ? <p className="bre-effort-note">{t('aliasMigrated')}</p> : null}
         </div>
       ) : null}
       {(routeApi ?? '').toLowerCase() === 'openai-responses' ? (
         <div className="bre-compat">
           <span className="bre-effort-title">{t('compatTitle')}</span>
-          <label className="bre-modality-row">
-            <span className="bre-effort-level">{t('maxOutputLabel')}</span>
+          <label className="bre-compat-row">
+            <span className="bre-compat-label">{t('maxOutputLabel')}</span>
             <select
+              className="bre-select"
               disabled={disabled}
               aria-label={t('maxOutputLabel') + ' ' + String(index + 1)}
               value={maxOutput}
@@ -503,6 +533,7 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
               <option value="true">{t('maxOutputOn')}</option>
               <option value="false">{t('maxOutputOff')}</option>
             </select>
+            <span className="bre-compat-hint">{t('maxOutputHint')}</span>
           </label>
         </div>
       ) : null}

@@ -160,7 +160,7 @@ export function createEditorApi(
     stageEfforts(route, modelId, efforts, compat, input) {
       stage?.(route, modelId, efforts, compat, input)
     },
-    async writeEfforts(route, modelId, rawEfforts, compat, input) {
+    async writeEfforts(route, modelId, rawEfforts, compat, input, clearCompatKeys) {
       // 'keep' means the ladder part of the edit is a no-op: a modality-only
       // apply must never fall through to the unset branch (which would stamp
       // the durable marker onto a never-declared ladder and silence host
@@ -218,10 +218,15 @@ export function createEditorApi(
                 // The compat belongs to the declaration: merge it over the
                 // stored block so hand-tuned keys (incl. newer-only fields
                 // the suggestion never names) survive a declaration edit.
-                // A suggestion key never deletes a stored key.
-                if (compatForWrite !== undefined) {
-                  const stored = isRecord(model['compat']) ? (model['compat'] as Record<string, unknown>) : {}
-                  copy['compat'] = { ...stored, ...compatForWrite }
+                // Only the keys THIS edit owns and left empty are deleted --
+                // clearing the UI's own picker has to mean unset, while a
+                // field the editor never showed stays untouched.
+                const stored = isRecord(model['compat']) ? (model['compat'] as Record<string, unknown>) : {}
+                const merged: Record<string, unknown> = { ...stored, ...(compatForWrite ?? {}) }
+                for (const key of clearCompatKeys ?? []) delete merged[key]
+                if (Object.keys(stored).length > 0 || Object.keys(merged).length > 0) {
+                  if (Object.keys(merged).length === 0) delete copy['compat']
+                  else copy['compat'] = merged
                 }
               }
             }

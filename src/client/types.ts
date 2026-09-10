@@ -220,6 +220,12 @@ export interface EffortEditorApi {
    * its input-modality declaration in the same mutate. A compat block is
    * written only when one is supplied alongside a dict declaration -- an
    * omitted compat leaves whatever the document already holds untouched.
+   *
+   * `clearCompatKeys` names the compat fields this edit OWNS and left empty: a
+   * key in neither the written block nor that list survives (a hand-tuned field
+   * the editor does not show is never dropped), while a listed one is deleted,
+   * which is what makes "Unset" mean unset instead of "keep the last choice
+   * forever".
    */
   writeEfforts(
     route: string,
@@ -227,6 +233,7 @@ export interface EffortEditorApi {
     efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
     input?: InputIntent,
+    clearCompatKeys?: readonly string[],
   ): Promise<WriteEffortsReply>
   /**
    * Stage one model's declaration for a route that does not exist in the
