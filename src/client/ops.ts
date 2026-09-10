@@ -19,12 +19,9 @@ import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   EffortEditorApi,
   EffortWriteIntent,
-  InputIntent,
   RemoteApi,
   SettingsJoin,
   SettingsNamespaceView,
-  SuggestReply,
-  WriteEffortsReply,
 } from './types.js'
 
 /** The user-layer providers dict of the pi-ai namespace, as records. */

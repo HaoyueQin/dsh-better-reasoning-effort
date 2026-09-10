@@ -20,6 +20,11 @@ Thumbs.db
 
 # Scratch release notes / packed artifacts working area
 .tmp-rel/
+
+# Fetched official-document snapshots used to re-verify the knowledge base.
+# Kept in the workspace as evidence, never released: the third-party files in
+# here (models.dev exports) are cross-checks, not sources of truth.
+research/
 .mnemon/
 .workbuddy/
 

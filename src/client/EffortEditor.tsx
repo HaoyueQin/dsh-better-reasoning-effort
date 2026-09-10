@@ -62,7 +62,13 @@ export interface EffortModel {
 export interface EffortEditorProps {
   /** Route key. */
   route: string
-  /** Route display name (shown in the editor header). */
+  /**
+   * Route display name. Part of the mount contract but never rendered here:
+   * this editor lives inside ONE model row, whose provider card already
+   * carries the name, so the component does not even destructure it. The
+   * injector keeps it in the prop set and its sameProps diff compares it, which
+   * is what catches a provider rename under an already-mounted editor.
+   */
   routeDisplayName: string
   /** Route wire protocol, when configured. */
   routeApi?: string
@@ -151,7 +157,7 @@ function sameModality(draft: DraftModality, stored: InputModalities | undefined)
  * checkboxes, the modality toggle, the auto-adapt action, and the
  * apply/reset actions that own both sections.
  */
-export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
+export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [modality, setModality] = useState<DraftModality>(() => modalityFrom(initialInput))
   const [busy, setBusy] = useState(false)
@@ -173,7 +179,6 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
   const [priorityText, setPriorityText] = useState<string>(() => initialCompat?.vllmPriority === undefined ? '' : String(initialCompat.vllmPriority))
   const [maxOutput, setMaxOutput] = useState<string>(() => initialCompat?.supportsMaxOutputTokens === undefined ? '' : String(initialCompat.supportsMaxOutputTokens))
   const previousCompat = useRef<CompatSuggestion | undefined>(initialCompat)
-  const [suggestedInput, setSuggestedInput] = useState<InputModalities | undefined>(undefined)
   const [suggestedInputSource, setSuggestedInputSource] = useState<InputSource | undefined>(undefined)
   const [referenceContext, setReferenceContext] = useState<number | undefined>(undefined)
   const [referenceMaxTokens, setReferenceMaxTokens] = useState<number | undefined>(undefined)
@@ -232,7 +237,6 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggested(undefined)
     setSuggestedSource('')
     setSuggestedConfidence('low')
-    setSuggestedInput(undefined)
     setSuggestedInputSource(undefined)
     // appliedCompatRef deliberately SURVIVES this (see its declaration) --
     // Apply/stage must still write the applied suggestion's compat bytes.
@@ -291,7 +295,6 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggestedSource(parts.source)
     setSuggestedConfidence(parts.confidence)
     appliedCompatRef.current = parts.compat
-    setSuggestedInput(parts.input)
     setSuggestedInputSource(parts.inputSource)
     setReferenceContext(parts.contextWindow)
     setReferenceMaxTokens(parts.maxTokens)
@@ -386,7 +389,6 @@ export function EffortEditor({ route, routeDisplayName, routeApi, routeBaseURL, 
     setSuggestedSource('')
     setSuggestedConfidence('low')
     appliedCompatRef.current = undefined
-    setSuggestedInput(undefined)
     setSuggestedInputSource(undefined)
     setReferenceContext(undefined)
     setReferenceMaxTokens(undefined)

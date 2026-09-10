@@ -302,6 +302,32 @@ describe('createEditorApi', () => {
     expect(models[0]['compat']).toBeUndefined()
   })
 
+  it('writing "reasoning disabled" also retires the autofill provenance marker', async () => {
+    // The autofill marker describes the ladder the HOST wrote. Once the user
+    // declares anything -- a ladder OR false -- those bytes are a decision, so
+    // a stale staging must not be allowed to override them later.
+    const autofilled = {
+      providers: {
+        aliyun: {
+          displayName: 'Aliyun',
+          api: 'openai-completions',
+          models: [{
+            id: 'qwen-max',
+            reasoningEfforts: { off: null, high: 'high' },
+            [AUTOFILL_MARKER]: 3,
+          }],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(autofilled)
+    const editor = createEditorApi(api)
+    const reply = await editor.writeEfforts('aliyun', 'qwen-max', false)
+    expect(reply).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0]['reasoningEfforts']).toBe(false)
+    expect(models[0][AUTOFILL_MARKER]).toBeUndefined()
+  })
+
   it('a declaration retires the autofill provenance marker', async () => {
     // These bytes are the user's decision now, so the browser flush must stop
     // reading them as the knowledge base's suggestion: otherwise a later

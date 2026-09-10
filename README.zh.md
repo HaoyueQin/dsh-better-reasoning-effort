@@ -167,7 +167,7 @@ npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 - 端点兼容开关刻意不做自动填充：`supportsMaxOutputTokens` 与 `vllmPriority` 描述的是网关行为而不是模型能力，因此没有模型条目携带它们。安全默认（未设置）会按协议常规发送该字段；只有当网关确实拒收时才需要改。
 - 模态词表跟随 pi-ai 核心（当前为 `text` / `image`）。部分网关支持的更宽能力（PDF、音频、视频）已按家族记录在案，等核心词表扩充后再开放声明——今天声明不了是设计使然，不是疏漏。
 - 名字启发式的模态建议（`*-vl*` / `*vision*` / `gpt-4o` 一类视觉味 id）刻意标注为低置信度——使用前请核对。
-- 自建中转：自动填充与自动适配会在无法归属官方的 `openai-completions` 路由上钉死 `supportsDeveloperRole: false`，系统提示保持 `system`（部分上游拒绝 `developer`，报角色信息不正确）。已有显式值永不覆盖。全部取消勾选 + 应用可清除声明回到裸请求（提供方默认），即中转兼容模式。
+- 自建中转：自动填充与自动适配会在无法归属官方的 `openai-completions` 路由上钉死 `supportsDeveloperRole: false`，系统提示保持 `system`（部分上游拒绝 `developer`，报角色信息不正确）。已有显式值永不覆盖——唯一的例外是端点兼容区那几个下拉框：把某一项选回"未设置"再应用，就是要撤回那次设置，编辑器只会删除它自己展示过的字段。全部取消勾选 + 应用可清除声明回到裸请求（提供方默认），即中转兼容模式。
 - 强制思考模型（无 `off` 档的梯子，如 GLM-5.3）：提供商测试与 Default 调用原本会发送 `thinking: disabled` 而失败（如 1210）——host 侧会将其映射到梯子的厂商默认档。设 `defaultGuard: false` 可恢复旧行为。
 
 ## 致谢

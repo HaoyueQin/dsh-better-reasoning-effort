@@ -41,11 +41,6 @@ export interface EndpointSignal {
 
 import { isRecord } from './shared.js'
 
-const hasString = (entry: Record<string, unknown>, key: string): boolean => {
-  const value = entry[key]
-  return typeof value === 'string' && value.length > 0
-}
-
 const hasBoolean = (entry: Record<string, unknown>, key: string): boolean =>
   typeof entry[key] === 'boolean'
 

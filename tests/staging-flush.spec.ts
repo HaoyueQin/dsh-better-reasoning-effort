@@ -236,6 +236,59 @@ describe('staged declaration vs host autofill', () => {
   })
 })
 
+describe('review findings (staged flush vs the autofilled compat block)', () => {
+  it('never lets a stale staging override a row the user disabled reasoning on', async () => {
+    // The ladder becomes the boolean `false` once the user disables reasoning;
+    // the provenance marker must not survive that, or a stale staging would be
+    // promoted over a deliberate decision.
+    const host = makeHost()
+    const deps = makeDeps(host)
+    const state = createScanState()
+    await stageOnCreateCard(deps, state, { off: 'none', low: 'low', high: 'high', max: 'max' }, [])
+    commitProvider(host, {
+      id: MODEL,
+      reasoningEfforts: { off: 'none', low: 'low', high: 'high', max: 'max' },
+      [AUTOFILL_MARKER]: 9,
+    })
+    // The user opens the row and disables reasoning (the editor's own write).
+    await reopenEditCard(deps, state)
+    const editor = deps.editors.at(-1)?.props
+    await editor?.api.writeEfforts(ROUTE, MODEL, false, undefined, undefined)
+    const disabled = (host.doc[ROUTE] as { models: Record<string, unknown>[] }).models[0]
+    expect(disabled['reasoningEfforts']).toBe(false)
+    expect(disabled[AUTOFILL_MARKER]).toBeUndefined()
+
+    // A stale staging replayed against that row leaves it disabled.
+    await reopenEditCard(deps, state)
+    const row = (host.doc[ROUTE] as { models: Record<string, unknown>[] }).models[0]
+    expect(row['reasoningEfforts']).toBe(false)
+  })
+
+  it('keeps a compat field the host autofill wrote for the same row', async () => {
+    const host = makeHost()
+    const deps = makeDeps(host)
+    const state = createScanState()
+    // The user stages the ladder only. The host autofill then writes the
+    // knowledge base's ladder AND its compat block for this very row.
+    await stageOnCreateCard(deps, state, { off: 'none', low: 'low', high: 'high', max: 'max' }, [])
+    commitProvider(host, {
+      id: MODEL,
+      name: 'DeepSeek V4 Flash',
+      reasoningEfforts: { off: 'none', low: 'low', high: 'high', max: 'max' },
+      compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true, thinkingTokenBudgetField: 'thinking_token_budget' },
+      [AUTOFILL_MARKER]: 5,
+    })
+    await reopenEditCard(deps, state)
+
+    const row = (host.doc[ROUTE] as { models: Record<string, unknown>[] }).models[0]
+    expect(row['compat']).toEqual({
+      thinkingFormat: 'deepseek',
+      supportsReasoningEffort: true,
+      thinkingTokenBudgetField: 'thinking_token_budget',
+    })
+  })
+})
+
 describe('effectiveStagedIntents provenance', () => {
   it('treats a marked ladder as autofill even when the bytes differ from the footprint', () => {
     const out = effectiveStagedIntents(
