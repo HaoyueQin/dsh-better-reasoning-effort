@@ -2,6 +2,11 @@
 # the GitHub release page, so a tag can never again land without its release.
 # When a body file exists for the tag (.github/releases/<tag>.md) it becomes
 # the release notes verbatim; otherwise GitHub's generated notes apply.
+#
+# That body file is a LOCAL draft: .gitignore excludes .github/releases/, and
+# it stays excluded. Never `git add -f` it to "make the notes available" --
+# this workflow already falls back to generated notes, so force-adding only
+# publishes a document the repository deliberately does not carry.
 name: release
 
 on:

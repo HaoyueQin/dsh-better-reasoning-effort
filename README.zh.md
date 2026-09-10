@@ -146,18 +146,6 @@ host 侧接受可选的配置项（以下是默认值）：
 - **写入**：`src/client/ops.ts` 的 `createEditorApi()`，`settings.mutate` 按路径改写 `providers.<route>.models[i].reasoningEfforts`——有模态意图时一并改写 `.input`——保留行内其他字段；冲突时自动重读重试一次（与官方设置表单相同的恢复策略）。
 - **共享常量**：`src/constants.ts` 承载插件 id、设置命名空间、DOM 标记，host 与浏览器共用。
 
-## 发版
-
-推送 `v*` tag **就是**发版决定：`release` workflow 只做一件事——把这个 tag 变成 GitHub Release 页面。
-
-发布笔记草稿放在 `.github/releases/<tag>.md`，该目录**被 gitignore 忽略、永不进入跟踪**。workflow 会在检出目录里找这个文件，找不到就退化为 GitHub 自动生成的 notes——所以从手上有草稿的机器推 tag 就能拿到撰写好的正文，而仓库本身不携带任何逐版本发布文档。请保持这个约定：该目录只是本地工作区，用 `git add -f` 把笔记塞回跟踪既破坏约定，也会把仓库明确不携带的发布文档推上去。
-
-```bash
-# 先写好正文草稿（可选，仅本地），然后：
-git tag vX.Y.Z && git push origin vX.Y.Z   # → GitHub Release 页面
-npm publish                                 # → 发布到 registry
-```
-
 ## 开发
 
 ```bash
