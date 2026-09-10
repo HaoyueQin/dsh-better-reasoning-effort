@@ -12,7 +12,7 @@ import {
   type InputModalities,
   type ReasoningEfforts,
 } from '../knowledge.js'
-import { INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
+import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
 import { isRecord, routeFactsOf } from '../shared.js'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
@@ -204,8 +204,13 @@ export function createEditorApi(
               delete copy['reasoningEfforts']
               copy[UNSET_MARKER] = true
             } else {
-              // A real declaration supersedes any earlier unset marker.
+              // A real declaration supersedes any earlier unset marker — and
+              // retires the autofill provenance marker: these bytes are now a
+              // user decision, so a later staging must not be allowed to
+              // override them as if they were still the knowledge base's
+              // suggestion (they may be byte-identical to it on purpose).
               delete copy[UNSET_MARKER]
+              delete copy[AUTOFILL_MARKER]
               if (efforts === false) {
                 copy['reasoningEfforts'] = false
               } else {

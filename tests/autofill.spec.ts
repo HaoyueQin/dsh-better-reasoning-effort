@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { buildAutofillPatch } from '../src/index.js'
+import { AUTOFILL_MARKER } from '../src/constants.js'
 
 describe('buildAutofillPatch', () => {
   const providers = {
@@ -33,6 +34,23 @@ describe('buildAutofillPatch', () => {
     expect(deepseek.models[0].reasoningEfforts).toEqual({ off: 'none', high: 'high', max: 'max' })
     // Routes with no models produce no patch entry.
     expect((patch!.providers as Record<string, unknown>).empty).toBeUndefined()
+  })
+
+  it('records the read revision as the provenance of every filled ladder', () => {
+    // The browser flush uses this marker to tell a knowledge base suggestion
+    // apart from a declaration the user made: the host fills in-process the
+    // moment a provider is committed, so without the marker a staged intent
+    // that differs in one spelling was dropped as a document takeover.
+    const patch = buildAutofillPatch(providers, () => true, {}, 42)
+    const aliyun = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).aliyun
+    expect(aliyun.models[0][AUTOFILL_MARKER]).toBe(42)
+    // A model the fill leaves alone carries no marker at all.
+    expect(aliyun.models[1][AUTOFILL_MARKER]).toBeUndefined()
+    // Default revision when a caller names none: 0 is still a number, so the
+    // browser side reads it as provenance rather than as absence.
+    const bare = buildAutofillPatch(providers)
+    const bareAliyun = (bare!.providers as Record<string, { models: Record<string, unknown>[] }>).aliyun
+    expect(bareAliyun.models[0][AUTOFILL_MARKER]).toBe(0)
   })
 
   it('preserves unrelated model fields', () => {

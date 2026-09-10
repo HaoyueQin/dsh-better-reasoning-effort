@@ -26,7 +26,7 @@
  * @module dsh-better-reasoning-effort/injector
  */
 
-import { INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../constants.js'
+import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../constants.js'
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../knowledge.js'
 import { modelsOf, routeFactsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
@@ -243,23 +243,37 @@ export function effectiveStagedIntents(
 ): EffectiveStagedIntents | null {
   if (current === undefined) return null
   // Ladder part: a declaration or a deliberate-unset marker on the row owns
-  // it — EXCEPT when the declaration is byte-identical to what this plugin's
-  // own host autofill writes for the model (the knowledge base proposal it
-  // lays down in the route-creation window). Those bytes are a suggestion,
-  // not a user decision, so a staged intent outranks them; anything else
-  // (a hand-tuned ladder, a marker) is a real takeover. 'keep' means the
-  // staging never carried the ladder anyway.
-  const ladderAutofilled =
+  // it — EXCEPT when the stored declaration is this plugin's own host autofill
+  // (the knowledge base proposal it lays down in the route-creation window).
+  // That is a suggestion, not a user decision, so a staged intent outranks it;
+  // anything else (a hand-tuned ladder, a marker) is a real takeover. 'keep'
+  // means the staging never carried the ladder anyway.
+  //
+  // Provenance first: a ladder carrying the host autofill's marker IS the
+  // knowledge base's proposal, whatever its bytes are. The host fills
+  // in-process the instant a provider is committed, so by the time this flush
+  // runs its own suggestion is already in the document — byte equality alone
+  // then reads the user's staged intent as a document takeover and silently
+  // drops it (the reported "configured it on the card, saved, and it is gone").
+  const ladderMarked =
     current[UNSET_MARKER] !== true
-    && autofill?.efforts !== undefined
-    && sameEffortsValue(current['reasoningEfforts'], autofill.efforts)
+    && current['reasoningEfforts'] !== undefined
+    && typeof current[AUTOFILL_MARKER] === 'number'
+  const ladderAutofilled =
+    ladderMarked
+    || (current[UNSET_MARKER] !== true
+      && autofill?.efforts !== undefined
+      && sameEffortsValue(current['reasoningEfforts'], autofill.efforts))
   const ladderTaken = ladderAutofilled
     ? false
     : current['reasoningEfforts'] !== undefined
       || current[UNSET_MARKER] === true
       || declaration.efforts === 'keep'
-  // Modality part: same rule — the autofill's knowledge-base disclosure does
-  // not answer over a staged choice; a hand-made or differing one does.
+  // Modality part: the same provenance rule, decided per part. The knowledge
+  // base disclosure the autofill wrote does not answer over a staged choice,
+  // while a disclosure that differs from the footprint is a hand-made one and
+  // stands. A ladder-only 'keep' staging leaves the stored modality alone, just
+  // as before — the staging never carried a modality in that case.
   const inputAutofilled =
     current[INPUT_UNSET_MARKER] !== true
     && autofill?.input !== undefined
@@ -323,6 +337,7 @@ async function flushRoute(
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
 ): Promise<void> {
+
   // Snapshot: stageEffortsInto below mutates the stored map as writes land.
   for (const [modelId, declaration] of [...models]) {
     const join = await deps.describeNamespace()

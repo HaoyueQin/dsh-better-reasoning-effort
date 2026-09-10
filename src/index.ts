@@ -25,7 +25,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // concept, so a typed constant is enough.
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
-import { INPUT_UNSET_MARKER, PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
+import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PI_AI_NS, PLUGIN_ID, PROBE_PATH, UNSET_MARKER } from './constants.js'
 import { isSelfHostedRelay, suggestEfforts } from './knowledge.js'
 import type { ReasoningEfforts } from './knowledge.js'
 import { resolveGuardEffort } from './guard.js'
@@ -60,11 +60,14 @@ function declaresInput(model: JsonObject): boolean {
  * @param providers - the resolved providers dict.
  * @param routeFilter - optional route filter (defaults to all routes).
  * @param options - fill switches; both default on.
+ * @param revision - settings revision this read is based on; recorded as the
+ *   provenance marker of every ladder filled here (see {@link AUTOFILL_MARKER}).
  */
 export function buildAutofillPatch(
   providers: unknown,
   routeFilter: (route: string) => boolean = () => true,
   options: { efforts?: boolean; modalities?: boolean } = {},
+  revision = 0,
 ): JsonObject | undefined {
   const fillEfforts = options.efforts !== false
   const fillModalities = options.modalities !== false
@@ -125,6 +128,11 @@ export function buildAutofillPatch(
       if (!effortsDeclared && fillEfforts) {
         touched = true
         fill['reasoningEfforts'] = suggestion.efforts as JsonObject
+        // Provenance: the browser flush has to be able to tell this knowledge
+        // base suggestion apart from a declaration the user made, or a staged
+        // intent that differs in one spelling is dropped as a takeover (see
+        // AUTOFILL_MARKER). The value is the revision this fill read.
+        fill[AUTOFILL_MARKER] = revision
         if (suggestion.compat !== undefined) {
           const stored = isRecord(model['compat']) ? (model['compat'] as JsonObject) : {}
           fill['compat'] = { ...stored, ...(suggestion.compat as JsonObject) }
@@ -574,7 +582,7 @@ export function apply(ctx: Context, config: Config = {}): void {
       const user = descriptor?.user
       const userProviders = isRecord(user) && isRecord(user['providers']) ? user['providers'] : undefined
       if (userProviders === undefined) return true
-      const fullPatch = buildAutofillPatch(userProviders, () => true, { modalities: resolved.modalityAutofill })
+      const fullPatch = buildAutofillPatch(userProviders, () => true, { modalities: resolved.modalityAutofill }, descriptor?.revision ?? 0)
       if (fullPatch === undefined) return true
       // Optimistic lock: only write while the namespace has not moved past
       // this read. The fill is a background suggestion — losing the race to a
