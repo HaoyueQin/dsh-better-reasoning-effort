@@ -76,6 +76,41 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('hy3')?.id).toBe('hunyuan-hy3')
   })
 
+  it('matches the 2026-09-10 knowledge refresh (DeepSeek V4.1, GPT-6, Claude 5.1)', () => {
+    // DeepSeek's current official id is 'deepseek-flash' (V4.1-Flash); the
+    // legacy deepseek-v4-flash / -vision-exp spellings are served by the same
+    // model, so both resolve to the family entry.
+    expect(matchKnowledgeBase('deepseek-flash')?.id).toBe('deepseek-v4')
+    expect(matchKnowledgeBase('deepseek-v4-flash')?.id).toBe('deepseek-v4')
+    expect(matchKnowledgeBase('deepseek-v4-flash-0731')?.id).toBe('deepseek-v4')
+    // The retired vision-experiment id keeps the image claim; the plain family
+    // must not gain it (deepseek-v4-pro lists no vision).
+    expect(matchKnowledgeBase('deepseek-v4-flash-vision-exp')?.id).toBe('deepseek-v4-vision')
+    expect(matchKnowledgeBase('deepseek-v4-flash-vision-exp')?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('deepseek-v4-pro')?.input).toEqual(['text'])
+    expect(matchKnowledgeBase('deepseek-v4-pro-0813')?.id).toBe('deepseek-v4')
+    // GPT-6 Astra: the full ladder minus none -- the official guide documents
+    // an HTTP 400 for reasoning.effort 'none', so no off may be declared.
+    const astra = matchKnowledgeBase('gpt-6-astra')
+    expect(astra?.id).toBe('openai-gpt-6-astra')
+    expect(astra?.efforts).toEqual({ low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' })
+    expect(astra?.efforts).not.toHaveProperty('off')
+    expect(astra?.input).toEqual(['text', 'image'])
+    // gpt-5.6-cyber publishes no effort line: the family entry (which carries
+    // none and max) must not answer for it.
+    const cyber = matchKnowledgeBase('gpt-5.6-cyber')
+    expect(cyber?.id).toBe('openai-gpt-5-6-cyber')
+    expect(cyber?.efforts).toEqual({ low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' })
+    expect(matchKnowledgeBase('gpt-5.6-sol')?.id).toBe('openai-gpt-5-6')
+    expect(matchKnowledgeBase('gpt-5.6-luna')?.id).toBe('openai-gpt-5-6')
+    // Claude 5.1: the claude-5 entry's patterns are prefixes of these ids, so
+    // the dedicated entry has to win the tie.
+    expect(matchKnowledgeBase('claude-fable-5-1')?.id).toBe('anthropic-claude-5-1')
+    expect(matchKnowledgeBase('claude-mythos-5-1')?.id).toBe('anthropic-claude-5-1')
+    expect(matchKnowledgeBase('claude-fable-5')?.id).toBe('anthropic-claude-5')
+    expect(matchKnowledgeBase('claude-mythos-5')?.id).toBe('anthropic-claude-5')
+  })
+
   it('returns undefined for unknown models', () => {
     expect(matchKnowledgeBase('some-random-model')).toBeUndefined()
   })

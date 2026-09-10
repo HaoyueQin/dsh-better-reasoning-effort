@@ -206,7 +206,8 @@ export interface EffortSuggestion {
  * The curated knowledge base. Patterns are lowercase substring matches against
  * the model id (and display name). First match wins, longest pattern wins.
  *
- * Sources of truth (per family, re-checked 2026-08): official API docs --
+ * Sources of truth (per family; DeepSeek / OpenAI / Anthropic re-checked
+ * 2026-09 against their current official docs, the rest 2026-08): official API docs --
  * api-docs.deepseek.com (news/pricing/thinking/vision/API reference),
  * developers.openai.com model pages + guides (platform.openai.com blocked;
  * Azure learn mirror cross-checked), platform.claude.com (effort page,
@@ -235,7 +236,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     input: ['text', 'image'],
     contextWindow: 1_048_576,
     maxTokens: 384_000,
-    note: 'DeepSeek V4 视觉实验版：官方目录标注图片输入。',
+    note: 'DeepSeek 视觉实验版 id（deepseek-v4-flash-vision-exp）。官方目录已标注该模型退役，名字仍被接受、由现行 deepseek-flash 提供服务——图片输入现已由 deepseek-flash 原生提供。',
   },
   {
     id: 'deepseek-v4',
@@ -249,14 +250,20 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // checks non-null (any string arms thinking:disabled), while the same map
     // rides the Responses API as reasoning.effort, whose official DeepSeek
     // values are none/low/high/max -- 'off' would be a 400 there.
-    patterns: ['deepseek-v4'],
+    // 'deepseek-flash' is the CURRENT official id (2026-09-10): the pricing
+    // page's compatibility note accepts the legacy deepseek-v4-flash /
+    // deepseek-v4-flash-vision-exp spellings but serves the same current
+    // model, so one declaration covers both. It also matches third-party
+    // resellers that expose DeepSeek's own model under that name, which is
+    // the AI's own least-surprising reading of the id.
+    patterns: ['deepseek-v4', 'deepseek-flash'],
     efforts: { off: 'none', low: 'low', high: 'high', max: 'max' },
     defaultEffort: 'high',
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 1_048_576,
     maxTokens: 384_000,
-    note: 'DeepSeek V4 官方枚举 Low / High / Max（默认 High；medium、xhigh 兼容映射到 High），Off 即 thinking:"disabled"（Responses API 下 off 以 effort:"none" 表示）。官方容量 1M 上下文 / 最大输出 384K；vision 实验版见单独条目。',
+    note: 'DeepSeek 官方枚举 Low / High / Max（默认 High；minimal、medium、xhigh 兼容映射，ultra→max），Off 即 thinking:"disabled"（Responses API 下 off 以 reasoning.effort:"none" 表示）。官方模型现为 deepseek-flash（= DeepSeek-V4.1-Flash，2026-09-10 发布，25 万并发、原生图片输入）与 deepseek-v4-pro（= DeepSeek-V4-Pro-0813，2026-09-14 起请求全量路由到 V4.1-Flash、不支持图片）；deepseek-v4-flash 与 deepseek-v4-flash-vision-exp 是已退役模型的兼容别名。容量：1,048,576 上下文 / 最大输出 384K（393,216；默认非思考 8K、思考 64K、effort=max 时 128K）。',
   },
   {
     id: 'deepseek-v3',
@@ -459,7 +466,38 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     input: ['text'],
     contextWindow: 131_072,
     maxTokens: 131_072,
-    note: 'GPT-OSS 开源权重（Ollama/vLLM 常见）：reasoning effort Low / Medium / High（官方默认 Low），纯文本，131K 上下文 / 131K 输出。',
+    note: 'GPT-OSS 开源权重（Ollama/vLLM 常见）：reasoning effort Low / Medium / High，纯文本，131K 上下文 / 131K 输出。2026-09 复核：官方模型页现在写 Chat Completions = Not supported、无图片输入（默认 Low 来自官方 CLI，不是 API 页），因此这里不再声明 Off。',
+  },
+  {
+    id: 'openai-gpt-6-astra',
+    // Longest-pattern-wins keeps this ahead of the 5.x entries; 'astra' is the
+    // only stable token an aggregator is likely to expose.
+    patterns: ['gpt-6-astra', 'gpt-6'],
+    // Official reasoning guide: none returns HTTP 400 on this model, and the
+    // model page lists low/medium/high/xhigh/max. Official docs publish no
+    // default effort for it, so none is recorded rather than guessed.
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_050_000,
+    maxTokens: 128_000,
+    note: 'GPT-6 Astra 档位：Low / Medium / High / XHigh / Max——**没有 None 档**（官方原文：设为 none 返回 HTTP 400），因此本条目不声明 Off。带图输入，1,050,000 上下文 / 128,000 输出；AI 官方默认档位未公布，故不填。工具调用需走 Responses API。',
+  },
+  {
+    id: 'openai-gpt-5-6-cyber',
+    // Before the family entry: cyber's model page publishes NO effort line and
+    // limits Chat Completions, so the family ladder (which includes none/max)
+    // must not be offered for it.
+    patterns: ['gpt-5.6-cyber'],
+    // Conservative: the codex-style successors publish no none, and cyber's
+    // page publishes nothing at all -- declare the intersection the other 5.6
+    // variants agree on, plus xhigh (every published 5.6 ladder carries it).
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' },
+    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 400_000,
+    maxTokens: 128_000,
+    note: 'GPT-5.6-Cyber：官方模型页未单列 effort 值域（不等于不支持），故按同代保守档 Low / Medium / High / XHigh；该型号仅 Responses API，带图输入、400K 上下文。官方支持的其他档位可手调后应用。',
   },
   {
     id: 'openai-gpt-4o',
@@ -545,7 +583,25 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     input: ['text', 'image'],
     contextWindow: 1_000_000,
     maxTokens: 128_000,
-    note: 'Claude 5 代档位：Low / Medium / High / XHigh / Max（默认 High）；Mythos Preview 仅至 Max（见单独条目）。官方支持 PDF 输入。注意：Anthropic 官方 OpenAI 兼容层会忽略 effort 参数，声明在第三方网关映射时生效。',
+    note: 'Claude 5 代（Fable 5 / Mythos 5 / Opus 5 / Sonnet 5）档位：Low / Medium / High(默认) / XHigh / Max；Fable 5.1 与 Mythos 5.1 见单独条目，Mythos Preview 仅至 Max。1M 上下文 / 128K 输出（Batch 300K）。官方支持 PDF 输入。注意：Anthropic 官方 OpenAI 兼容层会忽略 effort 参数，声明在第三方网关映射时生效。',
+  },
+  {
+    id: 'anthropic-claude-5-1',
+    // Ahead of the claude-5 entry, whose 'claude-fable-5' / 'claude-mythos-5'
+    // patterns are prefixes of these ids and would win the equal-length tie.
+    // Same ladder and default as the 5.0 generation per the official effort
+    // page; the meaningful difference is behavioural (these two are the
+    // models allowed to change effort mid-conversation), which this plugin
+    // does not declare per model.
+    patterns: ['claude-fable-5-1', 'claude-mythos-5-1'],
+    efforts: { low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
+    defaultEffort: 'high',
+    compat: { supportsReasoningEffort: true },
+    anthropicAdaptive: true,
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 128_000,
+    note: 'Claude Fable 5.1 / Mythos 5.1：官方档位 Low / Medium / High(默认) / XHigh / Max，自适应思考常开（不接受 enabled/disabled）。1M 上下文 / 128K 输出；这两型也是官方唯一允许会话中途改档的（需 beta header，本插件不涉及）。',
   },
   {
     id: 'anthropic-claude-mythos-preview',
