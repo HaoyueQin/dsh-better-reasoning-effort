@@ -12,7 +12,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/dsh-better-reasoning-effort)](https://www.npmjs.com/package/dsh-better-reasoning-effort)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4d6bfe)
 ![dsh-plugin](https://img.shields.io/badge/dsh--plugin-ecosystem-4d6bfe)
-![Version](https://img.shields.io/badge/version-0.3.4-4d6bfe)
+![Version](https://img.shields.io/badge/version-0.3.9-4d6bfe)
 ![Docs](https://img.shields.io/badge/docs-EN%20%7C%20ZH-4d6bfe)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![Commit activity](https://img.shields.io/github/commit-activity/t/HaoyueQin/dsh-better-reasoning-effort)](https://github.com/HaoyueQin/dsh-better-reasoning-effort/graphs/commit-activity)
@@ -154,7 +154,7 @@ npm test            # vitest：知识库 / 推断 / autofill / DOM 注入 / 写�
 npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 ```
 
-契约版本：`@deepseek-ai/dsh-api-remotes@0.1.5-alpha.1`（client 契约类型），已通过针对 `0.1.5-alpha.1` 各包的 typecheck、测试套件与完整构建验证；测试套件钉住 composer 菜单发现（portal 与内联双形态），`0.1.2-rc.1` 降级重试路径保留为安全网。
+契约版本：`@deepseek-ai/dsh-api-remotes@0.1.5-alpha.1`（client 契约类型，peer 范围 `>=0.1.5-alpha.1`）；开发依赖已统一到已发布的 `0.1.5-rc.1` 各包，typecheck、测试套件与完整构建均针对该版本执行，运行时实测基线同为 `0.1.5-rc.1`（npm 上 `@deepseek-ai/dsh` 的最新版本）；测试套件钉住 composer 菜单发现（portal 与内联双形态），`0.1.2-rc.1` 降级重试路径保留为安全网。
 在 `0.1.5-rc.1` 内核上的运行时复核（2026-09）：settings Remote 的 `describe`/`mutate(ns, ops, revision)` 契约、Models 页锚点、slider 的菜单发现全部原样；rc.1 对 `llm-pi-ai` 的两处加严已被本插件覆盖——模型级 compat 必须属于该模型解析出的协议（写拒绝时按协议剥离并重试，拒绝文案已逐字钉进测试），以及存量无效配置改为在提供方卡片上就地显示错误而非整体失败。
 
 ## 已知限制

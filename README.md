@@ -12,7 +12,7 @@
 [![npm downloads](https://img.shields.io/npm/dw/dsh-better-reasoning-effort)](https://www.npmjs.com/package/dsh-better-reasoning-effort)
 ![DeepSeek Harness](https://img.shields.io/badge/DeepSeek%20Harness-plugin-4d6bfe)
 ![dsh-plugin](https://img.shields.io/badge/dsh--plugin-ecosystem-4d6bfe)
-![Version](https://img.shields.io/badge/version-0.3.4-4d6bfe)
+![Version](https://img.shields.io/badge/version-0.3.9-4d6bfe)
 ![Docs](https://img.shields.io/badge/docs-EN%20%7C%20ZH-4d6bfe)
 [![Awesome DSH Plugin](https://awesome-dsh-plugin.com/badge.svg)](https://awesome-dsh-plugin.com)
 [![Commit activity](https://img.shields.io/github/commit-activity/t/HaoyueQin/dsh-better-reasoning-effort)](https://github.com/HaoyueQin/dsh-better-reasoning-effort/graphs/commit-activity)
@@ -156,7 +156,7 @@ npm test            # vitest: knowledge / inference / autofill / DOM injection /
 npm run build       # lib/*.js + lib/client.js (module-loader bundle)
 ```
 
-Contract version: `@deepseek-ai/dsh-api-remotes@0.1.5-alpha.1` (client contract types), verified by typecheck, the test suite, and a full build against the `0.1.5-alpha.1` packages.
+Contract version: `@deepseek-ai/dsh-api-remotes@0.1.5-alpha.1` (client contract types; peer range `>=0.1.5-alpha.1`). The dev dependencies are unified on the published `0.1.5-rc.1` packages — typecheck, the test suite and the build all run against them — and `0.1.5-rc.1` is likewise the runtime baseline (the newest `@deepseek-ai/dsh` on npm).
 Runtime re-check against the `0.1.5-rc.1` kernel (2026-09): the settings Remote's `describe` / `mutate(ns, ops, revision)` contract, the Models-page anchors, and the slider's menu discovery are unchanged; rc.1's two `llm-pi-ai` tightenings are covered here — a model-level compat key must belong to the protocol that model resolves to (the write path strips per protocol and retries, with the refusal prose pinned verbatim in a test), and stored profiles that no longer validate surface as a row-level error on the provider card instead of failing the whole page. The suite pins composer-menu discovery across the portaled (`0.1.5`) and inline menu shapes; the `0.1.2-rc.1` downgrade-retry path is kept as a safety net.
 
 ## Known limitations
