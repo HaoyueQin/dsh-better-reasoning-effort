@@ -30,7 +30,7 @@ import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '..
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../knowledge.js'
 import { modelsOf, routeFactsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
-import { compatOf, createEditorApi, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
+import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
 import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
@@ -137,6 +137,8 @@ export interface EditorMountProps {
   input?: InputModalities
   /** The model's stored compat block (passthrough; the editor merges suggestions over it). */
   compat?: CompatSuggestion
+  /** The model's stored per-model default-effort pick, when one is set. */
+  defaultEffort?: string
   /** Row ordinal among the models found in this scan (for aria labels). */
   index: number
   /** True while the row is unsaved (a create card's draft route, or a new
@@ -172,7 +174,9 @@ export interface ScanState {
 
 /**
  * One staged declaration: the level set plus the suggestion's compat block and
- * modalities. A 'keep' effort travels untouched to the flush write.
+ * modalities. A 'keep' effort travels untouched to the flush write. The
+ * per-model default-effort pick (issue #4) rides along: a string to write,
+ * null to clear, absent to touch nothing.
  *
  * Design note: staging cannot express a deliberate UNSET. An all-clear draft
  * stages `keep`/no-input, whose flush resolves to null and withdraws the
@@ -184,6 +188,7 @@ export interface StagedDeclaration {
   efforts: Exclude<EffortWriteIntent, undefined>
   compat?: CompatSuggestion
   input?: InputModalities
+  defaultEffort?: string | null
 }
 
 export function createScanState(): ScanState {
@@ -206,6 +211,7 @@ export function stageEffortsInto(
   efforts: EffortWriteIntent,
   compat?: CompatSuggestion,
   input?: InputModalities,
+  defaultEffort?: string | null,
 ): void {
   const models = state.pending.get(route)
   if (efforts === undefined) {
@@ -220,6 +226,7 @@ export function stageEffortsInto(
     efforts,
     ...(compat === undefined ? {} : { compat }),
     ...(input === undefined ? {} : { input }),
+    ...(defaultEffort === undefined ? {} : { defaultEffort }),
   }))
 }
 
@@ -234,6 +241,8 @@ export interface EffectiveStagedIntents {
   efforts: EffortWriteIntent
   compat?: CompatSuggestion
   input?: InputModalities
+  /** The staged default-effort pick, when the staging carried one. */
+  defaultEffort?: string | null
   /**
    * Compat fields the edit OWNS and left empty, so "unset" can mean unset
    * instead of keeping the last choice forever. Computed by the editor's own
@@ -297,11 +306,16 @@ export function effectiveStagedIntents(
       || current[INPUT_UNSET_MARKER] === true
   const efforts: EffortWriteIntent = ladderTaken ? 'keep' : declaration.efforts
   const input = inputTaken ? undefined : declaration.input
-  if (efforts === 'keep' && input === undefined) return null
+  // The default-effort pick has no takeover question: host autofill never
+  // writes this field, so whatever the document holds is a user decision and
+  // the staged intent (write or clear) passes through untouched.
+  const defaultEffort = declaration.defaultEffort
+  if (efforts === 'keep' && input === undefined && defaultEffort === undefined) return null
   return {
     efforts,
     ...(declaration.compat === undefined ? {} : { compat: declaration.compat }),
     ...(input === undefined ? {} : { input }),
+    ...(defaultEffort === undefined ? {} : { defaultEffort }),
   }
 }
 
@@ -390,7 +404,7 @@ async function flushRoute(
       }
       return describeNamespace(deps.api)
     })
-    const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input)
+    const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input, undefined, effective.defaultEffort)
     if (reply.ok || reply.error === 'model-not-found') {
       stageEffortsInto(state, route, modelId, undefined)
     } else {
@@ -453,6 +467,7 @@ function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
     && a.modelName === b.modelName
     && a.index === b.index
     && a.readOnly === b.readOnly
+    && a.defaultEffort === b.defaultEffort
     // A create card's container surviving its own save must flip the editor
     // to write mode: staged changes the Apply button's whole contract, so it
     // participates in the diff like any other prop.
@@ -676,6 +691,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       const compat = staged
         ? state.pending.get(route)?.get(target.modelId)?.compat
         : compatOf(models, target.modelId)
+      const defaultEffort = staged
+        ? (state.pending.get(route)?.get(target.modelId)?.defaultEffort ?? undefined)
+        : defaultEffortOf(models, target.modelId)
       // An unsaved row has no stored declaration to name it, but the user may
       // have typed a Display name on the row already -- suggestion inference
       // and knowledge-base matching lose that signal without it. The read is
@@ -704,9 +722,10 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ...efforts === undefined ? {} : { efforts },
         ...input === undefined ? {} : { input },
         ...compat === undefined ? {} : { compat },
+        ...defaultEffort === undefined ? {} : { defaultEffort },
         index,
         staged,
-        api: createEditorApi(deps.api, undefined, (r, m, e, c, i) => { stageEffortsInto(state, r, m, e, c, i) }),
+        api: createEditorApi(deps.api, undefined, (r, m, e, c, i, de) => { stageEffortsInto(state, r, m, e, c, i, de) }),
         readOnly: join.writable !== true,
         t: deps.t,
       }

@@ -12,7 +12,7 @@ import {
   type InputModalities,
   type ReasoningEfforts,
 } from '../knowledge.js'
-import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
+import { AUTOFILL_MARKER, DEFAULT_EFFORT_FIELD, INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
 import { isRecord, routeFactsOf } from '../shared.js'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
@@ -78,6 +78,18 @@ export function nameOf(models: Record<string, unknown>[], modelId: string): stri
 }
 
 /**
+ * The stored per-model default-effort pick of one model in a route's models,
+ * or undefined when the user has not picked one. A non-string value degrades
+ * to undefined: the field is plugin-owned, and a hostile or stale document
+ * must degrade to "no default", never poison the memory chain.
+ */
+export function defaultEffortOf(models: Record<string, unknown>[], modelId: string): string | undefined {
+  const entry = models.find(model => model['id'] === modelId)
+  const effort = entry?.[DEFAULT_EFFORT_FIELD]
+  return typeof effort === 'string' && effort.length > 0 ? effort : undefined
+}
+
+/**
  * Ask the host's same-origin probe route for this model's raw-listing facts
  * (reasoning signal, modality disclosure, context length). Any failure --
  * route absent, endpoint unreachable, listing shape unexpected -- degrades to
@@ -112,6 +124,7 @@ export function createEditorApi(
     efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
     input?: InputModalities,
+    defaultEffort?: string | null,
   ) => void,
 ): EffortEditorApi {
   return {
@@ -154,10 +167,10 @@ export function createEditorApi(
         },
       }
     },
-    stageEfforts(route, modelId, efforts, compat, input) {
-      stage?.(route, modelId, efforts, compat, input)
+    stageEfforts(route, modelId, efforts, compat, input, defaultEffort) {
+      stage?.(route, modelId, efforts, compat, input, defaultEffort)
     },
-    async writeEfforts(route, modelId, rawEfforts, compat, input, clearCompatKeys) {
+    async writeEfforts(route, modelId, rawEfforts, compat, input, clearCompatKeys, defaultEffort) {
       // 'keep' means the ladder part of the edit is a no-op: a modality-only
       // apply must never fall through to the unset branch (which would stamp
       // the durable marker onto a never-declared ladder and silence host
@@ -238,6 +251,13 @@ export function createEditorApi(
                 delete copy[INPUT_UNSET_MARKER]
                 copy['input'] = [...input]
               }
+            }
+            // The per-model default-effort pick rides the same mutate:
+            // omitted = untouched (a ladder-only edit never clears the pick),
+            // null = cleared (back to the memory chain), a string = the pick.
+            if (defaultEffort !== undefined) {
+              if (defaultEffort === null) delete copy[DEFAULT_EFFORT_FIELD]
+              else copy[DEFAULT_EFFORT_FIELD] = defaultEffort
             }
             return copy
           })

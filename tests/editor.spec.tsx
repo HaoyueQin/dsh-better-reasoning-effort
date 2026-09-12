@@ -252,7 +252,7 @@ describe('EffortEditor', () => {
     expect(hasButton(container, t('apply'))).toBe(false)
     await act(async () => { stageButton.click() })
 
-    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' }, undefined, undefined)
+    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' }, undefined, undefined, undefined)
     expect(api.writeEfforts).not.toHaveBeenCalled()
     expect(container.querySelector('.bre-effort-message')?.textContent).toContain(t('staged'))
   })
@@ -293,6 +293,7 @@ describe('EffortEditor', () => {
       { off: null, low: 'low', high: 'high', max: 'max' },
       compat,
       undefined,
+      undefined,
     )
   })
 
@@ -326,6 +327,7 @@ describe('EffortEditor', () => {
       { off: null, low: 'low', high: 'high', max: 'max' },
       compat,
       ['text', 'image'],
+      undefined,
     )
   })
 
@@ -355,6 +357,7 @@ describe('EffortEditor', () => {
       { off: null, low: 'low', max: 'max' },
       compat,
       undefined,
+      undefined,
     )
   })
 
@@ -380,7 +383,7 @@ describe('EffortEditor', () => {
     await act(async () => { checkboxes(container)[4]!.click() })
     await act(async () => { buttonByText(container, t('apply')).click() })
 
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [])
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], undefined)
   })
 })
 
@@ -396,7 +399,7 @@ describe('EffortEditor modality', () => {
     // unset intent, which would stamp a durable marker onto nothing.
     await act(async () => { boxes[7].click() })
     await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, ['text'], [])
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, ['text'], [], undefined)
   })
 
   it('clearing the declaration writes the durable unset', async () => {
@@ -405,7 +408,7 @@ describe('EffortEditor modality', () => {
     await act(async () => { buttonByText(container, t('clearDeclaration')).click() })
     expect(container.textContent).toContain(t('modalityInherit'))
     await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, null, [])
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, null, [], undefined)
   })
 
   it('renders a resolved-layer empty input array as inheriting', async () => {
@@ -426,7 +429,7 @@ describe('EffortEditor modality', () => {
     await act(async () => { buttonByText(container, t('apply')).click() })
     // An untouched modality row omits the intent entirely -- an effort-only
     // apply must never stamp inputUnset onto a decision the user never made.
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [])
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], undefined)
   })
 
   it('auto-adapt renders the zoned reference block and provenance hints', async () => {
@@ -533,12 +536,14 @@ describe('EffortEditor compat controls', () => {
     }))
     // Back to "Unset": the choice has to be removable, not sticky forever.
     await act(async () => {
-      const select = container.querySelector('select.bre-select') as HTMLSelectElement
+      // The responses picker, NOT the default-effort picker the armed ladder
+      // also renders: locate it by its aria-label.
+      const select = container.querySelector(`select[aria-label="${t('maxOutputLabel')} 1"]`) as HTMLSelectElement
       select.value = ''
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
     await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, ['supportsMaxOutputTokens'])
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, ['supportsMaxOutputTokens'], undefined)
   })
 
   it('writes the compat draft alongside the ladder', async () => {
@@ -554,5 +559,92 @@ describe('EffortEditor compat controls', () => {
     expect(api.writeEfforts).toHaveBeenCalled()
     const compat = (api.writeEfforts.mock.calls[0] as unknown[])[3] as Record<string, unknown>
     expect(compat).toMatchObject({ thinkingTokenBudgetField: 'thinking_budget' })
+  })
+})
+
+describe('EffortEditor default-effort pick', () => {
+  it('renders only while the draft declares levels, listing exactly those levels', async () => {
+    // No armed ladder: no pick to make, no section at all.
+    const bare = await renderEditor(baseProps())
+    expect(bare.container.textContent).not.toContain(t('defaultEffortLabel'))
+    const { container } = await renderEditor(baseProps({
+      efforts: { off: null, high: 'high' },
+      defaultEffort: 'high',
+    }))
+    expect(container.textContent).toContain(t('defaultEffortLabel'))
+    const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)!
+    expect(select.value).toBe('high')
+    // The value domain is the model's OWN declared ladder: off and high.
+    expect(Array.from(select.options).map(option => option.textContent)).toEqual([
+      t('defaultEffortUnset'), t('level_off'), t('level_high'),
+    ])
+  })
+
+  it('writes a picked level through the seam alongside the ladder', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({ api, efforts: { high: 'high' } }))
+    const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)!
+    await act(async () => {
+      select.value = 'high'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], 'high')
+  })
+
+  it('a stored pick shows the clear button, and clearing writes the durable removal', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({
+      api,
+      efforts: { high: 'high' },
+      defaultEffort: 'high',
+    }))
+    expect(hasButton(container, t('clearDefaultEffort'))).toBe(true)
+    await act(async () => { buttonByText(container, t('clearDefaultEffort')).click() })
+    // The ladder draft is untouched, so the only REAL intent is the cleared
+    // pick (the ladder bytes rewrite identically).
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], null)
+  })
+
+  it('an untouched pick leaves the intent undefined so a ladder-only edit never clears it', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({
+      api,
+      efforts: { high: 'high' },
+      defaultEffort: 'high',
+    }))
+    await act(async () => { checkboxes(container)[2]!.click() })
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { low: 'low', high: 'high' }, undefined, undefined, [], undefined)
+  })
+
+  it('disarming the picked level flags the pick stale and clears it on apply', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({
+      api,
+      efforts: { off: null, high: 'high' },
+      defaultEffort: 'high',
+    }))
+    // Disarm "high" (index 4 in LEVEL_ORDER): the pick names it, so it
+    // auto-clears to "follow memory".
+    await act(async () => { checkboxes(container)[4]!.click() })
+    const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)!
+    expect(select.value).toBe('')
+    await act(async () => { buttonByText(container, t('apply')).click() })
+    // The pick is cleared durably (null intent); the ladder keeps only the
+    // off level, which declares a non-reasoning model.
+    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', false, undefined, undefined, [], null)
+  })
+
+  it('reset restores the stored pick', async () => {
+    const { container } = await renderEditor(baseProps({
+      efforts: { high: 'high' },
+      defaultEffort: 'high',
+    }))
+    await act(async () => { buttonByText(container, t('clearDefaultEffort')).click() })
+    await act(async () => { buttonByText(container, t('reset')).click() })
+    const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)!
+    expect(select.value).toBe('high')
   })
 })
