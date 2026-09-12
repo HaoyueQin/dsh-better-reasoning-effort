@@ -272,6 +272,28 @@ describe('wireEffortMemory: model switches', () => {
     }
   })
 
+  it('records nothing while the slider is off — the wrap is a pure pass-through', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireEffortMemory(fake.directory)
+    try {
+      setSliderEnabled(false)
+      // An explicit pick with the slider off must not enter the memory: the
+      // plugin is absent, and its bookkeeping dies with it.
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' })
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }])
+      expect(rememberedEffort('moonshot', 'kimi-k3')).toBeUndefined()
+      // ... and a same-model effort-less pick must not spend the restore
+      // attempt either, so re-enabling the slider restores full behaviour.
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      setSliderEnabled(true)
+      rememberEffort('moonshot', 'kimi-k3', 'high')
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.submitted[2]).toEqual({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'high' }))
+    } finally {
+      restore()
+    }
+  })
+
   it('is idempotent per instance and restores the original select on dispose', async () => {
     const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
     const original = fake.directory.select

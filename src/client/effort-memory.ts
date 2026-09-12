@@ -149,7 +149,9 @@ export function rememberEffort(provider: string, model: string, id: string): voi
 /** The level explicitly picked for one model, or undefined when none was. */
 export function rememberedEffort(provider: string, model: string): string | undefined {
   return readMemory()[memoryKey(provider, model)]
-}/** The effort level ids one model's entry advertises in a directory snapshot. */
+}
+
+/** The effort level ids one model's entry advertises in a directory snapshot. */
 function effortIdsOf(
   state: ModelDirectoryStateLike,
   provider: string,
@@ -175,10 +177,11 @@ function isModelSwitch(
  * the SESSION'S own sighting (a level the user picked in this session --
  * switching away and back must not lose it), else the per-model configured
  * pick from the settings document, else the cross-session memory, else the
- * vendor's documented default from the knowledge base — always validated
- * against the ADVERTISED ladder, and undefined when nothing legitimate lands.
- * Async only because the configured pick reads the settings document; every
- * other layer is synchronous.
+ * last provider-native sighting from a replay, else the vendor's documented
+ * default from the knowledge base — always validated against the ADVERTISED
+ * ladder, and undefined when nothing legitimate lands. Async only because
+ * the configured pick reads the settings document; every other layer is
+ * synchronous.
  */
 async function resolveFallback(
   snapshot: ModelDirectoryStateLike,
@@ -250,8 +253,14 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
     // poison the memory and re-fail every later switch.
     if (selection.reasoningEffort !== undefined) {
       const result = await original.call(directory, selection)
-      sessionSightings.set(memoryKey(selection.provider, selection.model), selection.reasoningEffort)
-      rememberEffort(selection.provider, selection.model, selection.reasoningEffort)
+      // Recording is part of the plugin's presence: with the slider off the
+      // plugin is absent, so an explicit pick must not be recorded either —
+      // the wrapped submit then stays a pure pass-through, exactly as the
+      // unwired directory behaved.
+      if (sliderEnabled()) {
+        sessionSightings.set(memoryKey(selection.provider, selection.model), selection.reasoningEffort)
+        rememberEffort(selection.provider, selection.model, selection.reasoningEffort)
+      }
       return result
     }
     const snapshot = directory.store.getSnapshot()
@@ -260,11 +269,14 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
     // the user's pick for the rest of its life. The model's restore attempt
     // is spent with it: the confirmed selection re-notifies the watcher with
     // a level-less projection, and the chain must not answer it by fighting
-    // the pick the user just made.
+    // the pick the user just made. (Both bookkeeping moves are gated like
+    // the recording above — with the slider off this is a plain pass-through.)
     if (!isModelSwitch(snapshot.current, selection)) {
-      const key = memoryKey(selection.provider, selection.model)
-      sessionSightings.delete(key)
-      attemptedRestores.add(key)
+      if (sliderEnabled()) {
+        const key = memoryKey(selection.provider, selection.model)
+        sessionSightings.delete(key)
+        attemptedRestores.add(key)
+      }
       return original.call(directory, selection)
     }
     // A switch without a level: re-apply the session's sighting, the
@@ -306,11 +318,14 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
           return
         }
         // The chain took an await: re-verify against the CURRENT store
-        // before speaking, so a selection that landed meanwhile stands.
+        // before speaking, so a selection that landed meanwhile stands and
+        // the level still sits on the CURRENT advertised ladder (the catalog
+        // can refresh during the await).
         const fresh = directory.store.getSnapshot()
         const freshCurrent = fresh.current
         if (freshCurrent === null || freshCurrent.reasoningEffort !== undefined
-          || memoryKey(freshCurrent.provider, freshCurrent.model) !== key) {
+          || memoryKey(freshCurrent.provider, freshCurrent.model) !== key
+          || !effortIdsOf(fresh, freshCurrent.provider, freshCurrent.model).includes(fallback)) {
           attemptedRestores.delete(key)
           return
         }
