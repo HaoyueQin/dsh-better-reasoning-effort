@@ -637,6 +637,21 @@ describe('EffortEditor default-effort pick', () => {
     expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', false, undefined, undefined, [], null)
   })
 
+  it('follows a pick-only props push — the pick rides the same sync discipline', async () => {
+    const { container, setProps } = await renderEditor(baseProps({
+      efforts: { high: 'high' },
+    }))
+    const select = () => container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)!
+    expect(select()!.value).toBe('')
+    // Another tab (or a hand-edited document) sets the pick: the editor's
+    // draft must follow it even though nothing else in the props changed.
+    await setProps(baseProps({ efforts: { high: 'high' }, defaultEffort: 'high' }))
+    expect(select()!.value).toBe('high')
+    // And a pick cleared elsewhere clears here too.
+    await setProps(baseProps({ efforts: { high: 'high' } }))
+    expect(select()!.value).toBe('')
+  })
+
   it('reset restores the stored pick', async () => {
     const { container } = await renderEditor(baseProps({
       efforts: { high: 'high' },

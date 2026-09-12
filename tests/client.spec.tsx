@@ -678,6 +678,76 @@ describe('client apply()', () => {
     }
   })
 
+  it('retries the configured-pick describe after a refused read instead of caching the miss', async () => {
+    // A refused describe must not land an empty cache: the next chain read
+    // re-describes and the configured layer comes back without needing a
+    // document invalidation.
+    let ok = false
+    const api = fakeApi(() => Promise.resolve(ok
+      ? makeJoin({
+        aliyun: {
+          displayName: 'Aliyun',
+          api: 'openai-completions',
+          models: [{ id: 'qwen-max', name: 'Qwen Max', defaultEffort: 'low' }],
+        },
+      })
+      : { ...makeJoin({}), writable: true, namespace: undefined }))
+    // describeNamespace degrades a refused envelope to namespace: undefined.
+    const directory = directoryFixture()
+    const originalSelect = directory.select as unknown as { mock: { calls: unknown[][] } }
+    const h = makeCtx(api, {
+      services: {
+        sessions: { list: { getSnapshot: () => ({ current: 's1' }) } },
+        modelDirectories: { directoryFor: () => directory },
+      },
+    })
+    try {
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      // A level-less projection lands while the reads are still refused: the
+      // chain misses (no vendor default for this id is asserted by the
+      // configured layer being the ONLY source of 'low').
+      directory.update({
+        current: { provider: 'aliyun', model: 'qwen-max' },
+        routable: true,
+        groups: [{
+          id: 'aliyun',
+          name: 'Aliyun',
+          models: [{
+            id: 'qwen-max',
+            name: 'Qwen Max',
+            reasoning: {
+              efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }],
+            },
+          }],
+        }],
+        failures: [],
+        status: 'ready',
+        error: null,
+      })
+      await new Promise(resolve => setTimeout(resolve, 0))
+      await waitFor(() => originalSelect.mock.calls.length > 0)
+      // During the refused window the chain falls through to the vendor
+      // default (qwen → high).
+      expect(originalSelect.mock.calls[0][0])
+        .toMatchObject({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'high' })
+      // Reads recover WITHOUT any document invalidation — the refused answer
+      // was never cached. Switch away and back: the switch chain re-describes
+      // (now ok) and the configured pick lands.
+      ok = true
+      await directory.select({ provider: 'aliyun', model: 'qwen-turbo' })
+      // Switch back: the chain reads the configured layer (now answering)
+      // and lands the pick.
+      await directory.select({ provider: 'aliyun', model: 'qwen-max' })
+      await waitFor(() => originalSelect.mock.calls.length > 2)
+      expect(originalSelect.mock.calls[2][0])
+        .toMatchObject({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'low' })
+    } finally {
+      h.disposeAll()
+      expect(directory.select).toBe(originalSelect)
+    }
+  })
+
   it('re-inserts the slider when a React re-render displaces it', async () => {
     const directory = directoryFixture()
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))

@@ -269,6 +269,14 @@ export function apply(ctx: ClientContext): void {
     const generation = configuredEffortsGeneration
     configuredEffortsInflight ??= describeNamespace(settingsApi)
       .then((join) => {
+        if (join.namespace === undefined) {
+          // The namespace is unregistered, or the read was refused (a
+          // gateway hiccup): do NOT cache the empty answer — the next chain
+          // read re-describes, instead of silently disabling the configured
+          // layer until the next invalidation.
+          configuredEffortsInflight = undefined
+          return
+        }
         const map = new Map<string, string>()
         for (const [route, profile] of Object.entries(providersOf(join.namespace))) {
           const rawModels = Array.isArray(profile['models']) ? profile['models'] : []
@@ -323,9 +331,15 @@ export function apply(ctx: ClientContext): void {
     const directories = host.get?.('modelDirectories') as ModelDirectoriesLike | undefined
     const current = sessions?.list?.getSnapshot().current
     if (current === undefined || directories === undefined) return undefined
-    if (sliderDirectory !== undefined && sliderDirectory.sessionId === current) return sliderDirectory.directory
     try {
+      // Resolve FIRST, then compare identities: a session scope can be torn
+      // down and re-resolved under the same id, and the cached instance would
+      // be a disposed directory serving a frozen snapshot forever.
       const directory = directories.directoryFor(current)
+      if (sliderDirectory !== undefined && sliderDirectory.sessionId === current
+        && sliderDirectory.directory === directory) {
+        return directory
+      }
       // The effort-memory wiretap rides the shared directory (wrapping its
       // select AND watching for level-less restored projections), so a model
       // switch and a session restore both carry the remembered level.

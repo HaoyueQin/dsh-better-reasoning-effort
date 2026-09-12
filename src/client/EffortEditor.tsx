@@ -220,7 +220,11 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
         setMaxOutput(initialCompat?.supportsMaxOutputTokens === undefined ? '' : String(initialCompat.supportsMaxOutputTokens))
       }
     }
-  }, [initialEfforts, initialInput, initialCompat])
+    // The pick participates in the same sync discipline as the other three
+    // parts — its token MUST ride the dependency array, or a pick-only push
+    // (another tab, a hand-edited document) never reaches this draft, and a
+    // later unrelated Apply writes the stale pick back over the document.
+  }, [initialEfforts, initialInput, initialCompat, initialDefaultEffort])
 
   const compatDraft = (): CompatSuggestion | undefined => {
     const out: CompatSuggestion = {}
@@ -488,7 +492,14 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
               onChange={(event) => { markDirty(); setDefaultEffort(event.target.value); setMessage(undefined) }}
             >
               <option value="">{t('defaultEffortUnset')}</option>
-              {armedLevels.map(level => (
+              {/* A pick pushed from outside the draft (a hand-edited
+                  document) can name a level this draft no longer declares:
+                  render it anyway, so the select shows the real state
+                  instead of silently blanking to the first option. */}
+              {(defaultEffort !== '' && !armedLevels.includes(defaultEffort as (typeof LEVEL_ORDER)[number])
+                ? [...armedLevels, defaultEffort as (typeof LEVEL_ORDER)[number]]
+                : armedLevels
+              ).map(level => (
                 <option key={level} value={level}>{t('level_' + level)}</option>
               ))}
             </select>

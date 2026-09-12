@@ -106,9 +106,13 @@ function fakeDirectory(
     },
     load: async (): Promise<ModelDirectoryStateLike> => state,
     select: async (selection: Selection): Promise<unknown> => {
-      // The real directory throws on a rejected selection (directory.ts).
+      // The real directory throws on a rejected selection (directory.ts) —
+      // AFTER surfacing the refusal through the store, which notifies the
+      // watcher SYNCHRONOUSLY (dsh-client-store flushes 'sync').
       if (opts?.rejectSelects === true || selectCalls < (opts?.rejectFirst ?? 0)) {
         selectCalls += 1
+        state = { ...state, status: 'error', error: 'session/invalid: no such effort' }
+        for (const listener of [...listeners]) listener()
         throw new Error('session.selectModel failed: session/invalid: no such effort')
       }
       selectCalls += 1
@@ -381,16 +385,9 @@ describe('wireEffortMemory: restored projections', () => {
     )
     const restore = wireEffortMemory(fake.directory)
     try {
-      // The wire-time attempt is refused (a session mid-initialization) and
-      // must NOT spend the model's restore: the refusal is refunded.
-      await vi.waitFor(() => expect(fake.attempts()).toBe(1))
-      expect(fake.submitted).toEqual([])
-      // Each later store update retries the refunded attempt (the real
-      // directory surfaces a refusal through the store, and any projection /
-      // catalog movement re-notifies the watcher), until one lands the
-      // remembered level.
-      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
-      await vi.waitFor(() => expect(fake.attempts()).toBe(2))
+      // The wire-time attempt is refused (a session mid-initialization); the
+      // refund re-kicks the watcher itself, and later store updates retry the
+      // refunded attempt too, until one lands the remembered level.
       fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
       await vi.waitFor(() => expect(fake.submitted).toEqual([
         { provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' },
@@ -413,14 +410,10 @@ describe('wireEffortMemory: restored projections', () => {
     const restore = wireEffortMemory(fake.directory)
     try {
       // Exactly the ceiling's worth of attempts — the wire-time attempt plus
-      // one refund per later store update — then the watcher stands down for
-      // this directory instead of retrying forever.
-      await vi.waitFor(() => expect(fake.attempts()).toBe(1))
-      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
-      await vi.waitFor(() => expect(fake.attempts()).toBe(2))
-      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      // the self-re-kicked refunds — then the watcher stands down for this
+      // directory instead of retrying forever.
       await vi.waitFor(() => expect(fake.attempts()).toBe(3))
-      // The ceiling is reached: later updates attempt nothing more.
+      // The ceiling is reached: later store updates attempt nothing more.
       fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
       await new Promise(resolve => setTimeout(resolve, 0))
       expect(fake.attempts()).toBe(3)
@@ -494,6 +487,65 @@ describe('wireEffortMemory: configured per-model pick', () => {
       await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'high' }]))
       // The watcher's re-apply is a memory READ, not a user pick.
       expect(rememberedEffort('moonshot', 'kimi-k3')).toBeUndefined()
+    } finally {
+      restore()
+    }
+  })
+
+  it('retries a refusal without needing an external store update', async () => {
+    // The refusal's own error update reaches the watcher synchronously, while
+    // the refund is a microtask — the refund must re-kick the watcher itself
+    // or a quiet session would never retry.
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    const fake = fakeDirectory(
+      stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }),
+      { rejectFirst: 1 },
+    )
+    const restore = wireEffortMemory(fake.directory)
+    try {
+      await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }]))
+    } finally {
+      restore()
+    }
+  })
+
+  it('never overrides a newer user action that lands during the chain await', async () => {
+    // Hold the configured layer in flight so the switch path parks inside
+    // its post-await window; a user utterance landing there is final.
+    let release!: (level: string | undefined) => void
+    const gate = new Promise<string | undefined>(resolve => { release = resolve })
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: () => gate })
+    try {
+      const switchCall = fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      // A user utterance lands while the switch's chain is still in flight.
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' })
+      release('high')
+      await switchCall
+      // The stale switch submission was dropped entirely: the user's pick stands.
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }])
+    } finally {
+      restore()
+    }
+  })
+
+  it('never overrides an explicit follow-the-default that lands during the restore await', async () => {
+    let release!: (level: string | undefined) => void
+    const gate = new Promise<string | undefined>(resolve => { release = resolve })
+    const fake = fakeDirectory(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: () => gate })
+    try {
+      // The wire-time restore attempt parks inside the configured read
+      // (before reaching select: attempts stays 0), and the user re-submits
+      // the same model WITHOUT a level — an explicit "follow the provider
+      // default", the final word for this session.
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      release('high')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      // The watcher's stale injection never happened: the only select call
+      // is the user's own follow-the-default pick (no level attached).
+      expect(fake.attempts()).toBe(1)
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3' }])
     } finally {
       restore()
     }

@@ -245,9 +245,17 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
   /** Stop retrying one model after this many refused restores (per directory). */
   const RESTORE_RETRY_LIMIT = 3
 
+  // Every wrapped select call is a user utterance, counted in order. Both
+  // async submission paths (the wrapped switch and the watcher) verify just
+  // before their post-await submission that no LATER utterance landed — a
+  // newer user action always wins, whatever it said, and the superseded
+  // submission is dropped entirely instead of overwriting it.
+  let utterances = 0
+
   const wrapped = async (
     selection: Parameters<ModelDirectoryLike['select']>[0],
   ): Promise<unknown> => {
+    const myUtterance = ++utterances
     // An explicit level is the memory's source of truth — but only an
     // ACCEPTED one: a refused selection (host validation failed) must not
     // poison the memory and re-fail every later switch.
@@ -285,7 +293,23 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
     // advertised ladder cannot be spoken to at all.
     if (!sliderEnabled()) return original.call(directory, selection)
     const fallback = await resolveFallback(snapshot, selection.provider, selection.model, sessionSightings, deps)
+    // The chain awaited (the configured layer may have made a wire round
+    // trip): re-verify before speaking. A newer user action — an explicit
+    // pick, a follow-the-default, or a different selection — that landed
+    // during the window is final: the stale submission is dropped entirely
+    // instead of overwriting it. "Newer" means the store's selection moved
+    // off the snapshot this call started from, or another wrapped call ran.
+    const fresh = directory.store.getSnapshot()
+    const moved = (a: DirectoryCurrentLike | null, b: DirectoryCurrentLike | null): boolean =>
+      a === null || b === null
+      || a.provider !== b.provider || a.model !== b.model || a.reasoningEffort !== b.reasoningEffort
+    if (utterances !== myUtterance || moved(fresh.current, snapshot.current)) return undefined
     if (fallback === undefined) return original.call(directory, selection)
+    // The catalog can refresh during the same window: the level must still
+    // sit on the CURRENT advertised ladder.
+    if (!effortIdsOf(fresh, selection.provider, selection.model).includes(fallback)) {
+      return original.call(directory, selection)
+    }
     return original.call(directory, { ...selection, reasoningEffort: fallback })
   }
 
@@ -307,6 +331,7 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
       return
     }
     attemptedRestores.add(key)
+    const utteranceAtAttempt = utterances
     // Directly through the ORIGINAL select: the watcher's own re-apply is a
     // memory READ, not a user pick, and must not be remembered as one.
     void resolveFallback(snapshot, current.provider, current.model, sessionSightings, deps)
@@ -317,16 +342,16 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
           attemptedRestores.delete(key)
           return
         }
-        // The chain took an await: re-verify against the CURRENT store
-        // before speaking, so a selection that landed meanwhile stands and
-        // the level still sits on the CURRENT advertised ladder (the catalog
-        // can refresh during the await).
+        // The chain awaited: re-verify against the CURRENT store before
+        // speaking. A newer user utterance (an explicit pick, or a
+        // follow-the-default that landed mid-window) is final — this attempt
+        // stays spent instead of overriding it.
         const fresh = directory.store.getSnapshot()
         const freshCurrent = fresh.current
-        if (freshCurrent === null || freshCurrent.reasoningEffort !== undefined
+        if (utterances !== utteranceAtAttempt
+          || freshCurrent === null || freshCurrent.reasoningEffort !== undefined
           || memoryKey(freshCurrent.provider, freshCurrent.model) !== key
           || !effortIdsOf(fresh, freshCurrent.provider, freshCurrent.model).includes(fallback)) {
-          attemptedRestores.delete(key)
           return
         }
         await original
@@ -339,7 +364,15 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
         // cannot turn the watcher into a loop.
         const failures = (restoreFailures.get(key) ?? 0) + 1
         restoreFailures.set(key, failures)
-        if (failures < RESTORE_RETRY_LIMIT) attemptedRestores.delete(key)
+        if (failures < RESTORE_RETRY_LIMIT) {
+          attemptedRestores.delete(key)
+          // The refusal's own error update reached this watcher BEFORE this
+          // refund (the store notifies synchronously, the refund is a
+          // microtask), so "wait for the next store update" may wait forever
+          // on a quiet session: re-kick the watcher here, ceiling still
+          // bounding the loop.
+          restoreProjection()
+        }
       })
   }
 
