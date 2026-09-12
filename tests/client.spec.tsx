@@ -564,6 +564,60 @@ describe('client apply()', () => {
     }
   })
 
+  it('wires the effort-memory wiretap without the model menu ever opening', async () => {
+    const directory = directoryFixture()
+    // The wrapped select is a plain closure; the spy shape lives on the
+    // original it captured — calls made through the wrapper land here.
+    const originalSelect = directory.select as unknown as { mock: { calls: unknown[][] } }
+    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
+    const h = makeCtx(api, {
+      services: {
+        sessions: { list: { getSnapshot: () => ({ current: 's1' }) } },
+        modelDirectories: { directoryFor: () => directory },
+      },
+    })
+    try {
+      // No composer card and no model menu in the DOM at all: the wiring must
+      // not depend on the menu popover existing (issue #4 — a brand-new
+      // session's projection lands without going through select, so the
+      // restore watcher has to be in place from the session's birth, not
+      // from the first time the user opens the model menu).
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      expect(directory.select).not.toBe(originalSelect)
+      // The watcher reacts to a level-less projection landing after wiring.
+      directory.update({
+        current: { provider: 'aliyun', model: 'qwen-max' },
+        routable: true,
+        groups: [{
+          id: 'aliyun',
+          name: 'Aliyun',
+          models: [{
+            id: 'qwen-max',
+            name: 'Qwen Max',
+            reasoning: {
+              defaultEffort: 'medium',
+              efforts: [{ id: 'off', name: 'Off' }, { id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }],
+            },
+          }],
+        }],
+        failures: [],
+        status: 'ready',
+        error: null,
+      })
+      await waitFor(() => originalSelect.mock.calls.length > 0)
+      // No memory and no provider-native sighting: the restore lands the
+      // knowledge base's vendor default for the family (qwen-max → high),
+      // NOT the fixture's adapter defaultEffort — the chain never reads it.
+      expect(originalSelect.mock.calls[0][0])
+        .toMatchObject({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'high' })
+    } finally {
+      h.disposeAll()
+      // Fiber disposal restores the directory's original select.
+      expect(directory.select).toBe(originalSelect)
+    }
+  })
+
   it('re-inserts the slider when a React re-render displaces it', async () => {
     const directory = directoryFixture()
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
