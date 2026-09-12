@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { createEditorApi, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
+import { createEditorApi, defaultEffortOf, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
 import { modelsOf } from '../src/shared.js'
 import { AUTOFILL_MARKER } from '../src/constants.js'
 import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
@@ -156,11 +156,11 @@ describe('createEditorApi', () => {
     const sink = vi.fn()
     const staging = createEditorApi(api, undefined, sink)
     staging.stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
-    expect(sink).toHaveBeenCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, undefined, undefined)
+    expect(sink).toHaveBeenCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, undefined, undefined, undefined)
     // The suggestion's compat rides the same seam.
     const compat = { thinkingFormat: 'deepseek' as const, supportsReasoningEffort: true }
     staging.stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat)
-    expect(sink).toHaveBeenLastCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat, undefined)
+    expect(sink).toHaveBeenLastCalledWith('acme', 'deepseek-v4-flash-free', { high: 'high' }, compat, undefined, undefined)
     // An edit-card seam (no sink) is a no-op, not a crash.
     createEditorApi(api).stageEfforts('acme', 'deepseek-v4-flash-free', { high: 'high' })
   })
@@ -224,6 +224,54 @@ describe('createEditorApi', () => {
     // The mutated value is visible to the next read.
     const after = await editor.suggest('aliyun', 'qwen-max')
     expect(after.ok).toBe(true)
+  })
+
+  it('writes, clears, and leaves the per-model default-effort pick', async () => {
+    // Own fixtures: the shared initialValue is mutated by earlier writes.
+    const { api, mutates } = fakeApi({
+      providers: { aliyun: { models: [{ id: 'qwen-max' }] } },
+    })
+    const editor = createEditorApi(api)
+    // A string pick lands on the row (the ladder rides untouched).
+    expect(await editor.writeEfforts('aliyun', 'qwen-max', 'keep', undefined, undefined, undefined, 'high')).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0].reasoningEfforts).toBeUndefined()
+    expect(models[0].defaultEffort).toBe('high')
+    // null clears the pick durably.
+    const clearFixture = fakeApi({
+      providers: { aliyun: { models: [{ id: 'qwen-max', defaultEffort: 'high' }] } },
+    })
+    const clearEditor = createEditorApi(clearFixture.api)
+    expect(await clearEditor.writeEfforts('aliyun', 'qwen-max', 'keep', undefined, undefined, undefined, null)).toEqual({ ok: true })
+    const cleared = clearFixture.mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(cleared[0].defaultEffort).toBeUndefined()
+    // An omitted intent leaves a stored pick untouched (a ladder-only edit).
+    const { api: api2, mutates: mutates2 } = fakeApi({
+      providers: { aliyun: { models: [{ id: 'qwen-max', defaultEffort: 'medium' }] } },
+    })
+    const editor2 = createEditorApi(api2)
+    expect(await editor2.writeEfforts('aliyun', 'qwen-max', 'keep', undefined, undefined, undefined)).toEqual({ ok: true })
+    const kept = mutates2[0].ops[0].value as Record<string, unknown>[]
+    expect(kept[0].defaultEffort).toBe('medium')
+  })
+
+  it('reads the stored default-effort pick, degrading junk to undefined', () => {
+    const providers = providersOf({
+      ns: 'llm-pi-ai', schema: {},
+      value: { providers: { r: { models: [
+        { id: 'a', defaultEffort: 'high' },
+        { id: 'b', defaultEffort: '' },
+        { id: 'c', defaultEffort: 42 },
+        { id: 'd' },
+      ] } } },
+      user: {}, revision: 1, applies: 'live', secrets: [],
+    } as unknown as SettingsNamespaceView)
+    const models = modelsOf(providers, 'r')
+    expect(defaultEffortOf(models, 'a')).toBe('high')
+    expect(defaultEffortOf(models, 'b')).toBeUndefined()
+    expect(defaultEffortOf(models, 'c')).toBeUndefined()
+    expect(defaultEffortOf(models, 'd')).toBeUndefined()
+    expect(defaultEffortOf(models, 'missing')).toBeUndefined()
   })
 
   it('writes false to disable reasoning', async () => {

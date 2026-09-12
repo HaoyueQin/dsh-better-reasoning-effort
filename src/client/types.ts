@@ -205,6 +205,14 @@ export type InputIntent = InputModalities | null | undefined
  */
 export type EffortWriteIntent = ReasoningEfforts | false | undefined | 'keep'
 
+/**
+ * The per-model default-effort part of a write intent. Undefined leaves the
+ * stored pick untouched (a ladder-only edit never clears it); null clears it
+ * durably (back to the memory chain); a string writes exactly that level --
+ * one of the model's own declared ladder keys.
+ */
+export type DefaultEffortIntent = string | null | undefined
+
 /** The write seam the effort editor needs. */
 export interface EffortEditorApi {
   /** Ask for a knowledge-base / protocol suggestion for one model. */
@@ -234,6 +242,7 @@ export interface EffortEditorApi {
     compat?: CompatSuggestion,
     input?: InputIntent,
     clearCompatKeys?: readonly string[],
+    defaultEffort?: DefaultEffortIntent,
   ): Promise<WriteEffortsReply>
   /**
    * Stage one model's declaration for a route that does not exist in the
@@ -246,5 +255,6 @@ export interface EffortEditorApi {
     efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
     input?: InputModalities,
+    defaultEffort?: DefaultEffortIntent,
   ): void
 }

@@ -52,5 +52,17 @@ export const INPUT_UNSET_MARKER = 'inputUnset'
  */
 export const AUTOFILL_MARKER = 'reasoningEffortsAutofilled'
 
+/**
+ * Model-level default-effort pick (issue #4): the level a brand-new session
+ * starts this model at, outranking the remembered levels. The value is one of
+ * the model's own declared ladder keys, or the field is absent when the user
+ * has not picked one (memory chain applies). Deliberately NOT a harness
+ * concept: pi-ai's runtime never sees it (unknown model keys ride the settings
+ * document the way the other markers do), and the browser half is its only
+ * consumer. The name matches the catalog's `reasoning.defaultEffort` spelling
+ * so a future first-class field can adopt the stored values as-is.
+ */
+export const DEFAULT_EFFORT_FIELD = 'defaultEffort'
+
 /** Locale dictionary namespace for the browser half's copy (not a settings namespace). */
 export const STORE_NS = PLUGIN_ID

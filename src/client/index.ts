@@ -28,13 +28,13 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { createRoot, type Root } from 'react-dom/client'
 import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
+import { DEFAULT_EFFORT_FIELD, PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
 import { wireEffortMemory } from './effort-memory.js'
 import { createScanState, reconcile, type HostLabels } from './injector.ts'
 import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
-import { describeNamespace } from './ops.ts'
+import { describeNamespace, providersOf } from './ops.ts'
 import { ComposerSlider } from './ComposerSlider.js'
 import { SliderToggle } from './SliderToggle.js'
 import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabled } from './slider-pref.js'
@@ -256,6 +256,56 @@ export function apply(ctx: ClientContext): void {
   // `select` kept for the fiber disposer to restore.
   const wiredDirectories = new Map<ModelDirectoryLike, () => void>()
 
+  // ---- Per-model configured picks (issue #4): the browser-side cache of the
+  // ---- settings document's model rows' `defaultEffort` field. The chain
+  // ---- reads it through the wiring below; a pushed document update or a
+  // ---- connection reset invalidates it, and the next read re-describes.
+  let configuredEfforts: Map<string, string> | undefined
+  let configuredEffortsInflight: Promise<void> | undefined
+  let configuredEffortsGeneration = 0
+
+  const ensureConfiguredEfforts = (): Promise<void> => {
+    if (configuredEfforts !== undefined) return Promise.resolve()
+    const generation = configuredEffortsGeneration
+    configuredEffortsInflight ??= describeNamespace(settingsApi)
+      .then((join) => {
+        const map = new Map<string, string>()
+        for (const [route, profile] of Object.entries(providersOf(join.namespace))) {
+          const rawModels = Array.isArray(profile['models']) ? profile['models'] : []
+          for (const model of rawModels) {
+            if (typeof model !== 'object' || model === null || Array.isArray(model)) continue
+            const id = (model as Record<string, unknown>)['id']
+            const effort = (model as Record<string, unknown>)[DEFAULT_EFFORT_FIELD]
+            if (typeof id === 'string' && typeof effort === 'string' && effort.length > 0) {
+              map.set(`${route}/${id}`, effort)
+            }
+          }
+        }
+        // An invalidation during the flight must not land a stale snapshot:
+        // the caller re-describes on the next read instead.
+        if (generation === configuredEffortsGeneration) configuredEfforts = map
+        else configuredEffortsInflight = undefined
+      })
+      .catch(() => {
+        // A failed read leaves the cache empty: the next read re-describes.
+        if (generation === configuredEffortsGeneration) configuredEffortsInflight = undefined
+      })
+    return configuredEffortsInflight
+  }
+
+  /** The configured pick for one model, after the cache has settled. */
+  const configuredEffortOf = async (provider: string, model: string): Promise<string | undefined> => {
+    await ensureConfiguredEfforts()
+    return configuredEfforts?.get(`${provider}/${model}`)
+  }
+
+  /** Drop the configured-pick cache; the next read re-describes. */
+  const invalidateConfiguredEfforts = (): void => {
+    configuredEffortsGeneration += 1
+    configuredEfforts = undefined
+    configuredEffortsInflight = undefined
+  }
+
   /**
    * Resolve the current session's model directory and wire the effort-memory
    * wiretap into it. Deliberately menu-INDEPENDENT: the directory is a
@@ -279,8 +329,9 @@ export function apply(ctx: ClientContext): void {
       // The effort-memory wiretap rides the shared directory (wrapping its
       // select AND watching for level-less restored projections), so a model
       // switch and a session restore both carry the remembered level.
-      // Idempotent per instance.
-      if (!wiredDirectories.has(directory)) wiredDirectories.set(directory, wireEffortMemory(directory))
+      // Idempotent per instance. The configured-pick read rides along so the
+      // chain's second layer comes from the settings document.
+      if (!wiredDirectories.has(directory)) wiredDirectories.set(directory, wireEffortMemory(directory, { configuredEffort: configuredEffortOf }))
       sliderDirectory = { sessionId: current, directory }
       return directory
     } catch {
@@ -497,6 +548,9 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     const refresh = (): void => {
       scanState.describePromise = undefined
+      // The configured-pick cache rides the same invalidations: a document
+      // update (or a fresh connection) must not leave stale picks behind.
+      invalidateConfiguredEfforts()
       scheduleScan()
     }
     const disposers = [

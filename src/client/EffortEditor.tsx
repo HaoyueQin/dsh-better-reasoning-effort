@@ -84,6 +84,8 @@ export interface EffortEditorProps {
   input?: InputModalities
   /** The model's stored compat block (passthrough; suggestions merge over it). */
   compat?: CompatSuggestion
+  /** The model's stored per-model default-effort pick, when one is set. */
+  defaultEffort?: string
   /** Model row index (for aria labels). */
   index: number
   /**
@@ -157,9 +159,13 @@ function sameModality(draft: DraftModality, stored: InputModalities | undefined)
  * checkboxes, the modality toggle, the auto-adapt action, and the
  * apply/reset actions that own both sections.
  */
-export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
+export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, defaultEffort: initialDefaultEffort, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [modality, setModality] = useState<DraftModality>(() => modalityFrom(initialInput))
+  // The per-model default-effort pick (issue #4), as the level id or '' for
+  // "follow the memory chain". The pick lives in the same Apply as the ladder
+  // so one mutate carries both.
+  const [defaultEffort, setDefaultEffort] = useState<string>(() => initialDefaultEffort ?? '')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<{ kind: 'success' | 'error' | 'info'; text: string } | undefined>(undefined)
   const [suggested, setSuggested] = useState<ReasoningEfforts | false | undefined>(undefined)
@@ -189,6 +195,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
   const dirtyRef = useRef(false)
   const previousEfforts = useRef<false | ReasoningEfforts | undefined>(initialEfforts)
   const previousInput = useRef<InputModalities | undefined>(initialInput)
+  const previousDefaultEffort = useRef<string | undefined>(initialDefaultEffort)
 
   useEffect(() => {
     if (!sameEfforts(previousEfforts.current, initialEfforts)) {
@@ -200,6 +207,10 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
       // A push that lands while the user is mid-edit must not clobber the
       // draft -- same contract as the level grid above.
       if (!dirtyRef.current) setModality(modalityFrom(initialInput))
+    }
+    if (previousDefaultEffort.current !== initialDefaultEffort) {
+      previousDefaultEffort.current = initialDefaultEffort
+      if (!dirtyRef.current) setDefaultEffort(initialDefaultEffort ?? '')
     }
     if (JSON.stringify(previousCompat.current ?? null) !== JSON.stringify(initialCompat ?? null)) {
       previousCompat.current = initialCompat
@@ -228,9 +239,16 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
       ...(initialCompat?.supportsMaxOutputTokens === undefined ? {} : { supportsMaxOutputTokens: initialCompat.supportsMaxOutputTokens }),
     })
   }
+  // The declared levels of this draft: the pick's value domain.
+  const armedLevels = LEVEL_ORDER.filter(level => draft[level].on)
+  const defaultEffortIntent = defaultEffort === (initialDefaultEffort ?? '')
+    ? undefined
+    : defaultEffort === '' ? null : defaultEffort
+
   const changed = !sameEfforts(buildIntent(draft), initialEfforts)
     || !sameModality(modality, initialInput)
     || compatChanged()
+    || defaultEffortIntent !== undefined
 
   const markDirty = (): void => {
     dirtyRef.current = true
@@ -247,6 +265,9 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
 
   const patchLevel = (level: (typeof LEVEL_ORDER)[number], on: boolean): void => {
     markDirty()
+    // Disarming the level the pick names clears the pick with it: the pick is
+    // a level of the declared ladder, and a stale one must not survive Apply.
+    if (!on && defaultEffort === level) setDefaultEffort('')
     setDraft(current => {
       const next = { ...current, [level]: { ...current[level], on } }
       // Enabling a thinking level pre-fills the conventional spelling.
@@ -349,12 +370,12 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
       // route id; the settings write happens when the injector sees the
       // saved route appear.
       if (staged) {
-        api.stageEfforts(route, modelId, effortsIntent, writeCompat, nextInput ?? undefined)
+        api.stageEfforts(route, modelId, effortsIntent, writeCompat, nextInput ?? undefined, defaultEffortIntent)
         dirtyRef.current = false
         setMessage({ kind: 'success', text: t('staged') })
         return
       }
-      const reply = await api.writeEfforts(route, modelId, effortsIntent, writeCompat, nextInput, clearedCompatKeys(routeApi, writeCompat))
+      const reply = await api.writeEfforts(route, modelId, effortsIntent, writeCompat, nextInput, clearedCompatKeys(routeApi, writeCompat), defaultEffortIntent)
       if (!reply.ok) {
         setMessage({
           kind: 'error',
@@ -382,6 +403,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     dirtyRef.current = false
     setDraft(draftFrom(initialEfforts))
     setModality(modalityFrom(initialInput))
+    setDefaultEffort(initialDefaultEffort ?? '')
     setBudgetField(initialCompat?.thinkingTokenBudgetField ?? '')
     setPriorityText(initialCompat?.vllmPriority === undefined ? '' : String(initialCompat.vllmPriority))
     setMaxOutput(initialCompat?.supportsMaxOutputTokens === undefined ? '' : String(initialCompat.supportsMaxOutputTokens))
@@ -454,6 +476,36 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
           )
         })}
       </div>
+      {armedLevels.length > 0 ? (
+        <div className="bre-modality">
+          <span className="bre-effort-title">{t('defaultEffortLabel')}</span>
+          <label className="bre-modality-row">
+            <select
+              className="bre-select"
+              disabled={disabled}
+              aria-label={t('defaultEffortLabel') + ' ' + String(index + 1)}
+              value={defaultEffort}
+              onChange={(event) => { markDirty(); setDefaultEffort(event.target.value); setMessage(undefined) }}
+            >
+              <option value="">{t('defaultEffortUnset')}</option>
+              {armedLevels.map(level => (
+                <option key={level} value={level}>{t('level_' + level)}</option>
+              ))}
+            </select>
+            {defaultEffort !== '' ? (
+              <button
+                type="button"
+                className="bre-link-button bre-modality-clear"
+                disabled={disabled}
+                onClick={() => { markDirty(); setDefaultEffort(''); setMessage(undefined) }}
+              >
+                {t('clearDefaultEffort')}
+              </button>
+            ) : null}
+          </label>
+          <p className="bre-modality-note">{t('defaultEffortHint')}</p>
+        </div>
+      ) : null}
       <div className="bre-modality">
         <span className="bre-effort-title">{t('inputModality')}</span>
         <label className="bre-modality-row">
