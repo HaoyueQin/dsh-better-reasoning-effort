@@ -30,3 +30,6 @@ research/
 
 # Localized release notes are not released with the package: .github/releases/ never ships
 .github/releases/
+
+# Local planning/spec workspace of the superpowers skill — never committed.
+docs/superpowers/
