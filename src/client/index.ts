@@ -253,8 +253,15 @@ export function apply(ctx: ClientContext): void {
   let sliderMount: ForeignMount | undefined
   let sliderDirectory: { sessionId: string; directory: ModelDirectoryLike } | undefined
   // One effort-memory wiretap per directory instance, with each original
-  // `select` kept for the fiber disposer to restore.
-  const wiredDirectories = new Map<ModelDirectoryLike, () => void>()
+  // `select` kept for the fiber disposer to restore. Entries record their
+  // session id so the sweep in ensureSessionDirectory can release the
+  // wiretaps of directories whose session scope is gone (a deleted session's
+  // directory must not stay referenced and wrapped until fiber dispose).
+  interface WiredDirectory {
+    sessionId: string
+    restore: () => void
+  }
+  const wiredDirectories = new Map<ModelDirectoryLike, WiredDirectory>()
 
   // ---- Per-model configured picks (issue #4): the browser-side cache of the
   // ---- settings document's model rows' `defaultEffort` field. The chain
@@ -315,6 +322,32 @@ export function apply(ctx: ClientContext): void {
   }
 
   /**
+   * Release the wiretaps whose session scope is gone. The host resolver
+   * deletes a directory's entry when the session scope tears down, and its
+   * `directoryFor` then refuses that id (scope and binding are both gone --
+   * not the transient unmounted window, which happens before a wiretap can
+   * exist): re-resolving that id and comparing identities tells a dead
+   * wiretap from one whose session is merely not current. Runs on EVERY
+   * directory resolution, cache hits included -- the sweep must not depend
+   * on the current session changing.
+   */
+  const sweepDeadWiretaps = (directories: ModelDirectoriesLike, liveDirectory: ModelDirectoryLike): void => {
+    for (const [wired, entry] of wiredDirectories) {
+      if (wired === liveDirectory) continue
+      let alive: boolean
+      try {
+        alive = directories.directoryFor(entry.sessionId) === wired
+      } catch {
+        alive = false
+      }
+      if (!alive) {
+        entry.restore()
+        wiredDirectories.delete(wired)
+      }
+    }
+  }
+
+  /**
    * Resolve the current session's model directory and wire the effort-memory
    * wiretap into it. Deliberately menu-INDEPENDENT: the directory is a
    * per-session instance, and a brand-new session's durable projection lands
@@ -336,6 +369,7 @@ export function apply(ctx: ClientContext): void {
       // down and re-resolved under the same id, and the cached instance would
       // be a disposed directory serving a frozen snapshot forever.
       const directory = directories.directoryFor(current)
+      sweepDeadWiretaps(directories, directory)
       if (sliderDirectory !== undefined && sliderDirectory.sessionId === current
         && sliderDirectory.directory === directory) {
         return directory
@@ -345,7 +379,12 @@ export function apply(ctx: ClientContext): void {
       // switch and a session restore both carry the remembered level.
       // Idempotent per instance. The configured-pick read rides along so the
       // chain's second layer comes from the settings document.
-      if (!wiredDirectories.has(directory)) wiredDirectories.set(directory, wireEffortMemory(directory, { configuredEffort: configuredEffortOf }))
+      if (!wiredDirectories.has(directory)) {
+        wiredDirectories.set(directory, {
+          sessionId: current,
+          restore: wireEffortMemory(directory, { configuredEffort: configuredEffortOf }),
+        })
+      }
       sliderDirectory = { sessionId: current, directory }
       return directory
     } catch {
@@ -548,7 +587,7 @@ export function apply(ctx: ClientContext): void {
       sliderMount = undefined
       // Restore every wrapped directory's original select (the instances
       // outlive the fiber on disable/HMR and must submit officially again).
-      for (const [, restore] of wiredDirectories) restore()
+      for (const [, entry] of wiredDirectories) entry.restore()
       wiredDirectories.clear()
     }
   }, 'dsh-better-reasoning-effort: DOM injector')

@@ -678,6 +678,53 @@ describe('client apply()', () => {
     }
   })
 
+  it('sweeps the wiretap of a session whose scope is gone, keeping the live one', async () => {
+    // Two resident sessions, each with its own directory; the host resolver
+    // refuses an id whose session scope tore down (service.ts deletes the
+    // entry and the scope first, so the refusal is the death certificate).
+    const d1 = directoryFixture()
+    const d2 = directoryFixture()
+    // Identity anchors only: this test never inspects the recorded calls.
+    const original1 = d1.select
+    const original2 = d2.select
+    let current = 's1'
+    let s1Deleted = false
+    const resolver: { directoryFor(id: string): ModelDirectoryLike } = {
+      directoryFor(id: string): ModelDirectoryLike {
+        if (id === 's1' && s1Deleted) throw new Error('ui-model-selection: session "s1" resolved no scope')
+        return (id === 's1' ? d1 : d2) as unknown as ModelDirectoryLike
+      },
+    }
+    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
+    const h = makeCtx(api, {
+      services: {
+        sessions: { list: { getSnapshot: () => ({ current }) } },
+        modelDirectories: resolver,
+      },
+    })
+    try {
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      expect(d1.select).not.toBe(original1)
+      // Switch to s2: d2 gets wired, and d1 -- still alive under its own
+      // session -- keeps its wiretap (switching back must not lose it).
+      current = 's2'
+      document.body.appendChild(document.createElement('div'))
+      await waitFor(() => d2.select !== original2)
+      expect(d1.select).not.toBe(original1)
+      // s1's scope tears down: the next scan restores d1's original select
+      // and drops the wiretap, so the dead directory stops being referenced.
+      s1Deleted = true
+      document.body.appendChild(document.createElement('div'))
+      await waitFor(() => d1.select === original1)
+      expect(d2.select).not.toBe(original2)
+    } finally {
+      h.disposeAll()
+      expect(d1.select).toBe(original1)
+      expect(d2.select).toBe(original2)
+    }
+  })
+
   it('retries the configured-pick describe after a refused read instead of caching the miss', async () => {
     // A refused describe must not land an empty cache: the next chain read
     // re-describes and the configured layer comes back without needing a
