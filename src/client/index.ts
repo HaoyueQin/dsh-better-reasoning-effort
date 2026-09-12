@@ -256,8 +256,18 @@ export function apply(ctx: ClientContext): void {
   // `select` kept for the fiber disposer to restore.
   const wiredDirectories = new Map<ModelDirectoryLike, () => void>()
 
-  /** Resolve the current session's model directory (lazy seat probe). */
-  const currentDirectory = (): ModelDirectoryLike | undefined => {
+  /**
+   * Resolve the current session's model directory and wire the effort-memory
+   * wiretap into it. Deliberately menu-INDEPENDENT: the directory is a
+   * per-session instance, and a brand-new session's durable projection lands
+   * without going through `select`, so the watcher is the only thing that can
+   * re-apply the remembered level to it — it must be in place from the
+   * session's birth, not from the first time the user opens the model menu
+   * (issue #4: every new session otherwise read as Default until a manual
+   * pick). Runs on every mutation and scan; the per-session cache makes the
+   * hot path one snapshot read.
+   */
+  const ensureSessionDirectory = (): ModelDirectoryLike | undefined => {
     const host = ctx as unknown as SliderContext
     const sessions = host.get?.('sessions') as SessionsLike | undefined
     const directories = host.get?.('modelDirectories') as ModelDirectoriesLike | undefined
@@ -300,7 +310,7 @@ export function apply(ctx: ClientContext): void {
       }
       return
     }
-    const directory = currentDirectory()
+    const directory = ensureSessionDirectory()
     if (directory === undefined) {
       // Transient boot window only: the seat itself cannot mount before the
       // directory service resolves, so a menu open here is momentary. The
@@ -380,6 +390,10 @@ export function apply(ctx: ClientContext): void {
     // applying); one scan per frame keeps the editor stable mid-keystroke.
     scanTimer = window.setTimeout(() => {
       scanTimer = undefined
+      // Menu-independent effort-memory wiring (issue #4): the debounced scan
+      // also covers the paths no mutation carries — apply boot and a slider
+      // preference flip.
+      ensureSessionDirectory()
       const root = panelRoot()
       reconcile(root, {
         api: settingsApi,
@@ -427,6 +441,9 @@ export function apply(ctx: ClientContext): void {
 
   const startObserver = (): void => {
     if (observer !== undefined) return
+    // A session may already be resident when the fiber starts (page reload,
+    // HMR): wire it before the first mutation has a chance to land.
+    ensureSessionDirectory()
     observer = new MutationObserver(() => {
       // The slider path runs SYNCHRONOUSLY on the mutation microtask: the
       // React commit that opens the menu and this callback are delivered
@@ -434,6 +451,10 @@ export function apply(ctx: ClientContext): void {
       // carries the replicated popover — the official menu never flashes and
       // is never "covered". The settings-page editor/toggle reconciles stay
       // debounced below (they do heavy wire reads).
+      // The effort-memory wiring leads the callback for the same reason: a
+      // session switch lands as a DOM mutation, and the new session's
+      // directory must be watched before its projection can read as Default.
+      ensureSessionDirectory()
       reconcileSlider()
       scheduleScan()
     })
