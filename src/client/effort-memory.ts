@@ -15,7 +15,9 @@
  * The memory is keyed by "provider/model-id" — the exact fields a selection
  * carries — because the same model id under two providers names two models,
  * and display names are editable and never unique. Two delivery paths share
- * one fallback chain (the target model's own remembered level, else the last
+ * one fallback chain (the SESSION'S own sighting of a level the user picked
+ * in it, else the per-model configured pick from the settings document, else
+ * the last cross-session memory from localStorage, else the last
  * PROVIDER-NATIVE sighting from a replay when it names an advertised
  * level, else the VENDOR'S documented default from the knowledge base, else
  * the official no-effort behaviour):
@@ -30,10 +32,12 @@
  *     also keeps an explicit provider-default pick from being fought).
  * Discipline both paths keep:
  *   - an EXPLICIT level (slider drag, any effort row) always wins: it is
- *     remembered for that exact model and submitted untouched;
+ *     remembered for that exact model and submitted untouched — and it is
+ *     recorded as a SESSION sighting, which outranks the configured pick for
+ *     the rest of the session (switching away and back must not lose it);
  *   - an effort-less selection for the CURRENT model is an explicit "follow
- *     the provider default" and must pass through untouched — only a model
- *     SWITCH without a level reads the memory;
+ *     the provider default" and must pass through untouched — the session
+ *     sighting dies with it;
  *   - nothing is injected while the slider preference (the seat the memory
  *     serves) is switched off.
  *
@@ -42,6 +46,16 @@
 import { sliderEnabled } from './slider-pref.js'
 import { suggestEfforts } from '../knowledge.js'
 import type { DirectoryCurrentLike, ModelDirectoryLike, ModelDirectoryStateLike } from './types.js'
+
+/**
+ * The wiring-provided read of the per-model configured pick (the settings
+ * document's `defaultEffort` field). Async because it lives in the pi-ai
+ * document, not in localStorage; the wiring owns the caching describe.
+ * Absent (tests, or a wiring that does not supply it) skips the layer.
+ */
+export interface EffortMemoryDeps {
+  configuredEffort?: (provider: string, model: string) => Promise<string | undefined>
+}
 
 /** localStorage key (same namespace discipline as the slider preference). */
 const EFFORT_MEMORY_KEY = 'dsh-better-reasoning-effort.slider.efforts'
@@ -135,9 +149,7 @@ export function rememberEffort(provider: string, model: string, id: string): voi
 /** The level explicitly picked for one model, or undefined when none was. */
 export function rememberedEffort(provider: string, model: string): string | undefined {
   return readMemory()[memoryKey(provider, model)]
-}
-
-/** The effort level ids one model's entry advertises in a directory snapshot. */
+}/** The effort level ids one model's entry advertises in a directory snapshot. */
 function effortIdsOf(
   state: ModelDirectoryStateLike,
   provider: string,
@@ -160,20 +172,30 @@ function isModelSwitch(
 
 /**
  * Resolve the level the memory chain lands on for one model of a snapshot:
- * the model's own remembered level, else the vendor's documented default
- * from the knowledge base — always validated against the ADVERTISED ladder,
- * and undefined when nothing legitimate lands.
+ * the SESSION'S own sighting (a level the user picked in this session --
+ * switching away and back must not lose it), else the per-model configured
+ * pick from the settings document, else the cross-session memory, else the
+ * vendor's documented default from the knowledge base — always validated
+ * against the ADVERTISED ladder, and undefined when nothing legitimate lands.
+ * Async only because the configured pick reads the settings document; every
+ * other layer is synchronous.
  */
-function resolveFallback(
+async function resolveFallback(
   snapshot: ModelDirectoryStateLike,
   provider: string,
   model: string,
-): string | undefined {
+  sessionSightings: ReadonlyMap<string, string>,
+  deps: EffortMemoryDeps | undefined,
+): Promise<string | undefined> {
   const supported = effortIdsOf(snapshot, provider, model)
   if (supported.length === 0) return undefined
+  const key = memoryKey(provider, model)
+  const sighted = sessionSightings.get(key)
+  if (sighted !== undefined && supported.includes(sighted)) return sighted
+  const configured = await deps?.configuredEffort?.(provider, model)
+  if (configured !== undefined && supported.includes(configured)) return configured
   const memory = rememberedEffort(provider, model)
-  const remembered = memory !== undefined && supported.includes(memory) ? memory : undefined
-  if (remembered !== undefined) return remembered
+  if (memory !== undefined && supported.includes(memory)) return memory
   const native = providerLevel(provider, model)
   if (native !== undefined && supported.includes(native)) return native
   const fallback = suggestEfforts(model, {}).defaultEffort
@@ -188,9 +210,10 @@ function resolveFallback(
  * the original `select` (the directory instance outlives the plugin fiber
  * on disable/HMR).
  * @param directory - the shared per-session directory to wire.
+ * @param deps - optional wiring face (the configured-pick read).
  * @returns the disposer restoring the original `select` and the watcher.
  */
-export function wireEffortMemory(directory: ModelDirectoryLike): () => void {
+export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMemoryDeps): () => void {
   const target = directory as unknown as Record<string, unknown>
   if (target[WIRED_MARKER] === true) return () => {}
   // Whether `select` was an OWN property at wire time decides the restore:
@@ -199,12 +222,20 @@ export function wireEffortMemory(directory: ModelDirectoryLike): () => void {
   // onto the instance (which would keep shadowing a hot-swapped prototype).
   const hadOwnSelect = Object.prototype.hasOwnProperty.call(target, 'select')
   const original = directory.select
+  // Levels the user picked IN THIS SESSION, per model. The directory (and
+  // this closure) is a per-session instance, so the map is session-scoped by
+  // construction: it outranks the configured pick for the rest of the
+  // session — switching away and back must not lose the user's pick — and
+  // dies with the session instead of leaking into the next one.
+  const sessionSightings = new Map<string, string>()
   // One successful restore per model per directory lifetime: spent attempts
   // are never retried, which bounds the watcher (no loop on a refused write)
   // and keeps an explicit provider-default pick from being fought. A REFUSED
   // submission refunds its attempt -- a brand-new session's host may refuse
   // the first selectModel while the session is still initializing -- up to a
   // small ceiling, beyond which the model is given up on for this directory.
+  // A chain MISS refunds too: the configured layer reads live settings, so a
+  // later document change can answer differently.
   const attemptedRestores = new Set<string>()
   const restoreFailures = new Map<string, number>()
 
@@ -219,17 +250,29 @@ export function wireEffortMemory(directory: ModelDirectoryLike): () => void {
     // poison the memory and re-fail every later switch.
     if (selection.reasoningEffort !== undefined) {
       const result = await original.call(directory, selection)
+      sessionSightings.set(memoryKey(selection.provider, selection.model), selection.reasoningEffort)
       rememberEffort(selection.provider, selection.model, selection.reasoningEffort)
       return result
     }
     const snapshot = directory.store.getSnapshot()
-    // Same model, no level: an explicit "follow the provider default".
-    if (!isModelSwitch(snapshot.current, selection)) return original.call(directory, selection)
-    // A switch without a level: re-apply the model's own memory, else the
-    // vendor's documented default from the knowledge base — never a guess.
-    // A model with no advertised ladder cannot be spoken to at all.
+    // Same model, no level: an explicit "follow the provider default" —
+    // the session sighting dies with it, so this session keeps honouring
+    // the user's pick for the rest of its life. The model's restore attempt
+    // is spent with it: the confirmed selection re-notifies the watcher with
+    // a level-less projection, and the chain must not answer it by fighting
+    // the pick the user just made.
+    if (!isModelSwitch(snapshot.current, selection)) {
+      const key = memoryKey(selection.provider, selection.model)
+      sessionSightings.delete(key)
+      attemptedRestores.add(key)
+      return original.call(directory, selection)
+    }
+    // A switch without a level: re-apply the session's sighting, the
+    // configured pick, the model's own memory, or the vendor's documented
+    // default from the knowledge base — never a guess. A model with no
+    // advertised ladder cannot be spoken to at all.
     if (!sliderEnabled()) return original.call(directory, selection)
-    const fallback = resolveFallback(snapshot, selection.provider, selection.model)
+    const fallback = await resolveFallback(snapshot, selection.provider, selection.model, sessionSightings, deps)
     if (fallback === undefined) return original.call(directory, selection)
     return original.call(directory, { ...selection, reasoningEffort: fallback })
   }
@@ -244,19 +287,36 @@ export function wireEffortMemory(directory: ModelDirectoryLike): () => void {
     if (!sliderEnabled()) return
     const key = memoryKey(current.provider, current.model)
     if (attemptedRestores.has(key)) return
-    const fallback = resolveFallback(snapshot, current.provider, current.model)
-    if (fallback === undefined) {
-      // A deterministic miss (no advertised ladder, or no landing level on it)
-      // will not answer differently later: spend the attempt so the watcher
-      // does not re-resolve the same dead end on every store update.
+    // A model with no advertised ladder cannot be spoken to at all: a
+    // deterministic miss — spend the attempt so the watcher does not
+    // re-resolve the same dead end on every store update.
+    if (effortIdsOf(snapshot, current.provider, current.model).length === 0) {
       attemptedRestores.add(key)
       return
     }
     attemptedRestores.add(key)
     // Directly through the ORIGINAL select: the watcher's own re-apply is a
     // memory READ, not a user pick, and must not be remembered as one.
-    void original
-      .call(directory, { provider: current.provider, model: current.model, reasoningEffort: fallback })
+    void resolveFallback(snapshot, current.provider, current.model, sessionSightings, deps)
+      .then(async (fallback) => {
+        if (fallback === undefined) {
+          // The chain lands nowhere for now — refund: the configured layer
+          // reads live settings, so a later document change may answer.
+          attemptedRestores.delete(key)
+          return
+        }
+        // The chain took an await: re-verify against the CURRENT store
+        // before speaking, so a selection that landed meanwhile stands.
+        const fresh = directory.store.getSnapshot()
+        const freshCurrent = fresh.current
+        if (freshCurrent === null || freshCurrent.reasoningEffort !== undefined
+          || memoryKey(freshCurrent.provider, freshCurrent.model) !== key) {
+          attemptedRestores.delete(key)
+          return
+        }
+        await original
+          .call(directory, { provider: freshCurrent.provider, model: freshCurrent.model, reasoningEffort: fallback })
+      })
       .catch(() => {
         // A refusal is transient (a session mid-initialization), not a
         // decision: refund the attempt so the next store update retries --

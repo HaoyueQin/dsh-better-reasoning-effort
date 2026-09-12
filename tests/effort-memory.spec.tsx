@@ -113,6 +113,18 @@ function fakeDirectory(
       }
       selectCalls += 1
       submitted.push(selection)
+      // The real directory's confirmed selection lands in the store (and
+      // re-notifies the watcher), which is what makes "switch away and back"
+      // read as a model switch at all.
+      state = {
+        ...state,
+        current: {
+          provider: selection.provider,
+          model: selection.model,
+          ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+        },
+      }
+      for (const listener of [...listeners]) listener()
       return undefined
     },
   }
@@ -281,13 +293,15 @@ describe('wireEffortMemory: model switches', () => {
 })
 
 describe('wireEffortMemory: restored projections', () => {
-  it('re-applies the chain to a level-less projection resident at wire time', () => {
+  it('re-applies the chain to a level-less projection resident at wire time', async () => {
     // A restored session's projection lands WITHOUT going through select;
     // no memory for kimi-k3, so the vendor default (max) applies.
     const fake = fakeDirectory(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
     const restore = wireEffortMemory(fake.directory)
     try {
-      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'max' }])
+      // The chain is async (the configured layer reads the settings
+      // document), so the re-apply settles on a microtask.
+      await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'max' }]))
       // The watcher's own re-apply is a memory READ, not a user pick.
       expect(rememberedEffort('moonshot', 'kimi-k3')).toBeUndefined()
     } finally {
@@ -295,17 +309,18 @@ describe('wireEffortMemory: restored projections', () => {
     }
   })
 
-  it('prefers the model memory, then never fights an explicit provider default', () => {
+  it('prefers the model memory, then never fights an explicit provider default', async () => {
     rememberEffort('moonshot', 'kimi-k3', 'low')
     const fake = fakeDirectory(stateWith({ provider: 'plain', model: 'plain-chat-9' }))
     const restore = wireEffortMemory(fake.directory)
     try {
       // The restored projection arrives after wiring (history load).
       fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
-      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }])
+      await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }]))
       // The session then goes level-less again (an explicit provider-default
       // pick landed): the spent attempt must NOT re-fight the user.
       fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
       expect(fake.submitted).toHaveLength(1)
     } finally {
       restore()
@@ -387,6 +402,113 @@ describe('wireEffortMemory: restored projections', () => {
       fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
       await new Promise(resolve => setTimeout(resolve, 0))
       expect(fake.attempts()).toBe(3)
+    } finally {
+      restore()
+    }
+  })
+
+  it('refunds a chain miss so a later document change can answer', async () => {
+    // narrow-max has a one-level ladder and no memory, native sighting or
+    // vendor default: with no configured pick either the chain misses. The
+    // configured layer reads LIVE settings, so the miss must NOT spend the
+    // model's restore — a pick added later (a settings document push) lands.
+    let configured: string | undefined = undefined
+    const fake = fakeDirectory(stateWith({ provider: 'narrow', model: 'narrow-max' }, { restore: true }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: async () => configured })
+    try {
+      fake.update(stateWith({ provider: 'narrow', model: 'narrow-max' }, { restore: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(fake.submitted).toHaveLength(0)
+      // The user saves a default-effort pick; the next store update retries.
+      configured = 'xhigh'
+      fake.update(stateWith({ provider: 'narrow', model: 'narrow-max' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'narrow', model: 'narrow-max', reasoningEffort: 'xhigh' }]))
+    } finally {
+      restore()
+    }
+  })
+})
+
+describe('wireEffortMemory: configured per-model pick', () => {
+  it('outranks the cross-session memory when set', async () => {
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    // The current selection is a DIFFERENT model, so the switch injection
+    // path (the one that reads the chain) runs.
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: async () => 'high' })
+    try {
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'high' }])
+    } finally {
+      restore()
+    }
+  })
+
+  it('degrades to the memory when unset and when off the advertised ladder', async () => {
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: async () => undefined })
+    try {
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }])
+    } finally {
+      restore()
+    }
+    // kimi-k3's ladder lacks 'medium': a pick naming it must not be spoken.
+    const offLadder = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restoreOff = wireEffortMemory(offLadder.directory, { configuredEffort: async () => 'medium' })
+    try {
+      await offLadder.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(offLadder.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }])
+    } finally {
+      restoreOff()
+    }
+  })
+
+  it('applies the configured pick to a level-less restored projection', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: async () => 'high' })
+    try {
+      await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'high' }]))
+      // The watcher's re-apply is a memory READ, not a user pick.
+      expect(rememberedEffort('moonshot', 'kimi-k3')).toBeUndefined()
+    } finally {
+      restore()
+    }
+  })
+})
+
+describe('wireEffortMemory: session sightings', () => {
+  it('keeps a pick made in the session across switches, over the configured layer', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'moonshot', model: 'kimi-k3' }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: async () => 'high' })
+    try {
+      // The user picks low in this session: recorded as a session sighting.
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' })
+      expect(fake.submitted[0]).toMatchObject({ reasoningEffort: 'low' })
+      // Switching away and back must not lose the pick to the configured
+      // layer — the sighting outranks it for the rest of the session.
+      await fake.directory.select({ provider: 'openai', model: 'gpt-5.6' })
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted[2]).toEqual({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' })
+    } finally {
+      restore()
+    }
+  })
+
+  it('an explicit follow-the-default pick clears the session sighting', async () => {
+    const fake = fakeDirectory(stateWith({ provider: 'moonshot', model: 'kimi-k3' }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: async () => 'high' })
+    try {
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' })
+      // Same model, no level: an explicit provider-default pick. The
+      // session's sighting dies with it, so this session keeps honoring it.
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted[1]).toEqual({ provider: 'moonshot', model: 'kimi-k3' })
+      // Away and back: the configured layer answers again (high).
+      await fake.directory.select({ provider: 'openai', model: 'gpt-5.6' })
+      await fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      expect(fake.submitted[3]).toEqual({ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'high' })
     } finally {
       restore()
     }

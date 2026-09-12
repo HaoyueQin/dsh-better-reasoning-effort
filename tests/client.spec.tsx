@@ -618,6 +618,66 @@ describe('client apply()', () => {
     }
   })
 
+  it('applies the configured per-model pick from the settings document to a new session', async () => {
+    // The fixture row carries a stored defaultEffort pick (the field this
+    // feature writes): the chain's second layer must land it on a level-less
+    // projection, WITHOUT any localStorage memory.
+    const directory = directoryFixture()
+    const originalSelect = directory.select as unknown as { mock: { calls: unknown[][] } }
+    const api = fakeApi(() => Promise.resolve(makeJoin({
+      aliyun: {
+        displayName: 'Aliyun',
+        api: 'openai-completions',
+        models: [
+          { id: 'qwen-max', name: 'Qwen Max', defaultEffort: 'high' },
+          { id: 'qwen-turbo' },
+        ],
+      },
+    })))
+    const h = makeCtx(api, {
+      services: {
+        sessions: { list: { getSnapshot: () => ({ current: 's1' }) } },
+        modelDirectories: { directoryFor: () => directory },
+      },
+    })
+    try {
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      expect(directory.select).not.toBe(originalSelect)
+      // A brand-new session's projection lands level-less; the configured
+      // pick (not the vendor default) is what the watcher applies.
+      directory.update({
+        current: { provider: 'aliyun', model: 'qwen-max' },
+        routable: true,
+        groups: [{
+          id: 'aliyun',
+          name: 'Aliyun',
+          models: [{
+            id: 'qwen-max',
+            name: 'Qwen Max',
+            reasoning: {
+              defaultEffort: 'medium',
+              efforts: [{ id: 'off', name: 'Off' }, { id: 'low', name: 'Low' }, { id: 'medium', name: 'Medium' }, { id: 'high', name: 'High' }, { id: 'max', name: 'Max' }],
+            },
+          }],
+        }],
+        failures: [],
+        status: 'ready',
+        error: null,
+      })
+      await waitFor(() => originalSelect.mock.calls.length > 0)
+      expect(originalSelect.mock.calls[0][0])
+        .toMatchObject({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'high' })
+      // A pushed document update invalidates the cache without breaking the
+      // wiretap: the wire stays wrapped after the refresh runs.
+      h.emitRemote('settings/document-updated', 'llm-pi-ai')
+      expect(directory.select).not.toBe(originalSelect)
+    } finally {
+      h.disposeAll()
+      expect(directory.select).toBe(originalSelect)
+    }
+  })
+
   it('re-inserts the slider when a React re-render displaces it', async () => {
     const directory = directoryFixture()
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
