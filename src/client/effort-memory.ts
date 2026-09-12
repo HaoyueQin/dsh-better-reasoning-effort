@@ -24,10 +24,10 @@
  *     every surface shows the re-applied level;
  *   - the projection watcher: a RESTORED session's durable selection arrives
  *     from session history without going through `select` at all, so the
- *     watcher re-applies the chain to a level-less projection (one best-
- *     effort attempt per model per directory lifetime — spent attempts are
- *     never retried, which also keeps an explicit provider-default pick
- *     from being fought).
+ *     watcher re-applies the chain to a level-less projection (one successful
+ *     attempt per model per directory lifetime; a REFUSED attempt is refunded
+ *     and retried on the next store update, up to a small ceiling — which
+ *     also keeps an explicit provider-default pick from being fought).
  * Discipline both paths keep:
  *   - an EXPLICIT level (slider drag, any effort row) always wins: it is
  *     remembered for that exact model and submitted untouched;
@@ -199,11 +199,17 @@ export function wireEffortMemory(directory: ModelDirectoryLike): () => void {
   // onto the instance (which would keep shadowing a hot-swapped prototype).
   const hadOwnSelect = Object.prototype.hasOwnProperty.call(target, 'select')
   const original = directory.select
-  // One restore attempt per model per directory lifetime: spent attempts are
-  // never retried, which bounds the watcher (no loop on a refused write) and
-  // keeps an explicit provider-default pick from being fought. Bounded by the
-  // number of models a session touches; dies with the directory.
+  // One successful restore per model per directory lifetime: spent attempts
+  // are never retried, which bounds the watcher (no loop on a refused write)
+  // and keeps an explicit provider-default pick from being fought. A REFUSED
+  // submission refunds its attempt -- a brand-new session's host may refuse
+  // the first selectModel while the session is still initializing -- up to a
+  // small ceiling, beyond which the model is given up on for this directory.
   const attemptedRestores = new Set<string>()
+  const restoreFailures = new Map<string, number>()
+
+  /** Stop retrying one model after this many refused restores (per directory). */
+  const RESTORE_RETRY_LIMIT = 3
 
   const wrapped = async (
     selection: Parameters<ModelDirectoryLike['select']>[0],
@@ -238,14 +244,28 @@ export function wireEffortMemory(directory: ModelDirectoryLike): () => void {
     if (!sliderEnabled()) return
     const key = memoryKey(current.provider, current.model)
     if (attemptedRestores.has(key)) return
-    attemptedRestores.add(key)
     const fallback = resolveFallback(snapshot, current.provider, current.model)
-    if (fallback === undefined) return
+    if (fallback === undefined) {
+      // A deterministic miss (no advertised ladder, or no landing level on it)
+      // will not answer differently later: spend the attempt so the watcher
+      // does not re-resolve the same dead end on every store update.
+      attemptedRestores.add(key)
+      return
+    }
+    attemptedRestores.add(key)
     // Directly through the ORIGINAL select: the watcher's own re-apply is a
     // memory READ, not a user pick, and must not be remembered as one.
     void original
       .call(directory, { provider: current.provider, model: current.model, reasoningEffort: fallback })
-      .catch(() => undefined)
+      .catch(() => {
+        // A refusal is transient (a session mid-initialization), not a
+        // decision: refund the attempt so the next store update retries --
+        // but stop at the ceiling so a persistently rejected submission
+        // cannot turn the watcher into a loop.
+        const failures = (restoreFailures.get(key) ?? 0) + 1
+        restoreFailures.set(key, failures)
+        if (failures < RESTORE_RETRY_LIMIT) attemptedRestores.delete(key)
+      })
   }
 
   const unsubscribe = directory.store.subscribe(restoreProjection)
