@@ -7,7 +7,7 @@
  */
 
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   rememberEffort,
   rememberedEffort,
@@ -80,13 +80,20 @@ type Selection = Parameters<ModelDirectoryLike['select']>[0]
 /** A directory fake whose submissions are recorded; `state` is swappable. */
 function fakeDirectory(
   initial: ModelDirectoryStateLike,
-  opts?: { rejectSelects?: boolean },
+  opts?: {
+    rejectSelects?: boolean
+    /** Reject the first N submissions (a session mid-initialization), then accept. */
+    rejectFirst?: number
+  },
 ): {
   directory: ModelDirectoryLike
   submitted: Selection[]
+  /** How many times `select` was invoked, refusals included. */
+  attempts: () => number
   update(next: ModelDirectoryStateLike): void
 } {
   let state = initial
+  let selectCalls = 0
   const submitted: Selection[] = []
   const listeners = new Set<() => void>()
   const directory = {
@@ -100,9 +107,11 @@ function fakeDirectory(
     load: async (): Promise<ModelDirectoryStateLike> => state,
     select: async (selection: Selection): Promise<unknown> => {
       // The real directory throws on a rejected selection (directory.ts).
-      if (opts?.rejectSelects === true) {
+      if (opts?.rejectSelects === true || selectCalls < (opts?.rejectFirst ?? 0)) {
+        selectCalls += 1
         throw new Error('session.selectModel failed: session/invalid: no such effort')
       }
+      selectCalls += 1
       submitted.push(selection)
       return undefined
     },
@@ -110,6 +119,7 @@ function fakeDirectory(
   return {
     directory: directory as unknown as ModelDirectoryLike,
     submitted,
+    attempts: () => selectCalls,
     update(next: ModelDirectoryStateLike): void {
       state = next
       for (const listener of [...listeners]) listener()
@@ -323,6 +333,62 @@ describe('wireEffortMemory: restored projections', () => {
       expect(gated.submitted).toHaveLength(0)
     } finally {
       restoreGated()
+    }
+  })
+
+  it('retries refused restores across store updates until the memory lands', async () => {
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    const fake = fakeDirectory(
+      stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }),
+      { rejectFirst: 2 },
+    )
+    const restore = wireEffortMemory(fake.directory)
+    try {
+      // The wire-time attempt is refused (a session mid-initialization) and
+      // must NOT spend the model's restore: the refusal is refunded.
+      await vi.waitFor(() => expect(fake.attempts()).toBe(1))
+      expect(fake.submitted).toEqual([])
+      // Each later store update retries the refunded attempt (the real
+      // directory surfaces a refusal through the store, and any projection /
+      // catalog movement re-notifies the watcher), until one lands the
+      // remembered level.
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.attempts()).toBe(2))
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.submitted).toEqual([
+        { provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' },
+      ]))
+      // The successful attempt is final: later updates stay quiet.
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(fake.attempts()).toBe(3)
+    } finally {
+      restore()
+    }
+  })
+
+  it('gives up on one model after the retry ceiling and stays quiet', async () => {
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    const fake = fakeDirectory(
+      stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }),
+      { rejectSelects: true },
+    )
+    const restore = wireEffortMemory(fake.directory)
+    try {
+      // Exactly the ceiling's worth of attempts — the wire-time attempt plus
+      // one refund per later store update — then the watcher stands down for
+      // this directory instead of retrying forever.
+      await vi.waitFor(() => expect(fake.attempts()).toBe(1))
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.attempts()).toBe(2))
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.attempts()).toBe(3))
+      // The ceiling is reached: later updates attempt nothing more.
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(fake.attempts()).toBe(3)
+    } finally {
+      restore()
     }
   })
 })
