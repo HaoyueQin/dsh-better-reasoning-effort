@@ -509,6 +509,29 @@ describe('wireEffortMemory: configured per-model pick', () => {
     }
   })
 
+  it('submits the switch bare when the slider flips off during the chain await', async () => {
+    // Hold the configured layer in flight so the switch parks inside its
+    // post-await window; the gate is re-checked THERE, not only at entry.
+    let release!: (level: string | undefined) => void
+    const gate = new Promise<string | undefined>(resolve => { release = resolve })
+    const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: () => gate })
+    try {
+      const switchCall = fake.directory.select({ provider: 'moonshot', model: 'kimi-k3' })
+      // The toggle lands while the chain is still in flight: the plugin is
+      // absent at submission time.
+      setSliderEnabled(false)
+      release('high')
+      await switchCall
+      // The switch itself must still land -- as the plain pass-through the
+      // unwired directory would have performed, with nothing recorded.
+      expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3' }])
+      expect(rememberedEffort('moonshot', 'kimi-k3')).toBeUndefined()
+    } finally {
+      restore()
+    }
+  })
+
   it('never overrides a newer user action that lands during the chain await', async () => {
     // Hold the configured layer in flight so the switch path parks inside
     // its post-await window; a user utterance landing there is final.
@@ -524,6 +547,30 @@ describe('wireEffortMemory: configured per-model pick', () => {
       await switchCall
       // The stale switch submission was dropped entirely: the user's pick stands.
       expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }])
+    } finally {
+      restore()
+    }
+  })
+
+  it('refunds the restore attempt when the slider flips off during the chain await', async () => {
+    let release!: (level: string | undefined) => void
+    const gate = new Promise<string | undefined>(resolve => { release = resolve })
+    const fake = fakeDirectory(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+    const restore = wireEffortMemory(fake.directory, { configuredEffort: () => gate })
+    try {
+      // The wire-time restore parks inside the configured read; the toggle
+      // lands there, before the watcher had its say.
+      setSliderEnabled(false)
+      release('high')
+      await new Promise(resolve => setTimeout(resolve, 0))
+      // Absent at decision time: nothing was spoken...
+      expect(fake.attempts()).toBe(0)
+      // ...and the attempt was REFUNDED -- the watcher is silent while the
+      // slider is off, so a spent attempt could never be re-kicked; with the
+      // refund, re-enabling the slider and nudging the store lands the memory.
+      setSliderEnabled(true)
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'high' }]))
     } finally {
       restore()
     }

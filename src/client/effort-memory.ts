@@ -304,6 +304,11 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
       a === null || b === null
       || a.provider !== b.provider || a.model !== b.model || a.reasoningEffort !== b.reasoningEffort
     if (utterances !== myUtterance || moved(fresh.current, snapshot.current)) return undefined
+    // The chain awaited: the gate is re-checked BEFORE speaking, or a slider
+    // toggle landing inside the await window would make the plugin inject a
+    // level while it is already absent (the switch itself must still land --
+    // as the plain pass-through the unwired directory would have performed).
+    if (!sliderEnabled()) return original.call(directory, selection)
     if (fallback === undefined) return original.call(directory, selection)
     // The catalog can refresh during the same window: the level must still
     // sit on the CURRENT advertised ladder.
@@ -339,6 +344,15 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
         if (fallback === undefined) {
           // The chain lands nowhere for now — refund: the configured layer
           // reads live settings, so a later document change may answer.
+          attemptedRestores.delete(key)
+          return
+        }
+        // The chain awaited: the gate is re-checked before speaking. A toggle
+        // landing inside the window must leave the attempt REFUNDED, not
+        // spent -- the watcher is silent while the slider is off, so a spent
+        // attempt here would leave the model un-restored forever after the
+        // slider comes back (nothing re-kicks a spent restore).
+        if (!sliderEnabled()) {
           attemptedRestores.delete(key)
           return
         }
