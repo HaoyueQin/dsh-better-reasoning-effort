@@ -1201,6 +1201,36 @@ describe('the official commit signal (C2)', () => {
     expect(state.queued.size).toBe(0)
   })
 
+  it('does not let a plain dismiss poison the next save of the same route', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    // Card 1: opened and dismissed WITHOUT touching the plugin editor, so the
+    // cancel lands with no held write to drain.
+    const first = buildActionCardDom(`
+      <button type="button" class="secondaryButton">Cancel</button>
+      <button type="button" class="primaryButton">Apply</button>`)
+    await settle(() => reconcile(first, deps, state), state)
+    first.querySelectorAll<HTMLButtonElement>('div.editorActions button')[0]!.click()
+    await tick()
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+
+    // Card 2: the same route again, this time edited and SAVED. The dismiss
+    // above must not have left a marker that swallows this save.
+    const second = buildActionCardDom(`
+      <button type="button" class="secondaryButton">Cancel</button>
+      <button type="button" class="primaryButton">Apply</button>`)
+    await settle(() => reconcile(second, deps, state), state)
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    second.querySelectorAll<HTMLButtonElement>('div.editorActions button')[1]!.click()
+    await tick()
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    expect(state.queued.size).toBe(0)
+  })
+
   it('degrades to landing on unmount when the action row yields no buttons', async () => {
     const deps = makeDeps()
     const state = createScanState()

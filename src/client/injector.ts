@@ -218,19 +218,6 @@ export interface ScanState {
    */
   committing: Set<string>
   /**
-   * Routes whose official card was dismissed in this session (its cancel
-   * button). Tested before {@link committing}: an intent can only be dropped
-   * or landed, never both.
-   */
-  discarded: Set<string>
-  /**
-   * Routes whose card was seen carrying an official action row of its own.
-   * Recorded when the row is found and NOT removed when the card closes -- it
-   * is the "this route's save could be observed at all" fact the landing
-   * decision needs after the card is gone.
-   */
-  signalRoutes: Set<string>
-  /**
    * Whether the official action row has failed to yield usable buttons for
    * every card seen so far. When it has, the landing decision degrades to
    * "the card went away, so write it" -- writing too much is recoverable,
@@ -388,8 +375,6 @@ export function createScanState(): ScanState {
     flushFailures: 0,
     nextFlushAt: 0,
     committing: new Set(),
-    discarded: new Set(),
-    signalRoutes: new Set(),
     signalsUnavailable: false,
     submitWired: new WeakSet(),
     cancelWired: new WeakSet(),
@@ -533,6 +518,29 @@ export function withdrawHeldWrite(state: ScanState, route: string, modelId: stri
 export function withdrawIntent(state: ScanState, route: string, modelId: string): void {
   withdrawStaged(state, route, modelId)
   withdrawHeldWrite(state, route, modelId)
+}
+
+/**
+ * Drop every intent one route holds, right now: the official card's cancel.
+ *
+ * The card's own fields die with the dismissal, so the plugin's must too -- and
+ * they must die at the CLICK, not on some later scan. A deferred "discarded"
+ * marker would outlive the card that set it (a dismiss carrying no plugin edit
+ * leaves nothing for a later pass to drain), and the next card for that same
+ * route would then be read as already-dismissed: its Save would never be
+ * wired, and the user's fresh edit would be dropped silently. Clearing the
+ * ledger here leaves no state at all to misinterpret.
+ *
+ * Safe by construction: the official page keeps ONE editing card at a time
+ * (create and edit mutually exclusive), so the route this resolves is the only
+ * card that could own these entries.
+ * @param state - mutable scan state.
+ * @param route - the route whose official card was dismissed.
+ */
+export function forgetRoute(state: ScanState, route: string): void {
+  state.queued.delete(route)
+  state.committing.delete(route)
+  persistLedger(state)
 }
 
 /**
@@ -742,29 +750,24 @@ async function flushRoute(
  *
  * The LANDING DECISION lives here (issue #7 / C2), per route, because this
  * ledger is the one the official card's Save governs:
- *   - the user dismissed the card -> the intent is dropped, exactly like the
- *     fields the official card itself held;
  *   - the user committed -> write it, now that the card is gone;
  *   - the official action row was never readable in this session -> the signal
  *     cannot be trusted, so degrade to "the card went away, write it": writing
  *     too much is recoverable, losing the declaration is not;
  *   - otherwise the card closed with neither signal (the user just walked
- *     away) -> drop it, which is what "it commits with the official Save"
- *     means.
+ *     away) -> the intent waits rather than landing behind a frozen baseline.
+ *
+ * A DISMISSED card has no branch here on purpose: its cancel clears the ledger
+ * the moment it is pressed ({@link forgetRoute}), so "dismissed" can never
+ * outlive the card it belonged to and swallow a later save of the same route.
  * @param deps - the injection dependencies.
  * @param state - mutable scan state.
  */
 async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> {
   for (const [route, models] of [...state.queued]) {
-    if (state.discarded.has(route)) {
-      state.discarded.delete(route)
-      state.committing.delete(route)
-      state.queued.delete(route)
-      continue
-    }
     // The staged ledger has no official row whose Save could commit it; this
-    // one does, so an uncommitted route waits (or is dropped) instead of
-    // landing behind that card's frozen revision baseline.
+    // one does, so an uncommitted route waits instead of landing behind that
+    // card's frozen revision baseline.
     const committed = state.committing.has(route)
     if (!committed && !state.signalsUnavailable) continue
     state.committing.delete(route)
@@ -1184,27 +1187,23 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       const typedApi = routeStaged ? inputValueByLabel(target.card, labels.apiProtocol) : ''
       const typedBaseURL = routeStaged ? inputValueByLabel(target.card, labels.baseUrl) : ''
       // The official action row is the signal this row's landing write hangs
-      // on (C2): remember that it was observable at all, and wire its two
-      // buttons once. A row whose buttons no tier can name flips the global
-      // degrade flag, so the landing decision falls back to "the card went
-      // away, write it" instead of silently dropping the edit.
-      if (!state.discarded.has(route) && !state.committing.has(route)) {
-        const actions = actionsOf(target.card, labels)
-        if (actions === undefined) {
-          state.signalsUnavailable = true
-        } else {
-          state.signalRoutes.add(route)
-          wireOnce(actions.submit, state.submitWired, () => {
-            state.committing.add(route)
-            state.discarded.delete(route)
-            persistLedger(state)
-          })
-          wireOnce(actions.cancel, state.cancelWired, () => {
-            state.discarded.add(route)
-            state.committing.delete(route)
-            persistLedger(state)
-          })
-        }
+      // on (C2): wire its two buttons. A row whose buttons no tier can name
+      // flips the global degrade flag, so the landing decision falls back to
+      // "the card went away, write it" instead of silently dropping the edit.
+      // No guard on the route's current markers: a REOPENED card is a new
+      // element whose buttons must be wired again, and `wireOnce`'s WeakSet
+      // already collapses every repeat within one element.
+      const actions = actionsOf(target.card, labels)
+      if (actions === undefined) {
+        state.signalsUnavailable = true
+      } else {
+        wireOnce(actions.submit, state.submitWired, () => {
+          state.committing.add(route)
+          persistLedger(state)
+        })
+        wireOnce(actions.cancel, state.cancelWired, () => {
+          forgetRoute(state, route)
+        })
       }
       const routeApi = routeStaged && typedApi.length > 0
         ? typedApi
