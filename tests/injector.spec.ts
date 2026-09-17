@@ -7,7 +7,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, effectiveStagedIntents, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
+import { createScanState, effectiveStagedIntents, queueWriteInto, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
 import { suggestEfforts, type ReasoningEfforts } from '../src/knowledge.js'
 import type { RemoteApi } from '../src/client/types.js'
 
@@ -159,6 +159,9 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
 beforeEach(() => {
   document.body.innerHTML = ''
   vi.restoreAllMocks()
+  // The held-write ledgers ride sessionStorage: without this, one case's
+  // queued intent would be restored into the next case's scan state.
+  sessionStorage.clear()
 })
 
 /** Run reconcile then flush the describe-then-mount microtask chain. */
@@ -993,5 +996,102 @@ describe('ghosted staging recycling', () => {
     }
     expect(state.pending.get('acme-gateway')?.has('deepseek-v4-flash-free')).toBe(true)
     expect(deps.mutate).not.toHaveBeenCalled()
+  })
+})
+
+describe('held-write ledgers (persistence, retry, the card fence)', () => {
+  it('persists both ledgers and restores them into a fresh scan state', () => {
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'new-model', { high: 'high' })
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    // A reload builds a brand-new scan state: the intents must come back.
+    const restored = createScanState()
+    expect(restored.pending.get('acme-gateway')?.get('new-model')).toEqual({ efforts: { high: 'high' } })
+    expect(restored.queued.get('aliyun')?.get('qwen-max')).toEqual({ efforts: { high: 'high' } })
+  })
+
+  it('lands a restored intent on the first idle pass after a reload', async () => {
+    const seeded = createScanState()
+    queueWriteInto(seeded, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    const deps = makeDeps()
+    const reloaded = createScanState()
+    await settleIdle(deps, reloaded)
+
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    expect(reloaded.queued.size).toBe(0)
+  })
+
+  it('keeps working when sessionStorage refuses the write', () => {
+    const refusing = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded')
+    })
+    try {
+      const state = createScanState()
+      expect(() => { queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } }) }).not.toThrow()
+      expect(state.queued.get('aliyun')?.get('qwen-max')).toEqual({ efforts: { high: 'high' } })
+    } finally {
+      refusing.mockRestore()
+    }
+  })
+
+  it('fences the idle pass while a card with no model row is open', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    // An open provider card whose model list is empty: no capacity button
+    // exists, but the card's action row does -- and that card still holds a
+    // frozen revision baseline (the rarer half of issue #7).
+    const root = document.createElement('div')
+    root.innerHTML = `
+      <div class="editor">
+        <div class="modelCatalog"></div>
+        <div class="editorActions">
+          <button type="button">Cancel</button>
+          <button type="button">Apply</button>
+        </div>
+      </div>
+    `
+    document.body.appendChild(root)
+    await settle(() => reconcile(root, deps, state), state)
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.size).toBe(1)
+  })
+
+  it('retries a refused flush on the next idle pass instead of dropping it', async () => {
+    const deps = makeDeps()
+    deps.mutate.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'settings/rejected', message: 'refused' },
+    })
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    await settleIdle(deps, state)
+    // A refusal arrives as a value, not a throw: the intent stays for the retry.
+    expect(state.queued.size).toBe(1)
+
+    await settleIdle(deps, state)
+    expect(state.queued.size).toBe(0)
+    expect(deps.mutate).toHaveBeenCalledTimes(2)
+  })
+
+  it('backs the next attempt off when a whole idle pass throws', async () => {
+    const deps = makeDeps({
+      describeNamespace: async () => { throw new Error('wire down') },
+    })
+    const state = createScanState()
+    // A staged route the document does not hold yet: the pass reads the
+    // namespace first, and that read is what throws here.
+    stageEffortsInto(state, 'acme-gateway', 'new-model', { high: 'high' })
+
+    await settleIdle(deps, state)
+    expect(state.flushFailures).toBe(1)
+    expect(state.nextFlushAt).toBeGreaterThan(0)
+    expect(state.pending.size).toBe(1)
   })
 })

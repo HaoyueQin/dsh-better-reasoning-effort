@@ -31,7 +31,7 @@ import type { ErrorInfo, ReactNode } from 'react'
 import { AUTOFILL_CONFIG_PATH, DEFAULT_EFFORT_FIELD, PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
 import { wireEffortMemory } from './effort-memory.js'
-import { createScanState, reconcile, type HostLabels } from './injector.ts'
+import { createScanState, flushOnTeardown, reconcile, type HostLabels, type InjectorDeps } from './injector.ts'
 import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
 import { buildAutofillPatch } from '../autofill.js'
@@ -40,7 +40,7 @@ import { ComposerSlider } from './ComposerSlider.js'
 import { SliderToggle } from './SliderToggle.js'
 import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabled } from './slider-pref.js'
 import { STYLES } from './styles.ts'
-import type { RemoteApi } from './types.ts'
+import type { RemoteApi, SettingsScopeReadLike } from './types.ts'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
 export const name = PLUGIN_ID
@@ -193,7 +193,22 @@ export function apply(ctx: ClientContext): void {
   // The kernel mounts the settings Remote as an injectable
   // 'remote.settings' service, declared in the plugin's own inject above — so
   // the face is available before apply runs. No runtime seat probing remains.
-  const settingsApi: RemoteApi = { settings: ctx.remote.settings }
+  //
+  // The official settings scope is picked up on top of it when this shell
+  // provides one: reads then ride its shared describe mirror (no wire round
+  // trip, and the revision the settings surface itself fences writes with).
+  // Deliberately NOT part of the plugin's `inject`: a kernel without the
+  // service must still activate the browser half, on the wire-describe path.
+  const settingsScope = ((): SettingsScopeReadLike | undefined => {
+    try {
+      return ctx.get?.('settingsScope') as SettingsScopeReadLike | undefined
+    } catch {
+      return undefined
+    }
+  })()
+  const settingsApi: RemoteApi = settingsScope === undefined
+    ? { settings: ctx.remote.settings }
+    : { settings: ctx.remote.settings, scope: settingsScope }
   // The shell's Translate is `(key: string, params?: Record<string, unknown>)`;
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
@@ -544,10 +559,66 @@ export function apply(ctx: ClientContext): void {
         path: ['providers', route, 'models'],
         value: profile.models,
       })) as unknown as Parameters<typeof settingsApi.settings.mutate>[1]
-      await settingsApi.settings.mutate(PI_AI_NS, ops, namespace.revision)
+      const response = await settingsApi.settings.mutate(PI_AI_NS, ops, namespace.revision)
+      // A refusal arrives as a VALUE, not a throw: without this check the whole
+      // complement failed silently (the catch below never ran). Whatever is
+      // still undeclared is picked up by the next idle pass.
+      if (!response.ok) {
+        console.error(`[bre] idle autofill refused: ${response.error.message}`)
+      }
     } catch (error) {
       console.error(`[bre] idle autofill failed: ${error instanceof Error ? error.message : String(error)}`)
     }
+  }
+
+  /**
+   * The injector's dependencies, built ONCE outside the debounced scan: the
+   * teardown path (plugin dispose, page unload) drains the ledgers through the
+   * very same seam a live scan uses, so a landing write can never take a
+   * different path than an in-session one.
+   */
+  const injectorDeps: InjectorDeps = {
+    api: settingsApi,
+    describeNamespace: () => describeNamespace(settingsApi),
+    t,
+    labels: hostLabels,
+    // The idle pass landed everything the session held back; the autofill
+    // complement rides the same moment (see runIdleAutofill).
+    onIdle: () => { void runIdleAutofill() },
+    mount(container, props) {
+      const rootEl = document.createElement('div')
+      // The slot class carries the grid-column span: this wrapper — not
+      // the React editor inside it — is the item the official disclosure
+      // grid places (see STYLES).
+      rootEl.className = 'bre-effort-slot'
+      // Mark the container synchronously — before React renders — so the
+      // idempotency guard (hasEditor) holds from the very first scan.
+      // Without this, the appendChild-triggered MutationObserver scan can
+      // run while React's async render has not produced the editor div
+      // yet, misjudge the row as unmounted, and mount again — an infinite
+      // loop that grows the container without bound.
+      rootEl.dataset['plugin'] = PLUGIN_ID
+      container.appendChild(rootEl)
+      const reactRoot = createRoot(rootEl)
+      const renderEditor = (p: typeof props): void => {
+        reactRoot.render(createElement(
+          EffortBoundary,
+          {
+            fallbackText: t('renderFailed'),
+            // Same seat as the slider and the toggle: without the locale
+            // subscription a language switch re-renders the official page
+            // but not this editor — sameProps compares only document data,
+            // so the copy would stay in the language it rendered in.
+            children: refreshed(() => createElement(EffortEditor, p)),
+          },
+        ))
+      }
+      renderEditor(props)
+      return {
+        unmount: () => { reactRoot.unmount() },
+        render: renderEditor,
+      }
+    },
   }
 
   const scheduleScan = (): void => {
@@ -561,49 +632,7 @@ export function apply(ctx: ClientContext): void {
       // preference flip.
       ensureSessionDirectory()
       const root = panelRoot()
-      reconcile(root, {
-        api: settingsApi,
-        describeNamespace: () => describeNamespace(settingsApi),
-        t,
-        labels: hostLabels,
-        // The idle pass landed everything the session held back; the autofill
-        // complement rides the same moment (see runIdleAutofill).
-        onIdle: () => { void runIdleAutofill() },
-        mount(container, props) {
-          const rootEl = document.createElement('div')
-          // The slot class carries the grid-column span: this wrapper — not
-          // the React editor inside it — is the item the official disclosure
-          // grid places (see STYLES).
-          rootEl.className = 'bre-effort-slot'
-          // Mark the container synchronously — before React renders — so the
-          // idempotency guard (hasEditor) holds from the very first scan.
-          // Without this, the appendChild-triggered MutationObserver scan can
-          // run while React's async render has not produced the editor div
-          // yet, misjudge the row as unmounted, and mount again — an infinite
-          // loop that grows the container without bound.
-          rootEl.dataset['plugin'] = PLUGIN_ID
-          container.appendChild(rootEl)
-          const reactRoot = createRoot(rootEl)
-          const renderEditor = (p: typeof props): void => {
-            reactRoot.render(createElement(
-              EffortBoundary,
-              {
-                fallbackText: t('renderFailed'),
-                // Same seat as the slider and the toggle: without the locale
-                // subscription a language switch re-renders the official page
-                // but not this editor — sameProps compares only document data,
-                // so the copy would stay in the language it rendered in.
-                children: refreshed(() => createElement(EffortEditor, p)),
-              },
-            ))
-          }
-          renderEditor(props)
-          return {
-            unmount: () => { reactRoot.unmount() },
-            render: renderEditor,
-          }
-        },
-      }, scanState)
+      reconcile(root, injectorDeps, scanState)
       reconcileSlider()
     }, SCAN_DEBOUNCE_MS)
   }
@@ -643,6 +672,11 @@ export function apply(ctx: ClientContext): void {
     startObserver()
     return () => {
       stopObserver()
+      // Land what the session held back before the fiber goes away: a plugin
+      // disable or HMR must not strand the user's intent in memory alone. The
+      // ledgers stay in sessionStorage, so a flush the runtime cuts short is
+      // retried by the next load's idle pass.
+      flushOnTeardown(scanState, injectorDeps)
       // Orphaned editors must not outlive the fiber: on plugin disable or
       // HMR they would keep rendering with a stale api face, failing every
       // write visibly. Unmount every React root this plugin created.
@@ -656,6 +690,16 @@ export function apply(ctx: ClientContext): void {
       wiredDirectories.clear()
     }
   }, 'dsh-better-reasoning-effort: DOM injector')
+
+  // A page unload is the last moment the ledgers can be landed. A write may
+  // still be cut short by the browser tearing the page down, which is exactly
+  // why the intents also ride sessionStorage: an interrupted flush is retried
+  // by the next load's idle pass instead of vanishing.
+  ctx.effect(() => {
+    const onPageHide = (): void => { flushOnTeardown(scanState, injectorDeps) }
+    window.addEventListener('pagehide', onPageHide)
+    return () => { window.removeEventListener('pagehide', onPageHide) }
+  }, 'dsh-better-reasoning-effort: ledger flush on unload')
 
   // Refresh the injection when the settings document changes (an apply from
   // either the official page or this plugin re-renders the rows). The folded

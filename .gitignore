@@ -33,3 +33,8 @@ research/
 
 # Local planning/spec workspace of the superpowers skill — never committed.
 docs/superpowers/
+
+# Handoff notes and any other working markdown under docs/ — internal scratch,
+# never released. The docs/ assets that do ship are images, so this rule only
+# ever catches prose.
+docs/*.md

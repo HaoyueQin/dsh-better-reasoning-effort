@@ -54,9 +54,45 @@ export interface SettingsRemoteApi {
   ): Promise<SettingsRemoteResult<SettingsNamespaceView>>
 }
 
+/**
+ * The READ face of the official settings scope (`ctx.settingsScope`, provided
+ * by `@deepseek-ai/dsh-client-ui-settings`). One shared describe mirror backs
+ * every namespace scope in the browser, so reading through the snapshot costs
+ * no wire round trip and always reports the revision the settings surface
+ * itself is working from.
+ *
+ * Deliberately read-only: the scope's `mutate` settles `void`, which makes a
+ * refused write indistinguishable from a committed one. The plugin's queues
+ * must keep a failed intent for the next pass, so writes still go through
+ * `settings.mutate`, where the refusal code is observable.
+ */
+export interface SettingsScopeReadLike {
+  getSnapshot(): {
+    /** `ready` once a section has been accepted; other states carry no value. */
+    status: 'loading' | 'ready' | 'unavailable'
+    /** Schema-resolved section of the bound namespace. */
+    value?: unknown
+    /** Composition base the section resolves over. */
+    base?: unknown
+    /** Raw user layer as stored. */
+    user?: unknown
+    /** Revision fencing the next write. */
+    revision?: number
+    /** Whether the settings document accepts writes. */
+    writable?: boolean
+  }
+}
+
 /** The Remote faces the browser half consumes. */
 export interface RemoteApi {
   settings: SettingsRemoteApi
+  /**
+   * The official settings scope, when the shell provides one. Optional: an
+   * older kernel without `settingsScope` keeps the wire-describe path, and the
+   * plugin never declares the service in its `inject` (a hard dependency would
+   * refuse to activate the whole browser half on that kernel).
+   */
+  scope?: SettingsScopeReadLike
 }
 
 export type { SettingsNamespaceView, SettingsPathOpView }

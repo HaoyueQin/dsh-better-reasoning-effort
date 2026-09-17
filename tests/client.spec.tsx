@@ -373,6 +373,40 @@ describe('client apply()', () => {
     }
   })
 
+  it('surfaces a refused idle autofill instead of failing silently', async () => {
+    // A refusal arrives as a VALUE, not a throw: `mutate` resolves with
+    // `{ok:false}`, so the catch around the fill never runs. Without an
+    // explicit check the whole complement fails invisibly -- the user is left
+    // with models the page still shows as undeclared and no diagnostic at all.
+    const join = makeJoin(structuredClone(JOIN_FIXTURE), structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(join))
+    const mutate = api.settings.mutate as ReturnType<typeof vi.fn>
+    mutate.mockResolvedValueOnce({ ok: false, error: { code: 'settings/conflict', message: 'refused' } })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }) as Response))
+    const refused = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const h = makeCtx(api)
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+
+      // The card is open, so the fill is still fenced -- and the refusal has
+      // not happened yet.
+      expect(mutate).not.toHaveBeenCalled()
+
+      // Closing it runs the idle pass, whose autofill the document refuses.
+      document.body.innerHTML = ''
+      await waitFor(() => refused.mock.calls.length > 0)
+      expect(refused.mock.calls.some(
+        call => String(call[0]).includes('[bre] idle autofill refused: refused'),
+      )).toBe(true)
+    } finally {
+      h.disposeAll()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('re-translates mounted copy when the shell language switches (LocaleFace path)', async () => {
     let join = makeJoin(structuredClone(JOIN_FIXTURE))
     const api = fakeApi(() => Promise.resolve(join))

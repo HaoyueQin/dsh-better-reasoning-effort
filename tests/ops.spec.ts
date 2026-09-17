@@ -4,10 +4,10 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { createEditorApi, defaultEffortOf, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
+import { baselineModelsOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
 import { modelsOf } from '../src/shared.js'
 import { AUTOFILL_MARKER } from '../src/constants.js'
-import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
+import type { RemoteApi, SettingsNamespaceView, SettingsRemoteApi, SettingsScopeReadLike } from '../src/client/types.js'
 
 /** A minimal settings Remote that records mutate calls. */
 function fakeApi(initial: unknown, userSection?: unknown, baseSection?: unknown): {
@@ -62,6 +62,82 @@ const initialValue = {
     },
   },
 }
+
+/**
+ * The official settings scope's read face, as `ctx.settingsScope` presents it:
+ * one shared mirror snapshot per bound namespace.
+ */
+function scopeSnapshot(overrides: Partial<ReturnType<SettingsScopeReadLike['getSnapshot']>> = {}): SettingsScopeReadLike {
+  return {
+    getSnapshot: () => ({
+      status: 'ready',
+      value: initialValue,
+      user: initialValue,
+      base: { providers: {} },
+      revision: 42,
+      writable: true,
+      ...overrides,
+    }),
+  }
+}
+
+/** A wire Remote that answers one namespace and counts its describe calls. */
+function wireRemote(revision = 7): { settings: SettingsRemoteApi; describes: () => number } {
+  let calls = 0
+  return {
+    settings: {
+      async describe() {
+        calls += 1
+        return {
+          ok: true,
+          value: {
+            writable: true,
+            hasDocument: true,
+            namespaces: [{
+              ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue,
+              revision, applies: 'live' as const, secrets: [],
+            } as unknown as SettingsNamespaceView],
+          },
+        }
+      },
+      async mutate() { throw new Error('no write is expected in these tests') },
+    },
+    describes: () => calls,
+  }
+}
+
+describe('describeNamespace (official scope snapshot vs the wire)', () => {
+  it('reads the join from the scope snapshot without a wire round trip', async () => {
+    const wire = wireRemote()
+    const join = await describeNamespace({ settings: wire.settings, scope: scopeSnapshot() })
+
+    expect(wire.describes()).toBe(0)
+    expect(join.namespace?.revision).toBe(42)
+    expect(join.writable).toBe(true)
+    // The fields this half actually reads come through verbatim.
+    expect(providersOf(join.namespace)).toEqual(initialValue.providers)
+    expect(baselineModelsOf(join.namespace, 'aliyun')).toEqual(initialValue.providers.aliyun.models)
+  })
+
+  it('keeps the wire path while the snapshot carries no accepted section', async () => {
+    const wire = wireRemote(9)
+    const join = await describeNamespace({
+      settings: wire.settings,
+      scope: scopeSnapshot({ status: 'loading', value: undefined, revision: undefined }),
+    })
+
+    expect(wire.describes()).toBe(1)
+    expect(join.namespace?.revision).toBe(9)
+  })
+
+  it('skips the snapshot for a fresh read, which is what a conflict retry needs', async () => {
+    const wire = wireRemote(11)
+    const join = await describeNamespace({ settings: wire.settings, scope: scopeSnapshot() }, { fresh: true })
+
+    expect(wire.describes()).toBe(1)
+    expect(join.namespace?.revision).toBe(11)
+  })
+})
 
 describe('providersOf / modelsOf / effortsOf', () => {
   const ns = {

@@ -190,6 +190,16 @@ export interface ScanState {
    * that loads straight into the models section without ever editing.
    */
   editing: boolean | undefined
+  /**
+   * Whether an idle pass is in flight. One pass at a time: two overlapping
+   * passes would describe the same revision and then fight over it, turning a
+   * clean replay into a self-inflicted `settings/conflict`.
+   */
+  flushing: boolean
+  /** Consecutive failed idle passes; the backoff exponent. Reset on success. */
+  flushFailures: number
+  /** Earliest `Date.now()` at which the next retry may run (0 = any time). */
+  nextFlushAt: number
 }
 
 /**
@@ -211,15 +221,167 @@ export interface StagedDeclaration {
   defaultEffort?: string | null
 }
 
+/**
+ * The held-write ledgers as `sessionStorage` keeps them. Only the two maps are
+ * serialized: every entry is the user's own declaration, already JSON-shaped,
+ * so the file IS the intent (no derivation on the way back in).
+ */
+interface LedgerFile {
+  pending: [string, [string, StagedDeclaration][]][]
+  queued: [string, [string, HeldWrite][]][]
+}
+
+/**
+ * The `sessionStorage` slot holding both ledgers. Session-scoped on purpose:
+ * the intents belong to the card session the user was working in, and a NEW
+ * tab must not inherit another tab's half-finished edit.
+ */
+const LEDGER_KEY = 'bre:held-writes:v1'
+
+/** `sessionStorage`, or undefined when the environment has none (node, privacy mode). */
+function ledgerStorage(): Storage | undefined {
+  try {
+    return typeof sessionStorage === 'undefined' ? undefined : sessionStorage
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Mirror both ledgers into `sessionStorage`. Called after every change and
+ * best-effort by nature: an unavailable or full storage keeps the ledgers in
+ * memory alone (the behaviour before they were persisted), never an error the
+ * user has to see.
+ */
+function persistLedger(state: ScanState): void {
+  const store = ledgerStorage()
+  if (store === undefined) return
+  try {
+    if (state.pending.size === 0 && state.queued.size === 0) {
+      store.removeItem(LEDGER_KEY)
+      return
+    }
+    const file: LedgerFile = {
+      pending: [...state.pending].map(([route, models]) => [route, [...models]]),
+      queued: [...state.queued].map(([route, models]) => [route, [...models]]),
+    }
+    store.setItem(LEDGER_KEY, JSON.stringify(file))
+  } catch {
+    // Quota / disabled storage: the in-memory ledgers remain authoritative.
+  }
+}
+
+/** One ledger entry as the file carries it, or undefined when malformed. */
+function ledgerEntry<T>(value: unknown): [string, [string, T][]][] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const routes: [string, [string, T][]][] = []
+  for (const row of value) {
+    if (!Array.isArray(row) || row.length !== 2) return undefined
+    const [route, models] = row as [unknown, unknown]
+    if (typeof route !== 'string' || !Array.isArray(models)) return undefined
+    const entries: [string, T][] = []
+    for (const entry of models) {
+      if (!Array.isArray(entry) || entry.length !== 2) return undefined
+      const [modelId, write] = entry as [unknown, unknown]
+      if (typeof modelId !== 'string' || typeof write !== 'object' || write === null || Array.isArray(write)) {
+        return undefined
+      }
+      entries.push([modelId, write as T])
+    }
+    routes.push([route, entries])
+  }
+  return routes
+}
+
+/**
+ * Restore both ledgers from `sessionStorage`. A malformed or foreign file is
+ * ignored wholesale rather than partially applied: a half-read intent is worse
+ * than a dropped one on a document the user can edit by hand.
+ * @param state - the fresh scan state to fill.
+ */
+function restoreLedger(state: ScanState): void {
+  const store = ledgerStorage()
+  if (store === undefined) return
+  try {
+    const raw = store.getItem(LEDGER_KEY)
+    if (raw === null) return
+    const parsed = JSON.parse(raw) as Partial<LedgerFile>
+    const pending = ledgerEntry<StagedDeclaration>(parsed.pending)
+    const queued = ledgerEntry<HeldWrite>(parsed.queued)
+    if (pending === undefined || queued === undefined) return
+    for (const [route, models] of pending) state.pending.set(route, new Map(models))
+    for (const [route, models] of queued) state.queued.set(route, new Map(models))
+  } catch {
+    // Unreadable file: start clean.
+  }
+}
+
+/**
+ * Land whatever the session held back, best effort, at the moments the fiber is
+ * about to go away (plugin disable / HMR / page unload). The ledgers stay in
+ * `sessionStorage`, so a flush the browser cuts short is simply retried by the
+ * next page load's idle pass.
+ * @param state - the scan state whose ledgers to drain.
+ * @param deps - the injection dependencies.
+ */
+export function flushOnTeardown(state: ScanState, deps: InjectorDeps): void {
+  void (async () => {
+    try {
+      await flushQueued(deps, state)
+      await flushPending(deps, state)
+    } catch (error) {
+      console.error(`[bre] teardown flush failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  })()
+}
+
 export function createScanState(): ScanState {
-  return {
+  const state: ScanState = {
     mounted: new Map(),
     describePromise: undefined,
     pending: new Map(),
     missedScans: new Map(),
     queued: new Map(),
     editing: undefined,
+    flushing: false,
+    flushFailures: 0,
+    nextFlushAt: 0,
   }
+  restoreLedger(state)
+  return state
+}
+
+/**
+ * Land everything the session held back, one pass at a time.
+ *
+ * A refusal keeps its intent in the ledger and pushes the next attempt out on
+ * a backoff, so a settled document is not hammered while a genuinely stuck
+ * write (a refused compat key, a vanished route) is retried indefinitely
+ * instead of being lost on the first failure.
+ * @param deps - the injection dependencies.
+ * @param state - mutable scan state.
+ */
+async function runIdlePass(deps: InjectorDeps, state: ScanState): Promise<void> {
+  if (state.flushing) return
+  state.flushing = true
+  try {
+    await flushQueued(deps, state)
+    await flushPending(deps, state)
+    state.flushFailures = 0
+    state.nextFlushAt = 0
+  } catch (error) {
+    state.flushFailures += 1
+    state.nextFlushAt = Date.now() + Math.min(2 ** state.flushFailures * 500, 30_000)
+    console.error(`[bre] idle flush failed: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    state.flushing = false
+  }
+  deps.onIdle?.()
+}
+
+/** Whether either ledger still holds work the idle pass has to land. */
+function hasOutstanding(state: ScanState): boolean {
+  return state.queued.size > 0 || state.pending.size > 0
 }
 
 /**
@@ -235,21 +397,27 @@ export function stageEffortsInto(
   input?: InputModalities,
   defaultEffort?: string | null,
 ): void {
-  const models = state.pending.get(route)
-  if (efforts === undefined) {
-    if (models === undefined) return
-    models.delete(modelId)
-    if (models.size === 0) state.pending.delete(route)
-    return
+  try {
+    const models = state.pending.get(route)
+    if (efforts === undefined) {
+      if (models === undefined) return
+      models.delete(modelId)
+      if (models.size === 0) state.pending.delete(route)
+      return
+    }
+    // 'keep' is storable: a modality-only staging must survive the flush as a
+    // declaration that touches everything EXCEPT the ladder.
+    state.pending.set(route, (models ?? new Map()).set(modelId, {
+      efforts,
+      ...(compat === undefined ? {} : { compat }),
+      ...(input === undefined ? {} : { input }),
+      ...(defaultEffort === undefined ? {} : { defaultEffort }),
+    }))
+  } finally {
+    // Both arms changed the ledger (or provably did not): persisting here
+    // keeps the early returns from having to remember it.
+    persistLedger(state)
   }
-  // 'keep' is storable: a modality-only staging must survive the flush as a
-  // declaration that touches everything EXCEPT the ladder.
-  state.pending.set(route, (models ?? new Map()).set(modelId, {
-    efforts,
-    ...(compat === undefined ? {} : { compat }),
-    ...(input === undefined ? {} : { input }),
-    ...(defaultEffort === undefined ? {} : { defaultEffort }),
-  }))
 }
 
 /**
@@ -263,6 +431,23 @@ export function stageEffortsInto(
  */
 export function queueWriteInto(state: ScanState, route: string, modelId: string, write: HeldWrite): void {
   state.queued.set(route, (state.queued.get(route) ?? new Map()).set(modelId, write))
+  persistLedger(state)
+}
+
+/**
+ * Withdraw one row's held intent (the editor's own Reset, or any later
+ * "discard this edit"). Idempotent, and it clears the route entry once its
+ * last model is gone.
+ * @param state - mutable scan state.
+ * @param route - the route the editor was editing.
+ * @param modelId - the model whose intent to drop.
+ */
+export function withdrawHeldWrite(state: ScanState, route: string, modelId: string): void {
+  const models = state.queued.get(route)
+  if (models === undefined) return
+  models.delete(modelId)
+  if (models.size === 0) state.queued.delete(route)
+  persistLedger(state)
 }
 
 /**
@@ -472,6 +657,9 @@ async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> 
     }
     if (models.size === 0) state.queued.delete(route)
   }
+  // The queue just shrank (landed intents) or stayed as it was (refusals):
+  // either way the stored file must match what is left to do.
+  persistLedger(state)
 }
 
 /**
@@ -495,6 +683,7 @@ async function flushPending(deps: InjectorDeps, state: ScanState): Promise<void>
     if (!hasOwn(providers, route)) continue
     await flushRoute(deps, state, route, models)
   }
+  persistLedger(state)
 }
 
 /** Find the first input/select whose aria-label starts with one of the labels. */
@@ -621,6 +810,23 @@ function routeOfCard(
 }
 
 /**
+ * Whether an official editing card is open on the page, told from the card's
+ * own action row (its Cancel/commit pair) with the model-row containers as a
+ * fallback signal.
+ *
+ * The distinction matters: an ON-SCREEN card holds a frozen revision baseline,
+ * so a write landing while it is open is refused on the user's next save --
+ * issue #7. Judging "is a card open" from the capacity buttons alone answers
+ * "is a model row expanded", which is not the same question: an open card with
+ * an empty model list would read as idle and let exactly that write through.
+ */
+function officialCardOf(root: HTMLElement): HTMLElement | undefined {
+  return root.querySelector<HTMLElement>('[class*="editorActions"]')
+    ?? root.querySelector<HTMLElement>('[class*="modelEntry"]')
+    ?? undefined
+}
+
+/**
  * Scan the settings DOM for official model rows and reconcile the injected
  * editors. Idempotent: existing editors are left alone, new disclosures get
  * one, and removed ones are unmounted.
@@ -638,34 +844,37 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
   // itself matches on them, and reading lazily is what keeps a language switch
   // in step with the page (the labels the host renders change with it).
   const labels = deps.labels()
+  // "Is an official editing card open?" is the gate that decides whether this
+  // plugin may write at all. The card's own action row answers it structurally,
+  // with the model-row containers as a second signal: an open card whose model
+  // list happens to be empty carries no capacity button, and judging idleness
+  // from those buttons alone would let a write slip into that card's frozen
+  // revision baseline -- issue #7 again, under a rarer trigger.
+  const cardOpen = officialCardOf(root) !== undefined
   const hasCapacityRows = labels.capacity.some(aria =>
     root.querySelector(`button[aria-label^="${aria}"]`) !== null)
-  if (!hasCapacityRows) {
+  if (!cardOpen) {
     if (state.mounted.size > 0) {
       for (const [, entry] of state.mounted) entry.editor.unmount()
       state.mounted.clear()
     }
     // No editing card is on the page, so no on-screen revision baseline can be
     // invalidated by a write: THIS is the moment to land everything the
-    // session held back. `!== false` also covers the first scan (undefined),
-    // so a page that loads straight into the models section still gets its one
-    // idle pass. The autofill complement rides the same moment.
+    // session held back. `!== false` also covers the first scan (undefined) --
+    // and a page that reloaded onto restored ledgers -- so outstanding work
+    // always gets its pass; the second arm only fires while intents wait, so a
+    // settled page costs nothing beyond the check.
     const wasEditing = state.editing
     state.editing = false
-    if (wasEditing !== false) {
-      void (async () => {
-        try {
-          await flushQueued(deps, state)
-          await flushPending(deps, state)
-        } catch (error) {
-          console.error(`[bre] idle flush failed: ${error instanceof Error ? error.message : String(error)}`)
-        }
-        deps.onIdle?.()
-      })()
+    if (wasEditing !== false || (hasOutstanding(state) && Date.now() >= state.nextFlushAt)) {
+      void runIdlePass(deps, state)
     }
     return
   }
   state.editing = true
+  // An open card showing no model row has nothing to equip: the idle pass
+  // stays fenced until the card goes away (or a row appears).
+  if (!hasCapacityRows) return
   // Fold the describe request across scans (one wire read per wave). A
   // promise's .then ALWAYS runs asynchronously (microtask), even when already
   // resolved — the fold just keeps concurrent scans from stacking wire reads.
