@@ -165,7 +165,7 @@ export function createEditorApi(
     modelId: string,
     efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
-    input?: InputModalities,
+    input?: InputModalities | null,
     defaultEffort?: string | null,
   ) => void,
   /**
@@ -179,6 +179,20 @@ export function createEditorApi(
     modelId: string,
     write: HeldWrite,
   ) => void,
+  /**
+   * Present only on the editor's own seam: forget everything this row reported.
+   * The editor's Reset calls it, because the ledger it wrote to outlives the
+   * React state — without this a Reset followed by the official Save would
+   * still write the discarded edits.
+   */
+  withdraw?: (route: string, modelId: string) => void,
+  /**
+   * Whether this row's route is still unsaved (the create card's draft route,
+   * or a typed-but-unsaved row). The injector knows this per row, so it is told
+   * rather than re-derived here: deriving it would cost a wire describe on
+   * every keystroke the editor reports.
+   */
+  stagedOf?: () => boolean,
 ): EffortEditorApi {
   return {
     async suggest(route, modelId, name, stagedFacts) {
@@ -219,6 +233,27 @@ export function createEditorApi(
           ...(suggestion.endpoint === undefined ? {} : { endpoint: suggestion.endpoint }),
         },
       }
+    },
+    commit(route, modelId, write) {
+      // The editor reports the row's whole pending edit, and whether the route
+      // exists in the document yet decides the ledger: an unsaved route (the
+      // create card, or a typed-but-unsaved row) stages, a saved one queues
+      // until the official card's Save. Both are synchronous and memory-only:
+      // the change must register before the user can reach that Save button.
+      if (stagedOf?.() === true) {
+        stage?.(route, modelId, write.efforts, write.compat, write.input, write.defaultEffort)
+        return
+      }
+      hold?.(route, modelId, {
+        efforts: write.efforts,
+        ...(write.compat === undefined ? {} : { compat: write.compat }),
+        ...(write.input === undefined ? {} : { input: write.input }),
+        ...(write.clearCompatKeys === undefined ? {} : { clearCompatKeys: write.clearCompatKeys }),
+        ...(write.defaultEffort === undefined ? {} : { defaultEffort: write.defaultEffort }),
+      })
+    },
+    withdraw(route, modelId) {
+      withdraw?.(route, modelId)
     },
     stageEfforts(route, modelId, efforts, compat, input, defaultEffort) {
       stage?.(route, modelId, efforts, compat, input, defaultEffort)

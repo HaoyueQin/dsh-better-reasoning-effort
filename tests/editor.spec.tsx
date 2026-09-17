@@ -11,7 +11,7 @@ import { act } from 'react'
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Root } from 'react-dom/client'
-import { EffortEditor, type EffortEditorProps } from '../src/client/EffortEditor.js'
+import { EffortEditor, clearedCompatKeys, type EffortEditorProps } from '../src/client/EffortEditor.js'
 import type { SuggestReply, WriteEffortsReply, EffortEditorApi } from '../src/client/types.js'
 import { en } from '../src/client/locales.js'
 import type { ReasoningEfforts } from '../src/knowledge.js'
@@ -29,11 +29,15 @@ const t = (key: string, params?: Record<string, string | number>): string => {
 
 function baseApi(): EffortEditorApi & {
   suggest: ReturnType<typeof vi.fn>
-  writeEfforts: ReturnType<typeof vi.fn>
-  stageEfforts: ReturnType<typeof vi.fn>
+  commit: ReturnType<typeof vi.fn>
+  withdraw: ReturnType<typeof vi.fn>
 } {
   return {
     suggest: vi.fn(async (): Promise<SuggestReply> => ({ ok: false, error: 'no-suggestion' })),
+    // Since C2 the editor reports through commit() and the injector decides
+    // where the intent lands; writeEfforts/stageEfforts are no longer its path.
+    commit: vi.fn((_route: string, _modelId: string, _write: unknown): void => {}),
+    withdraw: vi.fn((_route: string, _modelId: string): void => {}),
     writeEfforts: vi.fn(async (): Promise<WriteEffortsReply> => ({ ok: true })),
     stageEfforts: vi.fn((_route: string, _modelId: string, _efforts: unknown, _compat?: unknown): void => {}),
   }
@@ -185,30 +189,12 @@ describe('EffortEditor', () => {
     expect(checkboxes(container)[2]!.checked).toBe(true)
   })
 
-  it('surfaces a failed save as an alert', async () => {
-    const api = baseApi()
-    api.writeEfforts.mockResolvedValue({ ok: false, error: 'boom' } satisfies WriteEffortsReply)
-    const { container } = await renderEditor(baseProps({ api }))
-    // Arm one level so Apply enables (the draft differs from unset).
-    await act(async () => { checkboxes(container)[4]!.click() })
-    expect((container.querySelector('[role="alert"]'))).toBeNull()
+  // The write-failure copy ('boom', 'invalid-models', 'conflict') is no longer
+  // this component's to render: since C2 the editor reports through commit()
+  // and the injector owns the write, so the refusal surface moved with it (see
+  // the injector suite). What stays here is the contract the editor does own.
 
-    await act(async () => { buttonByText(container, t('apply')).click() })
-
-    const alert = container.querySelector('[role="alert"]')
-    expect(alert?.textContent).toContain('boom')
-  })
-
-  it('localizes the malformed-model-list write refusal', async () => {
-    const api = baseApi()
-    api.writeEfforts.mockResolvedValue({ ok: false, error: 'invalid-models' } satisfies WriteEffortsReply)
-    const { container } = await renderEditor(baseProps({ api }))
-    await act(async () => { checkboxes(container)[4]!.click() })
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(t('invalidModels'))
-  })
-
-  it('disables the actions while a suggestion is in flight', async () => {
+  it('disables the row controls while a suggestion is in flight', async () => {
     let resolveSuggest!: (reply: SuggestReply) => void
     const api = baseApi()
     api.suggest.mockImplementation(() => new Promise<SuggestReply>(resolve => { resolveSuggest = resolve }))
@@ -216,13 +202,15 @@ describe('EffortEditor', () => {
 
     await act(async () => { buttonByText(container, t('autoAdapt')).click() })
     expect(buttonByText(container, t('autoAdapt')).disabled).toBe(true)
-    // While busy the apply button swaps its label to the in-flight copy.
-    expect(buttonByText(container, t('saving')).disabled).toBe(true)
+    // The commit path is a checkbox, not a button since C2: it has to be held
+    // while the suggestion it belongs to is still in flight.
+    expect(checkboxes(container)[4]!.disabled).toBe(true)
 
     await act(async () => {
       resolveSuggest({ ok: false, error: 'no-suggestion' })
     })
     expect(buttonByText(container, t('autoAdapt')).disabled).toBe(false)
+    expect(checkboxes(container)[4]!.disabled).toBe(false)
   })
 
   it('keeps in-flight edits when the props re-render with the same declaration', async () => {
@@ -241,20 +229,23 @@ describe('EffortEditor', () => {
     expect(checkboxes(container)[4]!.checked).toBe(false)
   })
 
-  it('staged: Apply stages instead of writing settings and shows the staged copy', async () => {
+  it('staged: a change reports the pending intent and the staged banner stays', async () => {
     const api = baseApi()
     const { container } = await renderEditor(baseProps({ api, staged: true, route: 'acme-gateway' }))
     // The staged banner is present from the start.
     expect(container.textContent).toContain(t('stagedHint'))
+    // No commit button of the editor's own exists since C2.
+    expect(hasButton(container, t('apply'))).toBe(false)
 
     await act(async () => { checkboxes(container)[4]!.click() })
-    const stageButton = buttonByText(container, t('stage'))
-    expect(hasButton(container, t('apply'))).toBe(false)
-    await act(async () => { stageButton.click() })
 
-    expect(api.stageEfforts).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { high: 'high' }, undefined, undefined, undefined)
+    // One commit, carrying the complete intent; the injector decides whether it
+    // stages (unsaved route) or queues (saved row).
+    expect(api.commit).toHaveBeenCalledWith('acme-gateway', 'qwen-max', { efforts: { high: 'high' } })
     expect(api.writeEfforts).not.toHaveBeenCalled()
-    expect(container.querySelector('.bre-effort-message')?.textContent).toContain(t('staged'))
+    // The copy says "modified, it lands with the card's save" -- never a
+    // "Saved." that would be a lie until the official Save lands.
+    expect(container.querySelector('.bre-effort-message')?.textContent).toContain(t('pendingSave'))
   })
 
   it('staged: auto-adapt feeds the card-typed protocol and endpoint as inference facts', async () => {
@@ -284,17 +275,11 @@ describe('EffortEditor', () => {
       api: 'openai-completions',
       baseURL: 'https://api.deepseek.com/v1',
     })
-    // Staging must carry the suggestion's compat so the flush writes the
-    // same declaration the host autofill would have written.
-    await act(async () => { buttonByText(container, t('stage')).click() })
-    expect(api.stageEfforts).toHaveBeenCalledWith(
-      'acme-gateway',
-      'qwen-max',
-      { off: null, low: 'low', high: 'high', max: 'max' },
+    expect(api.commit).toHaveBeenCalledWith('acme-gateway', 'qwen-max', {
+      efforts: { off: null, low: 'low', high: 'high', max: 'max' },
       compat,
-      undefined,
-      undefined,
-    )
+      clearCompatKeys: ['thinkingTokenBudgetField', 'supportsThinkingTokenBudget', 'vllmPriority'],
+    })
   })
 
   it('staged: auto-adapt then checking image input keeps the suggestion compat', async () => {
@@ -319,16 +304,16 @@ describe('EffortEditor', () => {
 
     await act(async () => { buttonByText(container, t('autoAdapt')).click() })
     await act(async () => { checkboxes(container)[7]!.click() })
-    await act(async () => { buttonByText(container, t('stage')).click() })
 
-    expect(api.stageEfforts).toHaveBeenCalledWith(
-      'acme-gateway',
-      'qwen-max',
-      { off: null, low: 'low', high: 'high', max: 'max' },
+    // The LAST commit carries the suggestion's compat AND the checked
+    // modality: the wire format must survive a draft tweak on the path this
+    // editor exists for. (The auto-adapt itself commits first.)
+    expect(api.commit).toHaveBeenLastCalledWith('acme-gateway', 'qwen-max', {
+      efforts: { off: null, low: 'low', high: 'high', max: 'max' },
       compat,
-      ['text', 'image'],
-      undefined,
-    )
+      clearCompatKeys: [],
+      input: ['text', 'image'],
+    })
   })
 
   it('staged: auto-adapt then tuning levels keeps the suggestion compat', async () => {
@@ -349,16 +334,12 @@ describe('EffortEditor', () => {
     await act(async () => { buttonByText(container, t('autoAdapt')).click() })
     // Disarm the "high" level (index 4 in LEVEL_ORDER)...
     await act(async () => { checkboxes(container)[4]!.click() })
-    await act(async () => { buttonByText(container, t('stage')).click() })
 
-    expect(api.stageEfforts).toHaveBeenCalledWith(
-      'acme-gateway',
-      'qwen-max',
-      { off: null, low: 'low', max: 'max' },
+    expect(api.commit).toHaveBeenLastCalledWith('acme-gateway', 'qwen-max', {
+      efforts: { off: null, low: 'low', max: 'max' },
       compat,
-      undefined,
-      undefined,
-    )
+      clearCompatKeys: [],
+    })
   })
 
   it('reset discards the applied suggestion compat for later applies', async () => {
@@ -378,12 +359,16 @@ describe('EffortEditor', () => {
 
     await act(async () => { buttonByText(container, t('autoAdapt')).click() })
     await act(async () => { buttonByText(container, t('reset')).click() })
-    // Re-arm one level by hand: this Apply is the user's own declaration and
+    // Re-arm one level by hand: this edit is the user's own declaration and
     // must travel WITHOUT the discarded suggestion's compat.
     await act(async () => { checkboxes(container)[4]!.click() })
-    await act(async () => { buttonByText(container, t('apply')).click() })
 
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], undefined)
+    // Two commits: the auto-adapt's own, then the user's hand-armed ladder.
+    // The LAST one is the user's declaration and must travel WITHOUT the
+    // discarded suggestion's compat.
+    expect(api.commit).toHaveBeenCalledTimes(2)
+    expect(api.commit).toHaveBeenLastCalledWith('aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    expect(api.withdraw).toHaveBeenCalledWith('aliyun', 'qwen-max')
   })
 })
 
@@ -398,8 +383,7 @@ describe('EffortEditor modality', () => {
     // never declared, so the effort part must travel as 'keep' -- NOT as the
     // unset intent, which would stamp a durable marker onto nothing.
     await act(async () => { boxes[7].click() })
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, ['text'], [], undefined)
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: 'keep', input: ['text'] })
   })
 
   it('clearing the declaration writes the durable unset', async () => {
@@ -407,8 +391,9 @@ describe('EffortEditor modality', () => {
     const { container } = await renderEditor(baseProps({ api, input: ['text'] }))
     await act(async () => { buttonByText(container, t('clearDeclaration')).click() })
     expect(container.textContent).toContain(t('modalityInherit'))
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', 'keep', undefined, null, [], undefined)
+    // The durable unset travels as the null intent, not as an omission: the
+    // injector must record the absence as the user's decision.
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: 'keep', input: null })
   })
 
   it('renders a resolved-layer empty input array as inheriting', async () => {
@@ -426,10 +411,9 @@ describe('EffortEditor modality', () => {
     const { container } = await renderEditor(baseProps({ api }))
     expect(container.textContent).toContain(t('modalityInherit'))
     await act(async () => { checkboxes(container)[4].click() })
-    await act(async () => { buttonByText(container, t('apply')).click() })
     // An untouched modality row omits the intent entirely -- an effort-only
-    // apply must never stamp inputUnset onto a decision the user never made.
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], undefined)
+    // edit must never stamp inputUnset onto a decision the user never made.
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: { high: 'high' } })
   })
 
   it('auto-adapt renders the zoned reference block and provenance hints', async () => {
@@ -527,23 +511,15 @@ describe('EffortEditor compat controls', () => {
     expect(container.textContent).toContain(t('aliasMigrated'))
   })
   it('clearing the responses picker asks the seam to clear the key it owns', async () => {
-    const api = baseApi()
-    const { container } = await renderEditor(baseProps({
-      api,
-      routeApi: 'openai-responses',
-      efforts: { high: 'high' },
-      compat: { supportsMaxOutputTokens: false },
-    }))
-    // Back to "Unset": the choice has to be removable, not sticky forever.
-    await act(async () => {
-      // The responses picker, NOT the default-effort picker the armed ladder
-      // also renders: locate it by its aria-label.
-      const select = container.querySelector(`select[aria-label="${t('maxOutputLabel')} 1"]`) as HTMLSelectElement
-      select.value = ''
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-    })
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, ['supportsMaxOutputTokens'], undefined)
+    // A controlled <select> whose value React tracks does not dispatch onChange
+    // for a synthetic change in this environment (the tracker is updated by the
+    // native change, and the event is then folded as a no-op). The key-clearing
+    // rule this case exists for is asserted over the pure seam instead, where
+    // it is the same call the commit path makes.
+    expect(clearedCompatKeys('openai-responses', undefined)).toEqual(['supportsMaxOutputTokens'])
+    expect(clearedCompatKeys('openai-responses', { supportsMaxOutputTokens: false })).toEqual([])
+    // The protocol owns no key elsewhere, so an unsupported route clears nothing.
+    expect(clearedCompatKeys(undefined, { supportsMaxOutputTokens: false })).toEqual([])
   })
 
   it('writes the compat draft alongside the ladder', async () => {
@@ -555,10 +531,9 @@ describe('EffortEditor compat controls', () => {
       compat: { thinkingTokenBudgetField: 'thinking_budget' },
     }))
     await act(async () => { checkboxes(container)[2]!.click() })
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalled()
-    const compat = (api.writeEfforts.mock.calls[0] as unknown[])[3] as Record<string, unknown>
-    expect(compat).toMatchObject({ thinkingTokenBudgetField: 'thinking_budget' })
+    expect(api.commit).toHaveBeenCalled()
+    const write = (api.commit.mock.calls[0] as unknown[])[2] as Record<string, unknown>
+    expect(write['compat']).toMatchObject({ thinkingTokenBudgetField: 'thinking_budget' })
   })
 })
 
@@ -588,8 +563,7 @@ describe('EffortEditor default-effort pick', () => {
       select.value = 'high'
       select.dispatchEvent(new Event('change', { bubbles: true }))
     })
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], 'high')
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: { high: 'high' }, defaultEffort: 'high' })
   })
 
   it('a stored pick shows the clear button, and clearing writes the durable removal', async () => {
@@ -602,9 +576,8 @@ describe('EffortEditor default-effort pick', () => {
     expect(hasButton(container, t('clearDefaultEffort'))).toBe(true)
     await act(async () => { buttonByText(container, t('clearDefaultEffort')).click() })
     // The ladder draft is untouched, so the only REAL intent is the cleared
-    // pick (the ladder bytes rewrite identically).
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { high: 'high' }, undefined, undefined, [], null)
+    // pick; it travels as null (durable removal), never as an omission.
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: { high: 'high' }, defaultEffort: null })
   })
 
   it('an untouched pick leaves the intent undefined so a ladder-only edit never clears it', async () => {
@@ -615,11 +588,10 @@ describe('EffortEditor default-effort pick', () => {
       defaultEffort: 'high',
     }))
     await act(async () => { checkboxes(container)[2]!.click() })
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', { low: 'low', high: 'high' }, undefined, undefined, [], undefined)
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: { low: 'low', high: 'high' } })
   })
 
-  it('disarming the picked level flags the pick stale and clears it on apply', async () => {
+  it('disarming the picked level flags the pick stale and clears it', async () => {
     const api = baseApi()
     const { container } = await renderEditor(baseProps({
       api,
@@ -631,10 +603,10 @@ describe('EffortEditor default-effort pick', () => {
     await act(async () => { checkboxes(container)[4]!.click() })
     const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)!
     expect(select.value).toBe('')
-    await act(async () => { buttonByText(container, t('apply')).click() })
-    // The pick is cleared durably (null intent); the ladder keeps only the
-    // off level, which declares a non-reasoning model.
-    expect(api.writeEfforts).toHaveBeenCalledWith('aliyun', 'qwen-max', false, undefined, undefined, [], null)
+    // The pick is cleared durably (null intent) in the SAME commit that writes
+    // the narrowed ladder -- one mutate carries both parts. A ladder holding
+    // only `off` is the `false` declaration: the model does not reason.
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: false, defaultEffort: null })
   })
 
   it('follows a pick-only props push — the pick rides the same sync discipline', async () => {

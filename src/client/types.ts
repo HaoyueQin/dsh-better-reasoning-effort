@@ -269,6 +269,29 @@ export interface HeldWrite {
   defaultEffort?: DefaultEffortIntent
 }
 
+/**
+ * The complete set of edits one editor holds for a row, as it hands them to the
+ * injector after every change.
+ *
+ * Since C2 the editor owns no commit action of its own: a change is reported
+ * the moment it happens, and the injector decides where the intent lands — the
+ * staged ledger while the route is unsaved, the held-write ledger while the
+ * official card is open. The official card's own Save is what commits them
+ * (issue #7), so the editor never branches on `staged` for its write path.
+ */
+export interface PendingWrite {
+  /** The ladder part exactly as the editor computed it. */
+  efforts: EffortWriteIntent
+  /** The compat block to write alongside a ladder declaration. */
+  compat?: CompatSuggestion
+  /** The modality part, when this edit made one. */
+  input?: InputIntent
+  /** Compat fields this edit owns and left empty (deleted when it lands). */
+  clearCompatKeys?: readonly string[]
+  /** The per-model default-effort pick, when this edit made one. */
+  defaultEffort?: DefaultEffortIntent
+}
+
 /** The write seam the effort editor needs. */
 export interface EffortEditorApi {
   /** Ask for a knowledge-base / protocol suggestion for one model. */
@@ -278,6 +301,26 @@ export interface EffortEditorApi {
     name?: string,
     stagedFacts?: StagedRouteFacts,
   ): Promise<SuggestReply>
+  /**
+   * Report the row's complete pending edit. The injector routes it: a route the
+   * settings document does not hold yet goes to the staged ledger, anything
+   * else to the held-write ledger that the official card's Save commits.
+   *
+   * Synchronous and side-effect-free from the editor's point of view: it must
+   * not await a wire write, because the change has to register before the user
+   * can reach the official Save button.
+   *
+   * The row is named explicitly rather than captured when the seam was built:
+   * one seam instance is mounted per DOM row, and the row's identity is what
+   * decides the ledger, so the call carries it instead of trusting a closure.
+   */
+  commit(route: string, modelId: string, write: PendingWrite): void
+  /**
+   * Withdraw everything this editor reported for its row (the editor's own
+   * Reset). Without it, a Reset followed by the official Save would still write
+   * the discarded edits — the ledger outlives the React state.
+   */
+  withdraw(route: string, modelId: string): void
   /**
    * Write one model's reasoningEfforts (unset, disabled, a dict -- or 'keep'
    * to leave it completely untouched) and, when an input intent is supplied,
@@ -290,6 +333,9 @@ export interface EffortEditorApi {
    * the editor does not show is never dropped), while a listed one is deleted,
    * which is what makes "Unset" mean unset instead of "keep the last choice
    * forever".
+   *
+   * Not called by the editor since C2 (it reports through {@link commit}); the
+   * injector's idle and teardown passes remain the only callers.
    */
   writeEfforts(
     route: string,

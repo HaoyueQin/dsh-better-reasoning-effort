@@ -73,6 +73,15 @@ export interface HostLabels {
   baseUrl: readonly string[]
   /** The create card's protocol select. */
   apiProtocol: readonly string[]
+  /**
+   * The editing card's commit button. C2 drives the plugin's landing write off
+   * the official Save, so the button is resolved when the action row's own
+   * structure cannot be read (the buttons ARE the last child pair of
+   * `[class*="editorActions"]`; the copy is the fallback).
+   */
+  apply: readonly string[]
+  /** The editing card's dismiss button (the commit's left-hand sibling). */
+  cancel: readonly string[]
 }
 
 /** A row's identity as found on the page, resolved from the settings join. */
@@ -200,6 +209,38 @@ export interface ScanState {
   flushFailures: number
   /** Earliest `Date.now()` at which the next retry may run (0 = any time). */
   nextFlushAt: number
+  /**
+   * Routes whose OFFICIAL card committed in this session (the user pressed its
+   * commit button). The held ledgers land per route: only the routes the user
+   * actually saved are written, because the official card's Save is now what
+   * commits this plugin's edits too (issue #7 / C2). An intent the user
+   * dismissed without saving is dropped, exactly like the card's own fields.
+   */
+  committing: Set<string>
+  /**
+   * Routes whose official card was dismissed in this session (its cancel
+   * button). Tested before {@link committing}: an intent can only be dropped
+   * or landed, never both.
+   */
+  discarded: Set<string>
+  /**
+   * Routes whose card was seen carrying an official action row of its own.
+   * Recorded when the row is found and NOT removed when the card closes -- it
+   * is the "this route's save could be observed at all" fact the landing
+   * decision needs after the card is gone.
+   */
+  signalRoutes: Set<string>
+  /**
+   * Whether the official action row has failed to yield usable buttons for
+   * every card seen so far. When it has, the landing decision degrades to
+   * "the card went away, so write it" -- writing too much is recoverable,
+   * silently losing the user's declaration is not.
+   */
+  signalsUnavailable: boolean
+  /** Commit buttons already wired, so a re-scan never double-registers. */
+  submitWired: WeakSet<Element>
+  /** Cancel buttons already wired. */
+  cancelWired: WeakSet<Element>
 }
 
 /**
@@ -346,6 +387,12 @@ export function createScanState(): ScanState {
     flushing: false,
     flushFailures: 0,
     nextFlushAt: 0,
+    committing: new Set(),
+    discarded: new Set(),
+    signalRoutes: new Set(),
+    signalsUnavailable: false,
+    submitWired: new WeakSet(),
+    cancelWired: new WeakSet(),
   }
   restoreLedger(state)
   return state
@@ -394,7 +441,12 @@ export function stageEffortsInto(
   modelId: string,
   efforts: EffortWriteIntent,
   compat?: CompatSuggestion,
-  input?: InputModalities,
+  /**
+   * The modality part. `null` is a deliberate unset (the editor's "clear
+   * declaration" on an unsaved route) and stores as such: the staged flush
+   * reads it back verbatim, exactly like the saved-row seam does.
+   */
+  input?: InputModalities | null,
   defaultEffort?: string | null,
 ): void {
   try {
@@ -435,6 +487,22 @@ export function queueWriteInto(state: ScanState, route: string, modelId: string,
 }
 
 /**
+ * Withdraw one row's staged intent (the create card's erase-that-row flow, and
+ * the editor's Reset on a route the document does not hold yet). Idempotent,
+ * and it clears the route entry once its last model is gone.
+ * @param state - mutable scan state.
+ * @param route - the route the staging was made against.
+ * @param modelId - the model whose intent to drop.
+ */
+export function withdrawStaged(state: ScanState, route: string, modelId: string): void {
+  const models = state.pending.get(route)
+  if (models === undefined) return
+  models.delete(modelId)
+  if (models.size === 0) state.pending.delete(route)
+  persistLedger(state)
+}
+
+/**
  * Withdraw one row's held intent (the editor's own Reset, or any later
  * "discard this edit"). Idempotent, and it clears the route entry once its
  * last model is gone.
@@ -448,6 +516,23 @@ export function withdrawHeldWrite(state: ScanState, route: string, modelId: stri
   models.delete(modelId)
   if (models.size === 0) state.queued.delete(route)
   persistLedger(state)
+}
+
+/**
+ * Withdraw a row's intent wherever it landed.
+ *
+ * The editor's Reset is the caller and it does not know which ledger its own
+ * `commit` fed — the create card stages, a saved row queues, and the same row
+ * can move between the two as the user edits the route id. Discarding only one
+ * of them would leave the Reset cosmetic on the other: the official Save would
+ * still write edits the user explicitly threw away.
+ * @param state - mutable scan state.
+ * @param route - the route the editor was editing.
+ * @param modelId - the model whose intent to drop.
+ */
+export function withdrawIntent(state: ScanState, route: string, modelId: string): void {
+  withdrawStaged(state, route, modelId)
+  withdrawHeldWrite(state, route, modelId)
 }
 
 /**
@@ -640,11 +725,35 @@ async function flushRoute(
  * that would have fought the official card now commits. A row that vanished
  * meanwhile drops its entry instead of retrying forever; any other failure
  * stays queued for the next idle pass.
+ *
+ * The LANDING DECISION lives here (issue #7 / C2), per route, because this
+ * ledger is the one the official card's Save governs:
+ *   - the user dismissed the card -> the intent is dropped, exactly like the
+ *     fields the official card itself held;
+ *   - the user committed -> write it, now that the card is gone;
+ *   - the official action row was never readable in this session -> the signal
+ *     cannot be trusted, so degrade to "the card went away, write it": writing
+ *     too much is recoverable, losing the declaration is not;
+ *   - otherwise the card closed with neither signal (the user just walked
+ *     away) -> drop it, which is what "it commits with the official Save"
+ *     means.
  * @param deps - the injection dependencies.
  * @param state - mutable scan state.
  */
 async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> {
   for (const [route, models] of [...state.queued]) {
+    if (state.discarded.has(route)) {
+      state.discarded.delete(route)
+      state.committing.delete(route)
+      state.queued.delete(route)
+      continue
+    }
+    // The staged ledger has no official row whose Save could commit it; this
+    // one does, so an uncommitted route waits (or is dropped) instead of
+    // landing behind that card's frozen revision baseline.
+    const committed = state.committing.has(route)
+    if (!committed && !state.signalsUnavailable) continue
+    state.committing.delete(route)
     for (const [modelId, write] of [...models]) {
       const reply = await createEditorApi(deps.api).writeEfforts(
         route, modelId, write.efforts, write.compat, write.input, write.clearCompatKeys, write.defaultEffort,
@@ -657,8 +766,9 @@ async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> 
     }
     if (models.size === 0) state.queued.delete(route)
   }
-  // The queue just shrank (landed intents) or stayed as it was (refusals):
-  // either way the stored file must match what is left to do.
+  // The queue just shrank (landed or dropped intents) or stayed as it was
+  // (a route still waiting for its card): either way the stored file must
+  // match what is left to do.
   persistLedger(state)
 }
 
@@ -807,6 +917,65 @@ function routeOfCard(
   // with the fixed create heading cannot occur.
   if (hasOwn(providers, title)) return { route: title, staged: false }
   return undefined
+}
+
+/**
+ * The commit/cancel pair of one card's official action row, or undefined when
+ * the row cannot be read.
+ *
+ * Three tiers, most structural first, because this is the signal the plugin's
+ * landing write hangs on and the official page is free to restyle it:
+ *   1. the last two buttons of `[class*="editorActions"]` -- the commit is the
+ *      rightmost, its dismiss the one before it (`EditorFooter.tsx`: the row is
+ *      a plain two-button div, cancel first, commit last);
+ *   2. the declared CSS Modules classes `primaryButton` / `secondaryButton`
+ *      (they carry a hash suffix, so only the prefix can match);
+ *   3. the host's own copy for that row, resolved through the dictionary it
+ *      renders from (`apply` is 'Apply' in English and '保存' in Chinese, so
+ *      pinning either language would strand one of them).
+ *
+ * A row whose buttons no tier can identify returns undefined, which is what
+ * makes {@link ScanState.signalsUnavailable} trip and the landing decision
+ * degrade to "the card went away, write it" rather than dropping the edit.
+ */
+function actionsOf(card: HTMLElement, labels: HostLabels): { submit: HTMLElement; cancel: HTMLElement } | undefined {
+  const row = card.querySelector<HTMLElement>('[class*="editorActions"]')
+  if (row === null) return undefined
+  const buttons = Array.from(row.querySelectorAll<HTMLElement>('button'))
+  if (buttons.length < 2) return undefined
+  const matches = (node: HTMLElement, label: string): boolean =>
+    (node.textContent ?? '').trim() === label
+  const primary = row.querySelector<HTMLElement>('[class*="primaryButton"]')
+  const secondary = row.querySelector<HTMLElement>('[class*="secondaryButton"]')
+  if (primary !== null && secondary !== null) return { submit: primary, cancel: secondary }
+  const submit = [...buttons].reverse().find(node => labels.apply.some(label => matches(node, label)))
+  const cancel = [...buttons].reverse().find(node => labels.cancel.some(label => matches(node, label)))
+  if (submit !== undefined && cancel !== undefined) return { submit, cancel }
+  // Structural last resort: the rightmost button commits, its left sibling
+  // dismisses. Used only when neither the classes nor the copy resolve, so a
+  // one-button row (a future layout) still yields a commit.
+  const last = buttons[buttons.length - 1]
+  const previous = buttons[buttons.length - 2]
+  if (last === undefined || previous === undefined) return undefined
+  return { submit: last, cancel: previous }
+}
+
+/**
+ * Wire one button's click ONCE, in the capture phase.
+ *
+ * Capture, not bubble: the marker has to be recorded before the official
+ * React handler runs and tears the card down, and React's own listeners sit
+ * on the root container. Capture also makes this independent of whether the
+ * official handler stops propagation.
+ */
+function wireOnce(
+  node: HTMLElement,
+  wired: WeakSet<Element>,
+  onHit: () => void,
+): void {
+  if (wired.has(node)) return
+  wired.add(node)
+  node.addEventListener('click', onHit, { capture: true })
 }
 
 /**
@@ -990,6 +1159,29 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       const modelName = staged ? (typedName.length > 0 ? typedName : undefined) : nameOf(models, target.modelId)
       const typedApi = routeStaged ? inputValueByLabel(target.card, labels.apiProtocol) : ''
       const typedBaseURL = routeStaged ? inputValueByLabel(target.card, labels.baseUrl) : ''
+      // The official action row is the signal this row's landing write hangs
+      // on (C2): remember that it was observable at all, and wire its two
+      // buttons once. A row whose buttons no tier can name flips the global
+      // degrade flag, so the landing decision falls back to "the card went
+      // away, write it" instead of silently dropping the edit.
+      if (!state.discarded.has(route) && !state.committing.has(route)) {
+        const actions = actionsOf(target.card, labels)
+        if (actions === undefined) {
+          state.signalsUnavailable = true
+        } else {
+          state.signalRoutes.add(route)
+          wireOnce(actions.submit, state.submitWired, () => {
+            state.committing.add(route)
+            state.discarded.delete(route)
+            persistLedger(state)
+          })
+          wireOnce(actions.cancel, state.cancelWired, () => {
+            state.discarded.add(route)
+            state.committing.delete(route)
+            persistLedger(state)
+          })
+        }
+      }
       const routeApi = routeStaged && typedApi.length > 0
         ? typedApi
         : typeof profile['api'] === 'string' ? profile['api'] as string : undefined
@@ -1017,10 +1209,16 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
           deps.api,
           undefined,
           (r, m, e, c, i, de) => { stageEffortsInto(state, r, m, e, c, i, de) },
-          // An on-screen editor ALWAYS holds the document: the card it lives in
-          // froze its revision baseline, so a write from here would break the
-          // user's very next save in that card. The idle pass replays it.
+          // This row is on screen: it ALWAYS holds the document. The card it
+          // lives in froze its revision baseline, so the intent is queued and
+          // the official card's own Save is what commits it (issue #7 / C2).
           (r, m, w) => { queueWriteInto(state, r, m, w) },
+          // The editor's Reset drops wherever this row's intent landed.
+          r => { withdrawIntent(state, r, target.modelId) },
+          // Read live: the same DOM row can move between unsaved and saved as
+          // the user types a route id, so the ledger decision cannot be frozen
+          // at mount time.
+          () => staged,
         ),
         readOnly: join.writable !== true,
         t: deps.t,

@@ -66,6 +66,11 @@ const HOST_LABEL_KEYS = {
   routeId: ['customRoute', 'Provider ID'],
   baseUrl: ['baseUrl', 'Base URL'],
   apiProtocol: ['customApi', 'API protocol'],
+  // The editing card's action row. `apply` is the commit (en 'Apply' / zh
+  // '保存'), `cancel` the dismiss; the busy copy is 'applying' and needs no
+  // anchor of its own: the button keeps its position in the row.
+  apply: ['apply', 'Apply'],
+  cancel: ['cancel', 'Cancel'],
 } as const satisfies Record<keyof HostLabels, readonly [string, string]>
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -255,6 +260,8 @@ export function apply(ctx: ClientContext): void {
       routeId: resolve(HOST_LABEL_KEYS.routeId),
       baseUrl: resolve(HOST_LABEL_KEYS.baseUrl),
       apiProtocol: resolve(HOST_LABEL_KEYS.apiProtocol),
+      apply: resolve(HOST_LABEL_KEYS.apply),
+      cancel: resolve(HOST_LABEL_KEYS.cancel),
     }
   }
 

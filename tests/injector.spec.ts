@@ -148,6 +148,8 @@ function makeDeps(overrides?: Partial<InjectorDeps>): InjectorDeps & {
       routeId: ['Provider ID'],
       baseUrl: ['Base URL'],
       apiProtocol: ['API protocol'],
+      apply: ['Apply'],
+      cancel: ['Cancel'],
     }),
     mount,
     editors,
@@ -1017,6 +1019,10 @@ describe('held-write ledgers (persistence, retry, the card fence)', () => {
 
     const deps = makeDeps()
     const reloaded = createScanState()
+    // The premise the ledger itself cannot carry (it is session memory, by
+    // design): the user had committed this card before the reload. What THIS
+    // case pins is that the restored intent then lands on the first idle pass.
+    reloaded.committing.add('aliyun')
     await settleIdle(deps, reloaded)
 
     expect(deps.mutate).toHaveBeenCalledTimes(1)
@@ -1070,11 +1076,16 @@ describe('held-write ledgers (persistence, retry, the card fence)', () => {
     })
     const state = createScanState()
     queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    // The premise the ledger cannot carry: the user had committed this card.
+    // The guard itself is covered by "drops the held write when the card was
+    // dismissed"; THIS case is about a refused write surviving to the retry.
+    state.committing.add('aliyun')
 
     await settleIdle(deps, state)
     // A refusal arrives as a value, not a throw: the intent stays for the retry.
     expect(state.queued.size).toBe(1)
 
+    state.committing.add('aliyun')
     await settleIdle(deps, state)
     expect(state.queued.size).toBe(0)
     expect(deps.mutate).toHaveBeenCalledTimes(2)
@@ -1094,4 +1105,134 @@ describe('held-write ledgers (persistence, retry, the card fence)', () => {
     expect(state.nextFlushAt).toBeGreaterThan(0)
     expect(state.pending.size).toBe(1)
   })
+})
+
+describe('the official commit signal (C2)', () => {
+  /**
+   * The official editing card's own DOM shape: the model row (whose capacity
+   * button the injector anchors on), then the action row `EditorFooter`
+   * renders -- cancel first, commit last.
+   */
+  function buildActionCardDom(buttons: string): HTMLElement {
+    const section = document.createElement('div')
+    section.innerHTML = `
+      <li class="rowCard">
+        <div class="editor">
+          <span class="editorTitle">Aliyun</span>
+          <div class="modelEntry">
+            <div class="modelRow">
+              <input aria-label="Model ID" value="qwen-max" />
+              <button aria-label="Capacities 1"></button>
+            </div>
+            <div class="modelAdvanced" style="display:block">
+              <label><span>Context window</span><input /></label>
+            </div>
+          </div>
+          <div class="editorActions">${buttons}</div>
+        </div>
+      </li>`
+    document.body.appendChild(section)
+    return section
+  }
+
+  /** Let the click's ledger marker land, then let the scan chain settle. */
+  async function tick(): Promise<void> {
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+  }
+
+  /** Run an idle pass WITHOUT tearing the card down (the fence has to hold). */
+  async function settleIdleKeepDom(deps: InjectorDeps, state: ReturnType<typeof createScanState>, root: HTMLElement): Promise<void> {
+    reconcile(root, deps, state)
+    await tick()
+    await tick()
+  }
+
+  it('lands the held write once the official commit button was pressed', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildActionCardDom(`
+      <button type="button" class="secondaryButton">Cancel</button>
+      <button type="button" class="primaryButton">Apply</button>`)
+    await settle(() => reconcile(root, deps, state), state)
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    expect(deps.mutate).not.toHaveBeenCalled()
+
+    // A readable card closed WITHOUT its commit: the user just walked away, so
+    // the intent waits rather than landing behind that card's frozen revision
+    // baseline. (This is the direction "committed with the official Save"
+    // means; the case below pins the other one.)
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.size).toBe(1)
+
+    // Now the user really commits: the card reopens and its commit is pressed.
+    const reopened = buildActionCardDom(`
+      <button type="button" class="secondaryButton">Cancel</button>
+      <button type="button" class="primaryButton">Apply</button>`)
+    await settle(() => reconcile(reopened, deps, state), state)
+    reopened.querySelectorAll<HTMLButtonElement>('div.editorActions button')[1]!.click()
+    await tick()
+
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    expect(state.queued.size).toBe(0)
+  })
+
+  it('drops the held write when the card was dismissed', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildActionCardDom(`
+      <button type="button" class="secondaryButton">Cancel</button>
+      <button type="button" class="primaryButton">Apply</button>`)
+    await settle(() => reconcile(root, deps, state), state)
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    // The user dismisses the card: its own fields are discarded, and so is the
+    // plugin's intent -- committed with the official Save means dropped with
+    // the official Cancel.
+    root.querySelectorAll<HTMLButtonElement>('div.editorActions button')[0]!.click()
+    await tick()
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.size).toBe(0)
+  })
+
+  it('degrades to landing on unmount when the action row yields no buttons', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    // A one-button row no tier can name: the commit cannot be observed at all,
+    // so the plugin never drops the user's declaration on a signal it could
+    // not read (writing too much stays recoverable).
+    const root = buildActionCardDom('<button type="button">Frobnicate</button>')
+    await settle(() => reconcile(root, deps, state), state)
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    expect(state.queued.size).toBe(0)
+  })
+
+  it('fences the idle pass while a readable card is open, with no signal yet', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildActionCardDom(`
+      <button type="button" class="secondaryButton">Cancel</button>
+      <button type="button" class="primaryButton">Apply</button>`)
+    await settle(() => reconcile(root, deps, state), state)
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    // An idle pass while the card is still open writes nothing: landing there
+    // is exactly the frozen-revision write issue #7 is about.
+    await settleIdleKeepDom(deps, state, root)
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.size).toBe(1)
+  })
+
+  /** Run an idle pass WITHOUT tearing the card down (the fence has to hold). */
 })
