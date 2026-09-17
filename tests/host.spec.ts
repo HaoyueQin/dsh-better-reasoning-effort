@@ -144,21 +144,27 @@ describe('apply() autofill', () => {
     expect(settings.updates).toHaveLength(0)
   })
 
-  it('refills after a settings/updated commit for the pi-ai namespace', async () => {
+  it('never re-fills on a settings/updated commit: the running fill is the browser half\'s', async () => {
+    // Issue #7: a fill the moment a commit lands rides the official card's own
+    // frozen revision baseline, so the user's NEXT save in that card is refused
+    // with `settings/conflict` and their edit reads as lost. The browser half
+    // owns the running complement now (it writes on its idle pass, once no card
+    // is open); the host fills at boot only.
     const settings = fakeSettings({ aliyun: { api: 'openai-completions', models: [] } })
     const { ctx, emitUpdated } = fakeHost(settings)
     const { apply } = await import('../src/index.js')
     apply(ctx)
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(settings.updates).toHaveLength(0)
-    // A user edit lands, adding an undeclared model.
+    // A user edit lands, adding an undeclared model: no host write may follow.
     settings.register('llm-pi-ai', PROVIDERS)
     emitUpdated('llm-pi-ai')
-    await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
-    // Other namespaces never trigger a fill.
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(settings.updates).toHaveLength(0)
+    // Another namespace never triggers a fill either.
     emitUpdated('some-other-ns')
     await new Promise(resolve => setTimeout(resolve, 20))
-    expect(settings.updates).toHaveLength(1)
+    expect(settings.updates).toHaveLength(0)
   })
 
   it('does not refill a declaration the user deliberately unset', async () => {
@@ -184,13 +190,12 @@ describe('apply() autofill', () => {
     expect(settings.updates).toHaveLength(1)
   })
 
-  it('fills a genuinely new model added after the boot fill', async () => {
-    const settings = fakeSettings(PROVIDERS)
-    const { ctx, emitUpdated } = fakeHost(settings)
-    const { apply } = await import('../src/index.js')
-    apply(ctx)
-    await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
-    settings.register('llm-pi-ai', {
+  it('fills every undeclared model in the one boot pass, and only there', async () => {
+    // The running complement moved to the browser half (issue #7 -- see the
+    // "never re-fills on a settings/updated commit" case above). What stays
+    // here: one boot write carries the whole document, and a deliberate unset
+    // is still respected.
+    const settings = fakeSettings({
       aliyun: {
         displayName: 'Aliyun',
         api: 'openai-completions',
@@ -200,13 +205,19 @@ describe('apply() autofill', () => {
         ],
       },
     })
-    emitUpdated('llm-pi-ai')
-    await vi.waitFor(() => { expect(settings.updates).toHaveLength(2) })
-    const patch = settings.updates[1]!.patch as { providers: Record<string, { models: Array<Record<string, unknown>> }> }
-    const models = patch.providers.aliyun.models
-    // Only the new model is filled; the deliberately-unset one stays untouched.
+    const { ctx, emitUpdated } = fakeHost(settings)
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    await vi.waitFor(() => { expect(settings.updates).toHaveLength(1) })
+    const models = (settings.updates[0]!.patch as { providers: Record<string, { models: Array<Record<string, unknown>> }> })
+      .providers.aliyun.models
+    // The deliberately-unset row stays untouched; the undeclared one is filled.
     expect(models.find(model => model['id'] === 'qwen-max')!['reasoningEfforts']).toBeUndefined()
     expect(models.find(model => model['id'] === 'qwen-turbo')!['reasoningEfforts']).toBeDefined()
+    // A later commit adds nothing.
+    emitUpdated('llm-pi-ai')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(settings.updates).toHaveLength(1)
   })
 
   it('survives a conflicting write without throwing', async () => {

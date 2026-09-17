@@ -16,7 +16,7 @@ import { en, zh } from '../src/client/locales.js'
 import type { ModelDirectoryLike, ModelDirectoryStateLike, RemoteApi, SettingsJoin } from '../src/client/types.js'
 
 /** A settings join shaped like the real wire view. */
-function makeJoin(providers: Record<string, unknown>): SettingsJoin {
+function makeJoin(providers: Record<string, unknown>, userProviders?: Record<string, unknown>): SettingsJoin {
   return {
     // The SettingsNamespaceView pins value/user to JsonValue; the fixtures
     // are plain JSON shapes, so the view asserts once instead of per-field.
@@ -24,7 +24,9 @@ function makeJoin(providers: Record<string, unknown>): SettingsJoin {
       ns: PI_AI_NS,
       schema: {},
       value: { providers },
-      user: {},
+      // The write baseline is the RAW user layer, so a fixture that exercises
+      // the running auto-fill (or any write) mirrors the document into it.
+      user: userProviders === undefined ? {} : { providers: userProviders },
       revision: 1,
       applies: 'live',
       secrets: [],
@@ -328,6 +330,46 @@ describe('client apply()', () => {
       expect(document.querySelectorAll('.bre-effort-editor')).toHaveLength(0)
     } finally {
       h.disposeAll()
+    }
+  })
+
+  it('fills the models added mid-session on the idle pass, never while a card is open', async () => {
+    // The running auto-fill complement the host no longer performs (issue #7):
+    // a write the moment a commit lands rides the official card's frozen
+    // revision baseline and makes the user's NEXT save in that card fail with
+    // `settings/conflict`. It waits for the idle pass instead -- the moment no
+    // official card is open.
+    const providers = structuredClone(JOIN_FIXTURE)
+    const join = makeJoin(providers, structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(join))
+    // The config route is an addition of this release; an older/unreachable
+    // host must fall back to the documented defaults, not disable the fill.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }) as Response))
+    const h = makeCtx(api)
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+
+      // The card is open: nothing may be written.
+      const mutate = api.settings.mutate as ReturnType<typeof vi.fn>
+      expect(mutate).not.toHaveBeenCalled()
+
+      // Closing it is the idle pass.
+      document.body.innerHTML = ''
+      await waitFor(() => mutate.mock.calls.length > 0)
+      const ops = mutate.mock.calls[0]![1] as Array<{ path: string[]; value: Array<Record<string, unknown>> }>
+      expect(ops[0]!.path).toEqual(['providers', 'aliyun', 'models'])
+      const models = ops[0]!.value
+      expect(models.map(model => model['id'])).toEqual(['qwen-max', 'qwen-turbo'])
+      // Both rows were undeclared, so the knowledge base fills both.
+      expect(models.every(model => model['reasoningEfforts'] !== undefined)).toBe(true)
+      // Capacities are never this plugin's to write.
+      expect(models.every(model => model['contextWindow'] === undefined)).toBe(true)
+    } finally {
+      h.disposeAll()
+      vi.unstubAllGlobals()
     }
   })
 

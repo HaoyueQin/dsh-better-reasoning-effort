@@ -10,6 +10,15 @@ export const PLUGIN_ID = 'dsh-better-reasoning-effort'
 /** Same-origin host route that proxies a provider's RAW /models listing. */
 export const PROBE_PATH = '/dsh-better-reasoning-effort/raw-models'
 
+/**
+ * Same-origin host route that reports this plugin's autofill switches. The
+ * browser half runs the running auto-fill complement, and a `dsh.client`
+ * declaration carries no plugin config, so the two switches have to be read
+ * from the host that owns the cordis row; without it a deployment that turned
+ * `autofill: false` would still be written to from the page.
+ */
+export const AUTOFILL_CONFIG_PATH = '/dsh-better-reasoning-effort/autofill-config'
+
 /** The settings namespace this plugin edits: pi-ai custom provider routes. */
 export const PI_AI_NS = 'llm-pi-ai'
 
@@ -33,15 +42,15 @@ export const INPUT_UNSET_MARKER = 'inputUnset'
  * Model-level provenance marker written beside every ladder the HOST autofill
  * fills from the knowledge base, carrying the settings revision the fill read.
  *
- * It exists because the host fills in-process the moment a provider is
- * committed, while the browser's staged-declaration flush waits out its scan
- * debounce: by the time the flush compares the document against its own
- * suggestion, the suggestion is already there. Byte equality alone cannot then
- * tell "the plugin wrote this" from "the user declared this" -- a staged ladder
- * that differs from the knowledge base in even one spelling (the editor's
- * `off: null` against the knowledge base's `off: 'none'`) was dropped as a
- * document takeover, i.e. the reported "configured it on the add-provider card,
- * saved, and it is gone".
+ * It exists because the plugin's auto-fill and the user's staged declaration
+ * race on the SAME row: whichever half runs the fill writes the knowledge base
+ * suggestion, while the staged-declaration flush compares the document against
+ * its own suggestion. By the time the flush looks, the suggestion may already
+ * be stored -- and byte equality alone cannot tell "the plugin wrote this" from
+ * "the user declared this", so a staged ladder differing from the knowledge
+ * base in even one spelling (the editor's `off: null` against the knowledge
+ * base's `off: 'none'`) was dropped as a document takeover: the reported
+ * "configured it on the add-provider card, saved, and it is gone".
  *
  * With the marker the flush knows the stored ladder is a suggestion, so a
  * staged user intent overrides it. Either way the user's bytes win; the marker

@@ -145,9 +145,11 @@ export type ModelDirectoryLike = ModelDirectory
 // ---- (rest unchanged) ----
 
 /**
- * One result of writing a model's declaration.
+ * One result of writing a model's declaration. `staged` reports that the
+ * write was queued rather than committed: the editor holds the document while
+ * the official card is open, so the change lands once the user stops editing.
  */
-export type WriteEffortsReply = { ok: true } | { ok: false; error: string }
+export type WriteEffortsReply = { ok: true; staged?: boolean } | { ok: false; error: string }
 
 /**
  * One result of asking for a suggestion for one model. The effort ladder and
@@ -212,6 +214,24 @@ export type EffortWriteIntent = ReasoningEfforts | false | undefined | 'keep'
  * one of the model's own declared ladder keys.
  */
 export type DefaultEffortIntent = string | null | undefined
+
+/**
+ * The complete write one editor asked for while it held the document. The
+ * injector replays it verbatim once the user stops editing: it is the user's
+ * own declared intent, so no suggestion arbitration applies to it.
+ */
+export interface HeldWrite {
+  /** The ladder part exactly as the editor computed it. */
+  efforts: EffortWriteIntent
+  /** The compat block to write alongside a ladder declaration. */
+  compat?: CompatSuggestion
+  /** The modality part, when this edit made one. */
+  input?: InputIntent
+  /** Compat fields this edit owns and left empty (deleted on the replay). */
+  clearCompatKeys?: readonly string[]
+  /** The per-model default-effort pick, when this edit made one. */
+  defaultEffort?: DefaultEffortIntent
+}
 
 /** The write seam the effort editor needs. */
 export interface EffortEditorApi {

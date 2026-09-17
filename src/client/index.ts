@@ -28,13 +28,14 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { createRoot, type Root } from 'react-dom/client'
 import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { DEFAULT_EFFORT_FIELD, PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
+import { AUTOFILL_CONFIG_PATH, DEFAULT_EFFORT_FIELD, PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
 import { wireEffortMemory } from './effort-memory.js'
 import { createScanState, reconcile, type HostLabels } from './injector.ts'
 import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
-import { describeNamespace, providersOf } from './ops.ts'
+import { buildAutofillPatch } from '../autofill.js'
+import { describeNamespace, providersOf, userProvidersOf } from './ops.ts'
 import { ComposerSlider } from './ComposerSlider.js'
 import { SliderToggle } from './SliderToggle.js'
 import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabled } from './slider-pref.js'
@@ -488,6 +489,67 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
+  // ---- The running auto-fill complement (issue #7) ----
+  // The host fills once at boot. Everything a session adds afterwards is filled
+  // HERE, on the idle pass: that is the only moment no official card is holding
+  // a revision baseline a write would invalidate.
+  let autofillSwitches: Promise<{ autofill: boolean; modalityAutofill: boolean }> | undefined
+
+  /**
+   * The host's autofill switches, read once. A `dsh.client` declaration carries
+   * no plugin config, so a deployment configured `autofill: false` would
+   * otherwise still be written to from the page. An unreachable or older host
+   * keeps the documented defaults rather than silently disabling the feature.
+   */
+  const autofillSwitchesOf = (): Promise<{ autofill: boolean; modalityAutofill: boolean }> => {
+    autofillSwitches ??= (async () => {
+      const fallback = { autofill: true, modalityAutofill: true }
+      try {
+        const response = await fetch(AUTOFILL_CONFIG_PATH, { method: 'GET' })
+        if (!response.ok) return fallback
+        const body = (await response.json()) as { ok?: boolean; data?: { autofill?: unknown; modalityAutofill?: unknown } }
+        if (body?.ok !== true) return fallback
+        return {
+          autofill: body.data?.autofill !== false,
+          modalityAutofill: body.data?.modalityAutofill !== false,
+        }
+      } catch {
+        return fallback
+      }
+    })()
+    return autofillSwitches
+  }
+
+  /**
+   * Fill the models this session added, through the very patch builder the
+   * host's boot pass uses (so one suggestion can never produce two different
+   * documents). Runs on the idle pass only.
+   */
+  const runIdleAutofill = async (): Promise<void> => {
+    try {
+      const switches = await autofillSwitchesOf()
+      if (!switches.autofill) return
+      const join = await describeNamespace(settingsApi)
+      const namespace = join.namespace
+      if (namespace === undefined || join.writable !== true) return
+      const userProviders = userProvidersOf(namespace)
+      if (userProviders === undefined) return
+      const patch = buildAutofillPatch(
+        userProviders, () => true, { modalities: switches.modalityAutofill }, namespace.revision,
+      )
+      if (patch === undefined) return
+      const routes = patch['providers'] as Record<string, { models: unknown }>
+      const ops = Object.entries(routes).map(([route, profile]) => ({
+        op: 'set' as const,
+        path: ['providers', route, 'models'],
+        value: profile.models,
+      })) as unknown as Parameters<typeof settingsApi.settings.mutate>[1]
+      await settingsApi.settings.mutate(PI_AI_NS, ops, namespace.revision)
+    } catch (error) {
+      console.error(`[bre] idle autofill failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   const scheduleScan = (): void => {
     if (scanTimer !== undefined) return
     // Debounce: the official page re-renders in bursts (typing, expanding,
@@ -504,6 +566,9 @@ export function apply(ctx: ClientContext): void {
         describeNamespace: () => describeNamespace(settingsApi),
         t,
         labels: hostLabels,
+        // The idle pass landed everything the session held back; the autofill
+        // complement rides the same moment (see runIdleAutofill).
+        onIdle: () => { void runIdleAutofill() },
         mount(container, props) {
           const rootEl = document.createElement('div')
           // The slot class carries the grid-column span: this wrapper — not

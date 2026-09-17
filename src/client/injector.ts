@@ -31,7 +31,7 @@ import { suggestEfforts, type CompatSuggestion, type InputModalities, type Reaso
 import { modelsOf, routeFactsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
 import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
-import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from './types.js'
+import type { EffortEditorApi, EffortWriteIntent, HeldWrite, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
 
@@ -109,6 +109,12 @@ export interface InjectorDeps {
   labels(): HostLabels
   /** Mount one editor into a container (React); render() updates its props in place. */
   mount(container: HTMLElement, props: EditorMountProps): MountedEditor
+  /**
+   * Runs after an idle pass landed everything the session held back. The
+   * browser half hangs its autofill complement here: "the user stopped
+   * editing" is the only moment this side may safely write the document.
+   */
+  onIdle?(): void
 }
 
 /** One mounted editor: unmount disposes the React root; render swaps props in place. */
@@ -170,6 +176,20 @@ export interface ScanState {
    * mid-edit staging. Mirrors {@link pending}'s key shape.
    */
   missedScans: Map<string, Set<string>>
+  /**
+   * Writes an ON-SCREEN editor asked for while the official card held the
+   * document, keyed route → model id. Kept verbatim (this is the user's own
+   * declaration, so no suggestion arbitration applies) and replayed the
+   * moment the card is gone. In memory only: it dies with the fiber.
+   */
+  queued: Map<string, Map<string, HeldWrite>>
+  /**
+   * Whether an official editing card was on the page at the last reconcile.
+   * `undefined` until the first scan. The `!== false` test is what makes the
+   * idle pass run exactly once per editing session -- and once for a page
+   * that loads straight into the models section without ever editing.
+   */
+  editing: boolean | undefined
 }
 
 /**
@@ -197,6 +217,8 @@ export function createScanState(): ScanState {
     describePromise: undefined,
     pending: new Map(),
     missedScans: new Map(),
+    queued: new Map(),
+    editing: undefined,
   }
 }
 
@@ -228,6 +250,19 @@ export function stageEffortsInto(
     ...(input === undefined ? {} : { input }),
     ...(defaultEffort === undefined ? {} : { defaultEffort }),
   }))
+}
+
+/**
+ * Record (or replace) the write an on-screen editor asked for while the
+ * official card held the document. The latest intent for a row wins: the user
+ * may apply twice before closing the card.
+ * @param state - mutable scan state.
+ * @param route - the route being edited.
+ * @param modelId - the model id being edited.
+ * @param write - the full intent, kept verbatim for the replay.
+ */
+export function queueWriteInto(state: ScanState, route: string, modelId: string, write: HeldWrite): void {
+  state.queued.set(route, (state.queued.get(route) ?? new Map()).set(modelId, write))
 }
 
 /**
@@ -415,6 +450,53 @@ async function flushRoute(
   }
 }
 
+/**
+ * Replay every editor-held write through a HOLDER-LESS seam, so the very call
+ * that would have fought the official card now commits. A row that vanished
+ * meanwhile drops its entry instead of retrying forever; any other failure
+ * stays queued for the next idle pass.
+ * @param deps - the injection dependencies.
+ * @param state - mutable scan state.
+ */
+async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> {
+  for (const [route, models] of [...state.queued]) {
+    for (const [modelId, write] of [...models]) {
+      const reply = await createEditorApi(deps.api).writeEfforts(
+        route, modelId, write.efforts, write.compat, write.input, write.clearCompatKeys, write.defaultEffort,
+      )
+      if (reply.ok || reply.error === 'model-not-found') {
+        models.delete(modelId)
+      } else {
+        console.error(`[bre] held write failed for "${route}"/"${modelId}": ${reply.error}`)
+      }
+    }
+    if (models.size === 0) state.queued.delete(route)
+  }
+}
+
+/**
+ * Land the create-card declarations whose route has appeared. Each route goes
+ * through its own live describe, so one refused route cannot poison a sibling
+ * that would have landed.
+ * @param deps - the injection dependencies.
+ * @param state - mutable scan state.
+ */
+async function flushPending(deps: InjectorDeps, state: ScanState): Promise<void> {
+  if (state.pending.size === 0) return
+  const join = await deps.describeNamespace()
+  if (join.writable !== true) return
+  const providers = providersOf(join.namespace)
+  for (const [route, models] of [...state.pending]) {
+    if (models.size === 0) {
+      state.pending.delete(route)
+      continue
+    }
+    // A create card still owns a route the document has not taken yet.
+    if (!hasOwn(providers, route)) continue
+    await flushRoute(deps, state, route, models)
+  }
+}
+
 /** Find the first input/select whose aria-label starts with one of the labels. */
 function inputValueByLabel(card: HTMLElement, labels: readonly string[]): string {
   for (const label of labels) {
@@ -563,8 +645,27 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       for (const [, entry] of state.mounted) entry.editor.unmount()
       state.mounted.clear()
     }
+    // No editing card is on the page, so no on-screen revision baseline can be
+    // invalidated by a write: THIS is the moment to land everything the
+    // session held back. `!== false` also covers the first scan (undefined),
+    // so a page that loads straight into the models section still gets its one
+    // idle pass. The autofill complement rides the same moment.
+    const wasEditing = state.editing
+    state.editing = false
+    if (wasEditing !== false) {
+      void (async () => {
+        try {
+          await flushQueued(deps, state)
+          await flushPending(deps, state)
+        } catch (error) {
+          console.error(`[bre] idle flush failed: ${error instanceof Error ? error.message : String(error)}`)
+        }
+        deps.onIdle?.()
+      })()
+    }
     return
   }
+  state.editing = true
   // Fold the describe request across scans (one wire read per wave). A
   // promise's .then ALWAYS runs asynchronously (microtask), even when already
   // resolved — the fold just keeps concurrent scans from stacking wire reads.
@@ -578,31 +679,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     const namespace = join.namespace
     const providers = providersOf(namespace)
 
-    // Staged declarations whose route has appeared (the create card's save
-    // landed) are written before the editors render, so the edit card's
-    // editor mounts over the declaration the user staged, not over a gap.
-    // flushRoute drops each model as it lands and keeps failed ones staged;
-    // a concurrent re-scan re-flushing the same route self-heals — the
-    // second pass sees the first pass's declaration and skips.
-    if (join.writable === true) {
-      for (const [route, models] of state.pending) {
-        // An emptied entry can only ever be skipped again — drop it instead
-        // of rescanning it on every future pass.
-        if (models.size === 0) {
-          state.pending.delete(route)
-          continue
-        }
-        if (!hasOwn(providers, route)) continue
-        // flushRoute reads the wire through the live describe seam; a
-        // transport failure there rejects, and a bare `void` would surface
-        // as an unhandled promise rejection. The staged declarations stay
-        // staged, and the next scan retries — logging is all the failure
-        // owes the user.
-        void flushRoute(deps, state, route, models).catch((error: unknown) => {
-          console.error(`[bre] staged flush failed for "${route}": ${error instanceof Error ? error.message : String(error)}`)
-        })
-      }
-    }
+    // Staged declarations land on the IDLE pass, never from an open card:
+    // writing while the official editor holds the document is exactly what
+    // made the user's own save in that card fail with `settings/conflict`.
 
     const found: FoundModel[] = []
     for (const aria of labels.capacity) {
@@ -725,7 +804,15 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ...defaultEffort === undefined ? {} : { defaultEffort },
         index,
         staged,
-        api: createEditorApi(deps.api, undefined, (r, m, e, c, i, de) => { stageEffortsInto(state, r, m, e, c, i, de) }),
+        api: createEditorApi(
+          deps.api,
+          undefined,
+          (r, m, e, c, i, de) => { stageEffortsInto(state, r, m, e, c, i, de) },
+          // An on-screen editor ALWAYS holds the document: the card it lives in
+          // froze its revision baseline, so a write from here would break the
+          // user's very next save in that card. The idle pass replays it.
+          (r, m, w) => { queueWriteInto(state, r, m, w) },
+        ),
         readOnly: join.writable !== true,
         t: deps.t,
       }

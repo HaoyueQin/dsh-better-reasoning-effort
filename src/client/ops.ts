@@ -19,6 +19,7 @@ import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   EffortEditorApi,
   EffortWriteIntent,
+  HeldWrite,
   RemoteApi,
   SettingsJoin,
   SettingsNamespaceView,
@@ -33,6 +34,47 @@ export function providersOf(namespace: SettingsNamespaceView | undefined): Recor
     Object.entries(providers as Record<string, unknown>).filter(([, profile]) =>
       typeof profile === 'object' && profile !== null && !Array.isArray(profile)),
   ) as Record<string, Record<string, unknown>>
+}
+
+/** The providers dict of one settings layer (user or base), as a record. */
+function providersOfLayer(layer: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(layer)) return undefined
+  const providers = layer['providers']
+  return isRecord(providers) ? providers : undefined
+}
+
+/**
+ * The `models` value a write must be based on, read from the RAW layers: the
+ * user section when it declares one, else the composition base. That is the
+ * official card's own inheritance rule (`ProviderEditor` seeds its draft from
+ * `namespace.user` and its fallback from `namespace.base`).
+ *
+ * Never the resolved `value`: rebuilding from it materializes every schema
+ * default -- `input: []`, an empty `compat`, an absent `models` -- into the
+ * stored document, so the user's file grows keys they never chose and a later
+ * schema change can no longer reach the row.
+ * @param namespace - the namespace view carrying the layers.
+ * @param route - the provider route key.
+ * @returns the raw `models` value, or undefined when neither layer declares one.
+ */
+export function baselineModelsOf(namespace: SettingsNamespaceView | undefined, route: string): unknown {
+  for (const layer of [namespace?.user, namespace?.base]) {
+    const profile = providersOfLayer(layer)?.[route]
+    if (isRecord(profile) && profile['models'] !== undefined) return profile['models']
+  }
+  return undefined
+}
+
+/**
+ * The RAW USER layer's providers dict, or undefined when the section declares
+ * none. The browser half's running auto-fill builds its patch from this --
+ * never from the resolved `value`, which would materialize schema defaults
+ * into the stored document (the same rule the host's boot pass follows).
+ * @param namespace - the namespace view.
+ * @returns the user section's providers dict, when it has one.
+ */
+export function userProvidersOf(namespace: SettingsNamespaceView | undefined): Record<string, unknown> | undefined {
+  return providersOfLayer(namespace?.user)
 }
 
 /** The reasoningEfforts of one model in a route's models. */
@@ -126,6 +168,17 @@ export function createEditorApi(
     input?: InputModalities,
     defaultEffort?: string | null,
   ) => void,
+  /**
+   * Present only on a seam an ON-SCREEN editor drives: while the official card
+   * is open its own frozen revision baseline makes any write here break the
+   * user's next save in that card, so the seam queues the full intent instead
+   * of committing it. The injector replays it once the card is gone.
+   */
+  hold?: (
+    route: string,
+    modelId: string,
+    write: HeldWrite,
+  ) => void,
 ): EffortEditorApi {
   return {
     async suggest(route, modelId, name, stagedFacts) {
@@ -171,6 +224,23 @@ export function createEditorApi(
       stage?.(route, modelId, efforts, compat, input, defaultEffort)
     },
     async writeEfforts(route, modelId, rawEfforts, compat, input, clearCompatKeys, defaultEffort) {
+      // While an editor owns the document (the official editing card is open)
+      // commit nothing: that card froze its own revision baseline, so any
+      // write from here makes the user's NEXT save in it fail with
+      // `settings/conflict` -- which reads exactly like "I configured it,
+      // saved it, and it is gone". Queue the full intent verbatim instead; the
+      // injector replays it once the card is gone. A replay seam passes no
+      // holder, so the same call commits then.
+      if (hold !== undefined) {
+        hold(route, modelId, {
+          efforts: rawEfforts,
+          ...(compat === undefined ? {} : { compat }),
+          ...(input === undefined ? {} : { input }),
+          ...(clearCompatKeys === undefined ? {} : { clearCompatKeys }),
+          ...(defaultEffort === undefined ? {} : { defaultEffort }),
+        })
+        return { ok: true, staged: true }
+      }
       // 'keep' means the ladder part of the edit is a no-op: a modality-only
       // apply must never fall through to the unset branch (which would stamp
       // the durable marker onto a never-declared ladder and silence host
@@ -192,11 +262,11 @@ export function createEditorApi(
         try {
           const join = await describe()
           if (join.namespace === undefined) return { ok: false, error: 'no-namespace' }
-          const providers = providersOf(join.namespace)
-          // The write rebuilds the models array verbatim; a row this code
-          // cannot represent must refuse the write rather than silently
-          // drop the row.
-          const rawModels = providers[route]?.['models']
+          // The write rebuilds the models array verbatim, from the RAW layers
+          // (the user section, else the composition base) -- never the resolved
+          // value. A row this code cannot represent must refuse the write
+          // rather than silently drop the row.
+          const rawModels = baselineModelsOf(join.namespace, route)
           if (!Array.isArray(rawModels)) return { ok: false, error: 'model-not-found' }
           if (!rawModels.every(isRecord)) return { ok: false, error: 'invalid-models' }
           const models = rawModels as Record<string, unknown>[]

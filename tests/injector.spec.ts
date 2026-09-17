@@ -53,28 +53,47 @@ function buildModelsDom(): HTMLElement {
   return section
 }
 
+/**
+ * The one declared route BOTH layers carry. The write baseline is the RAW user
+ * layer (the official card's own rule), so a fixture whose user section is
+ * empty reads as "no such model" to every write.
+ */
+const aliyunProviders: NonNullable<SettingsJoin['namespace']>['value'] = {
+  aliyun: {
+    displayName: 'Aliyun',
+    api: 'openai',
+    models: [
+      { id: 'qwen-max', name: 'Qwen Max' },
+      { id: 'qwen-turbo' },
+    ],
+  },
+}
+
 const join: SettingsJoin = {
   namespace: {
     ns: 'llm-pi-ai',
     schema: {},
-    value: {
-      providers: {
-        aliyun: {
-          displayName: 'Aliyun',
-          api: 'openai',
-          models: [
-            { id: 'qwen-max', name: 'Qwen Max' },
-            { id: 'qwen-turbo' },
-          ],
-        },
-      },
-    },
-    user: {},
+    value: { providers: aliyunProviders },
+    user: { providers: aliyunProviders },
     revision: 1,
     applies: 'live',
     secrets: [],
   },
   writable: true,
+}
+
+/**
+ * Declare a route in BOTH layers of a join, the way a real save does: facts are
+ * read from the resolved `value`, writes land in the raw `user` section, so a
+ * fixture that moves only one of them tests nothing.
+ * @param local - the join to mutate.
+ * @param route - the route key to declare.
+ * @param profile - the profile to store.
+ */
+function declareRoute(local: SettingsJoin, route: string, profile: Record<string, unknown>): void {
+  for (const layer of ['value', 'user'] as const) {
+    ;(local.namespace![layer] as { providers: Record<string, unknown> }).providers[route] = profile
+  }
 }
 
 /** One handle reconcile received back from mount(), with its spies. */
@@ -150,6 +169,24 @@ async function settle(reconcileFn: () => void, state: ReturnType<typeof createSc
   await state.describePromise
   await Promise.resolve()
   await Promise.resolve()
+}
+
+/**
+ * Close the editing surface, then run the IDLE pass. The plugin lands what it
+ * held back only once no official card is on the page: writing while one is
+ * open is exactly what made the user's own save in that card fail with
+ * `settings/conflict`.
+ * @param deps - the injection dependencies.
+ * @param state - mutable scan state.
+ */
+async function settleIdle(deps: InjectorDeps, state: ReturnType<typeof createScanState>): Promise<void> {
+  document.body.innerHTML = ''
+  reconcile(document.body, deps, state)
+  // The idle pass drains the queued writes and then the pending flush, each
+  // through its own describe → mutate round trip; a macrotask turn lets that
+  // whole microtask chain settle.
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  await new Promise(resolve => { setTimeout(resolve, 0) })
 }
 
 /** Build an approximation of the official create card, typed and draftable. */
@@ -548,10 +585,10 @@ describe('reconcile', () => {
     const describe = vi.fn(async (): Promise<SettingsJoin> => {
       const local = structuredClone(join)
       if (saved) {
-        ;(local.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+        declareRoute(local, 'acme-gateway', {
           api: 'openai-completions',
           models: [{ id: 'deepseek-v4-flash-free' }],
-        }
+        })
       }
       return local
     })
@@ -566,14 +603,15 @@ describe('reconcile', () => {
     await settle(() => reconcile(root, deps, state), state)
     expect(deps.mutate).not.toHaveBeenCalled()
 
-    // The card's create lands: the next scan sees the route and flushes.
+    // The official save lands the route, but the card is still open: nothing
+    // may be written while it holds the document.
     saved = true
     state.describePromise = undefined
     await settle(() => reconcile(root, deps, state), state)
-    // flushRoute is fire-and-forget; give its awaits a turn.
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
+    expect(deps.mutate).not.toHaveBeenCalled()
+
+    // Closing the card is the idle pass -- now the declaration lands.
+    await settleIdle(deps, state)
     expect(deps.mutate).toHaveBeenCalledTimes(1)
     const op = deps.mutate.mock.calls[0]![1][0]
     expect(op.path).toEqual(['providers', 'acme-gateway', 'models'])
@@ -594,11 +632,11 @@ describe('reconcile', () => {
     const describe = vi.fn(async (): Promise<SettingsJoin> => {
       if (!saved) return join
       const local = structuredClone(join)
-      ;(local.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+      declareRoute(local, 'acme-gateway', {
         displayName: 'acme-gateway',
         api: 'openai-completions',
         models: [{ id: 'deepseek-v4-flash-free' }],
-      }
+      })
       return local
     })
     const deps = makeDeps({ describeNamespace: describe })
@@ -629,7 +667,10 @@ describe('reconcile', () => {
     const refreshed = vi.mocked(deps.editors[0]!.render).mock.calls[0]![0] as EditorMountProps
     expect(refreshed.staged).toBe(false)
     expect(refreshed.route).toBe('acme-gateway')
-    // The staged declaration flushed to the document during the transition.
+    // The staged declaration waits for the card to close: writing while it is
+    // open is what used to break the user's own save in that very card.
+    expect(deps.mutate).not.toHaveBeenCalled()
+    await settleIdle(deps, state)
     expect(deps.mutate).toHaveBeenCalled()
   })
 
@@ -643,10 +684,10 @@ describe('reconcile', () => {
       if (calls >= 3) throw new Error('wire down')
       if (calls === 2) {
         const local = structuredClone(join)
-        ;(local.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+        declareRoute(local, 'acme-gateway', {
           api: 'openai-completions',
           models: [{ id: 'deepseek-v4-flash-free' }],
-        }
+        })
         return local
       }
       return join
@@ -658,16 +699,18 @@ describe('reconcile', () => {
     // Scan one: the route is unsaved — stages, no flush, no write.
     await settle(() => reconcile(root, deps, state), state)
     expect(deps.mutate).not.toHaveBeenCalled()
-    // Scan two: the fold read sees the saved route and starts the flush;
-    // the flush's own live read rejects.
+    // Scan two sees the saved route, but the card is still open so the flush
+    // waits. Closing it triggers the idle pass, whose own live read rejects
+    // (transport down): the rejection must be contained, and the declaration
+    // stays staged for the next pass.
     state.describePromise = undefined
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     await settle(() => reconcile(root, deps, state), state)
-    await Promise.resolve()
-    await Promise.resolve()
+    expect(deps.mutate).not.toHaveBeenCalled()
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await settleIdle(deps, state)
     expect(deps.mutate).not.toHaveBeenCalled()
     expect(state.pending.size).toBe(1)
-    expect(errorSpy.mock.calls[0]![0]).toContain('staged flush failed')
+    expect(errorSpy.mock.calls[0]![0]).toContain('idle flush failed')
     errorSpy.mockRestore()
   })
 
@@ -677,6 +720,7 @@ describe('reconcile', () => {
     state.pending.set('acme-gateway', new Map())
     const root = buildCreateDom('acme-gateway')
     await settle(() => reconcile(root, deps, state), state)
+    await settleIdle(deps, state)
     expect(state.pending.has('acme-gateway')).toBe(false)
   })
 
@@ -684,19 +728,48 @@ describe('reconcile', () => {
     // "Never silently overwrite": a model carrying a declaration (or an unset
     // marker) when its route appears keeps what the document says.
     const answered: SettingsJoin = structuredClone(join)
-    ;(answered.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+    declareRoute(answered, 'acme-gateway', {
       api: 'openai-completions',
       models: [{ id: 'deepseek-v4-flash-free', reasoningEfforts: { high: 'high' } }],
-    }
+    })
     const deps = makeDeps({ describeNamespace: async () => answered })
     const state = createScanState()
     stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { low: 'low' })
     const root = buildCreateDom('acme-gateway')
     await settle(() => reconcile(root, deps, state), state)
-    await Promise.resolve()
-    await Promise.resolve()
+    await settleIdle(deps, state)
     expect(deps.mutate).not.toHaveBeenCalled()
     expect(state.pending.size).toBe(0)
+  })
+
+  it('holds an editor Apply while the card is open and lands it on the idle pass', async () => {
+    // The regression behind issue #7: a write from inside the open card rides
+    // the card's own frozen revision baseline, so the user's NEXT save in that
+    // card is refused with `settings/conflict` and their edit reads as lost.
+    // The mounted seam therefore queues the intent and nothing commits until
+    // the card is gone.
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    await settle(() => reconcile(root, deps, state), state)
+    const props = vi.mocked(deps.mount).mock.calls[0]![1] as EditorMountProps
+
+    const reply = await props.api.writeEfforts('aliyun', 'qwen-max', { high: 'high' })
+    expect(reply).toEqual({ ok: true, staged: true })
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.get('aliyun')?.get('qwen-max')).toEqual({ efforts: { high: 'high' } })
+
+    // Closing the card replays the very same intent through a holder-less seam.
+    await settleIdle(deps, state)
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    const op = deps.mutate.mock.calls[0]![1][0]
+    expect(op.path).toEqual(['providers', 'aliyun', 'models'])
+    const flushed = (op.value as Array<Record<string, unknown>>).find(model => model['id'] === 'qwen-max')
+    expect(flushed!['reasoningEfforts']).toEqual({ high: 'high' })
+    // The sibling row rode along untouched, and the queue drained.
+    expect((op.value as Array<Record<string, unknown>>).find(model => model['id'] === 'qwen-turbo'))
+      .toEqual({ id: 'qwen-turbo' })
+    expect(state.queued.size).toBe(0)
   })
 })
 
@@ -778,8 +851,10 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
     const describe = vi.fn(async (): Promise<SettingsJoin> => {
       const local = structuredClone(join)
       if (saved) {
-        ;(local.namespace!.value as { providers: { aliyun: { models: Array<Record<string, unknown>> } } })
-          .providers.aliyun.models.push({ id: 'qwen-new' })
+        for (const layer of ['value', 'user'] as const) {
+          ;(local.namespace![layer] as { providers: { aliyun: { models: Array<Record<string, unknown>> } } })
+            .providers.aliyun.models.push({ id: 'qwen-new' })
+        }
       }
       return local
     })
@@ -816,13 +891,13 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
     expect(deps.mutate).not.toHaveBeenCalled()
     expect(state.pending.get('aliyun')?.has('qwen-new')).toBe(true)
 
-    // The official save lands the row: the next scan flushes the staged parts.
+    // The official save lands the row; the card is still open, so the staged
+    // parts wait for the idle pass.
     saved = true
     state.describePromise = undefined
     await settle(() => reconcile(root, deps, state), state)
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
+    expect(deps.mutate).not.toHaveBeenCalled()
+    await settleIdle(deps, state)
     expect(deps.mutate).toHaveBeenCalledTimes(1)
     const op = deps.mutate.mock.calls[0]![1][0]
     const flushed = (op.value as Array<Record<string, unknown>>).find(model => model['id'] === 'qwen-new')
@@ -839,7 +914,7 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
     const suggestion = suggestEfforts('deepseek-v4-flash-free', { api: 'openai-completions' })
     expect(suggestion.input).toEqual(['text'])
     const autofilled: SettingsJoin = structuredClone(join)
-    ;(autofilled.namespace!.value as { providers: Record<string, unknown> }).providers['acme-gateway'] = {
+    declareRoute(autofilled, 'acme-gateway', {
       api: 'openai-completions',
       models: [{
         id: 'deepseek-v4-flash-free',
@@ -847,15 +922,13 @@ describe('unsaved model rows on a saved route (the model-not-found flow)', () =>
         input: suggestion.input,
         compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
       }],
-    }
+    })
     const deps = makeDeps({ describeNamespace: async () => autofilled })
     const state = createScanState()
     stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', 'keep', undefined, ['text', 'image'])
     const root = buildCreateDom('acme-gateway')
     await settle(() => reconcile(root, deps, state), state)
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
+    await settleIdle(deps, state)
     expect(deps.mutate).toHaveBeenCalledTimes(1)
     const op = deps.mutate.mock.calls[0]![1][0]
     const flushed = (op.value as Array<Record<string, unknown>>)[0]!
