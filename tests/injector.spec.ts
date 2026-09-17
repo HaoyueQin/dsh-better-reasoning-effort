@@ -1236,3 +1236,50 @@ describe('the official commit signal (C2)', () => {
 
   /** Run an idle pass WITHOUT tearing the card down (the fence has to hold). */
 })
+
+describe('batch writes (one route, one mutate)', () => {
+  it('lands every held row of a route in a single mutate', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    // No official action row exists in this fixture, so the signal degrades to
+    // "the card went away, write it" -- which is what this case needs: it is
+    // about the write SHAPE, not the commit signal.
+    state.signalsUnavailable = true
+
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    queueWriteInto(state, 'aliyun', 'qwen-turbo', { efforts: { low: 'low' } })
+    await settleIdle(deps, state)
+
+    // ONE describe + ONE mutate for the whole route: the document is a single
+    // models array, so a per-row write was rebuilding and rewriting it twice.
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    const ops = deps.mutate.mock.calls[0]![1] as Array<{ path: string[]; value: Array<Record<string, unknown>> }>
+    expect(ops).toHaveLength(1)
+    expect(ops[0]!.path).toEqual(['providers', 'aliyun', 'models'])
+    // BOTH rows carry their own declaration in that one array.
+    const models = ops[0]!.value
+    expect(models.find(model => model['id'] === 'qwen-max')?.['reasoningEfforts']).toEqual({ high: 'high' })
+    expect(models.find(model => model['id'] === 'qwen-turbo')?.['reasoningEfforts']).toEqual({ low: 'low' })
+    expect(state.queued.size).toBe(0)
+  })
+
+  it('keeps every row of a route when the batch is refused', async () => {
+    const deps = makeDeps()
+    deps.mutate.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'settings/rejected', message: 'refused' },
+    })
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    queueWriteInto(state, 'aliyun', 'qwen-turbo', { efforts: { low: 'low' } })
+    // The premise the ledger cannot carry: the user had committed this card.
+    state.committing.add('aliyun')
+
+    await settleIdle(deps, state)
+
+    // A refused route keeps EVERY intent -- never a partial landing, so the
+    // retry re-sends the same complete array.
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    expect(state.queued.get('aliyun')?.size).toBe(2)
+  })
+})

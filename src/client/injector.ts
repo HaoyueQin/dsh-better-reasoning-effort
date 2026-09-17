@@ -30,7 +30,7 @@ import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '..
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../knowledge.js'
 import { modelsOf, routeFactsOf } from '../shared.js'
 import { sameEfforts } from './effort.js'
-import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
+import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf, writeModelRows, type RowIntent } from './ops.js'
 import type { EffortEditorApi, EffortWriteIntent, HeldWrite, RemoteApi, SettingsJoin } from './types.js'
 
 export type { SettingsJoin }
@@ -669,19 +669,24 @@ async function flushRoute(
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
 ): Promise<void> {
-  // Snapshot: stageEffortsInto below mutates the stored map as writes land.
+  // ONE read for the whole route: the rows all live in the same array, so a
+  // per-model read was pure repetition. Every arbitration below still runs
+  // per model against this same snapshot -- the write is one whole-array set.
+  const join = await deps.describeNamespace()
+  const providers = providersOf(join.namespace)
+  // Snapshot: the loop below withdraws entries whose edit proved empty, and
+  // the batch then reports back per model as its results land.
+  const intents: RowIntent[] = []
   for (const [modelId, declaration] of [...models]) {
-    const join = await deps.describeNamespace()
-    const providers = providersOf(join.namespace)
     const current = modelsOf(providers, route).find(model => model['id'] === modelId)
     // The row is not saved yet (mid-edit card, or the user renamed it):
     // keep the staging instead of dropping it -- it lands when a row with
     // this id first appears; the scan's ghost pass withdraws staging whose
     // row is provably gone.
     if (current === undefined) continue
-    // A concurrent scan may have withdrawn this staging while our describe
-    // was in flight (the two-scan ghost pass): writing it anyway would
-    // resurrect a declaration nothing on the page owns anymore.
+    // A concurrent scan may have withdrawn this staging while our read was
+    // in flight (the two-scan ghost pass): writing it anyway would resurrect
+    // a declaration nothing on the page owns anymore.
     if (state.pending.get(route)?.get(modelId) !== declaration) continue
     // Mirror the host autofill's suggestion for this exact row (same facts,
     // same knowledge base) so {@link effectiveStagedIntents} can tell the
@@ -697,27 +702,36 @@ async function flushRoute(
       stageEffortsInto(state, route, modelId, undefined)
       continue
     }
-    // Seed the write's FIRST describe attempt with the join this loop
-    // already read — one wire read per model instead of two. A conflict
-    // retry re-describes fresh through the live seam, so the seed never
-    // costs the write its recovery path.
-    let seeded = false
-    const seededApi = createEditorApi(deps.api, () => {
-      if (!seeded) {
-        seeded = true
-        return Promise.resolve(join)
-      }
-      return describeNamespace(deps.api)
+    intents.push({
+      modelId,
+      efforts: effective.efforts,
+      ...(effective.compat === undefined ? {} : { compat: effective.compat }),
+      ...(effective.input === undefined ? {} : { input: effective.input }),
+      ...(effective.defaultEffort === undefined ? {} : { defaultEffort: effective.defaultEffort }),
     })
-    const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input, undefined, effective.defaultEffort)
-    if (reply.ok || reply.error === 'model-not-found') {
-      stageEffortsInto(state, route, modelId, undefined)
-    } else {
-      // Anything else keeps the staging (the next scan retries it), but a
-      // silent keep is unobservable -- surface the failure for diagnostics.
-      console.error(`[bre] staged flush write failed for "${route}"/"${modelId}": ${reply.error}`)
-    }
   }
+  if (intents.length === 0) return
+  // Seed the write's FIRST read with the snapshot this pass already took: one
+  // read per route instead of two. A conflict retry re-describes fresh through
+  // the live seam, so the seed never costs the write its recovery path.
+  let seeded = false
+  const results = await writeModelRows(deps.api, route, intents, () => {
+    if (!seeded) {
+      seeded = true
+      return Promise.resolve(join)
+    }
+    return deps.describeNamespace()
+  })
+  intents.forEach((intent, at) => {
+    const result = results[at]
+    if (result?.ok === true || result?.modelNotFound === true) {
+      stageEffortsInto(state, route, intent.modelId, undefined)
+      return
+    }
+    // Anything else keeps the staging (the next scan retries it), but a
+    // silent keep is unobservable -- surface the failure for diagnostics.
+    console.error(`[bre] staged flush write failed for "${route}"/"${intent.modelId}": ${result?.error ?? 'unknown'}`)
+  })
 }
 
 /**
@@ -754,16 +768,26 @@ async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> 
     const committed = state.committing.has(route)
     if (!committed && !state.signalsUnavailable) continue
     state.committing.delete(route)
-    for (const [modelId, write] of [...models]) {
-      const reply = await createEditorApi(deps.api).writeEfforts(
-        route, modelId, write.efforts, write.compat, write.input, write.clearCompatKeys, write.defaultEffort,
-      )
-      if (reply.ok || reply.error === 'model-not-found') {
-        models.delete(modelId)
-      } else {
-        console.error(`[bre] held write failed for "${route}"/"${modelId}": ${reply.error}`)
+    // One read, one mutate for the whole route: the held intents are per model
+    // but the document is a single models array, so a per-model write was
+    // rebuilding and rewriting that same array N times.
+    const intents: RowIntent[] = [...models].map(([modelId, write]) => ({
+      modelId,
+      efforts: write.efforts,
+      ...(write.compat === undefined ? {} : { compat: write.compat }),
+      ...(write.input === undefined ? {} : { input: write.input }),
+      ...(write.clearCompatKeys === undefined ? {} : { clearCompatKeys: write.clearCompatKeys }),
+      ...(write.defaultEffort === undefined ? {} : { defaultEffort: write.defaultEffort }),
+    }))
+    const results = await writeModelRows(deps.api, route, intents)
+    intents.forEach((intent, at) => {
+      const result = results[at]
+      if (result?.ok === true || result?.modelNotFound === true) {
+        models.delete(intent.modelId)
+        return
       }
-    }
+      console.error(`[bre] held write failed for "${route}"/"${intent.modelId}": ${result?.error ?? 'unknown'}`)
+    })
     if (models.size === 0) state.queued.delete(route)
   }
   // The queue just shrank (landed or dropped intents) or stayed as it was
