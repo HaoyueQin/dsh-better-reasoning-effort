@@ -420,6 +420,36 @@ describe('EffortEditor modality', () => {
     expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: { high: 'high' } })
   })
 
+  it('auto-adapt still writes the input declaration when the official editor owns modalities', async () => {
+    // Decided scope: the official Input-types control hides this plugin's
+    // modality SECTION, but the plugin stays a suggestion engine — Auto-adapt
+    // still carries the input part into the row (the official checkboxes then
+    // show it), and the input-source hint still reports where it came from.
+    // Only the editing UI is suppressed; the write is not.
+    const api = baseApi()
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { high: 'high' },
+        matched: true,
+        source: 'demo',
+        confidence: 'high',
+        input: ['text', 'image'],
+        inputSource: 'endpoint',
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({ api, officialInputTypes: true }))
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+    expect(api.commit).toHaveBeenCalledWith(
+      'aliyun',
+      'qwen-max',
+      expect.objectContaining({ efforts: { high: 'high' }, input: ['text', 'image'] }),
+    )
+    // The section itself stays hidden; the ladder grid is all that renders.
+    expect(checkboxes(container)).toHaveLength(7)
+    expect(container.textContent).toContain(t('inputHintEndpoint'))
+  })
+
   it('an undeclared row stays untouched by an effort-only apply', async () => {
     const api = baseApi()
     const { container } = await renderEditor(baseProps({ api }))
