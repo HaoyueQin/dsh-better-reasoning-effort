@@ -11,6 +11,7 @@
 
 import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
+import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 
 /**
@@ -29,10 +30,23 @@ export interface ForeignMount {
   root: Root
 }
 
+/** Options of {@link mountReact}. */
+export interface MountOptions {
+  /**
+   * Commit the subtree before returning (React's `flushSync`).
+   *
+   * REQUIRED for roots whose height the official model card measures: a root
+   * that commits one frame later makes the card grow across frames, so its
+   * anchored position is visible at the wrong height for at least one paint.
+   */
+  sync?: boolean
+}
+
 /** Create a React root inside `container` and render `children` into it. */
-export function mountReact(container: HTMLElement, children: ReactNode): ForeignMount {
+export function mountReact(container: HTMLElement, children: ReactNode, options?: MountOptions): ForeignMount {
   const root = createRoot(container)
-  root.render(children)
+  if (options?.sync === true) flushSync(() => { root.render(children) })
+  else root.render(children)
   return { wrapper: container, root }
 }
 

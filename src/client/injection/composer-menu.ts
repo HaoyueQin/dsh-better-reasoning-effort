@@ -19,6 +19,7 @@
  */
 
 import { createElement } from 'react'
+import { flushSync } from 'react-dom'
 import type { ReactNode } from 'react'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { PLUGIN_ID } from '../../constants.js'
@@ -51,6 +52,27 @@ export interface ComposerMenuInjection {
 }
 
 /**
+ * Re-run the official placement inside the CURRENT frame.
+ *
+ * The card anchors itself in a layout effect (ModelSelect.tsx:163-188) that
+ * runs BEFORE this module's MutationObserver injection, so its `top` is
+ * computed from the PRE-injection height: the slider replica is still shown
+ * and the search box not yet mounted, which floated the card ~56px above the
+ * trigger. Both edits are done synchronously by the callers (the injected
+ * roots commit inside `flushSync`, the replica is hidden inline), so this
+ * flushSync-wrapped `resize` lets the official `place()` re-measure and commit
+ * BEFORE the browser paints — no intermediate frame is ever shown. Waiting for
+ * a later frame (the previous implementation) is exactly what made the menu
+ * visibly jump.
+ *
+ * Only the official effect ever writes the card's position: this module still
+ * adds no class and no inline style of its own.
+ */
+const rePlaceInFrame = (): void => {
+  flushSync(() => { window.dispatchEvent(new Event('resize')) })
+}
+
+/**
  * Build the composer menu injection.
  * @param deps - menu lookup, copy, locale refresh, preference and directory.
  * @returns the injection's {@link ComposerMenuInjection} face.
@@ -59,6 +81,7 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
   const { menuOf, t, refreshed, sliderEnabled, directory } = deps
   let sliderMount: ForeignMount | undefined
   let searchMount: ForeignMount | undefined
+  let lastModelPane: boolean | undefined
 
   const unmountSearch = (): void => {
     unmountReact(searchMount)
@@ -99,6 +122,9 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
           fallbackText: t('modelSearchFailed'),
           children: refreshed(() => createElement(ModelSearch, { menu, t })),
         }),
+        // Sync: the card is measured right after this, so the input must
+        // already contribute its height (see rePlaceInFrame).
+        { sync: true },
       )
       return
     }
@@ -163,6 +189,9 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
             },
           })),
         }),
+        // Sync: the replica changes the menu's height, so it must be committed
+        // before rePlaceInFrame re-measures (same-frame, no visible jump).
+        { sync: true },
       )
     } else if (sliderMount.wrapper.parentElement !== menu || menu.firstChild !== sliderMount.wrapper) {
       menu.insertBefore(sliderMount.wrapper, menu.firstChild)
@@ -207,14 +236,27 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
       unmountReact(sliderMount)
       sliderMount = undefined
       unmountSearch()
+      lastModelPane = undefined
       return
     }
     // The search box is unconditional: it does not follow the slider
     // preference (see the spec's "搜索恒开" decision).
-    if (isModelPane(menu)) reconcileSearch(menu)
+    const modelPane = isModelPane(menu)
+    if (modelPane) reconcileSearch(menu)
     else unmountSearch()
 
     reconcileSliderInto(menu)
+
+    // A pane switch is exactly when this module rewrites the menu's contents
+    // (the slider replica hides, the search box mounts or unmounts), so the
+    // card's already-computed `top` is stale. Both edits above are synchronous
+    // (the roots commit inside flushSync, the replica toggles inline), so the
+    // official placement can be re-run in THIS frame — no jump is ever painted.
+    // Filtering and scrolling only toggle row visibility and never reach here.
+    if (modelPane !== lastModelPane) {
+      lastModelPane = modelPane
+      if (modelPane || sliderEnabled()) rePlaceInFrame()
+    }
   }
 
   const dispose = (): void => {

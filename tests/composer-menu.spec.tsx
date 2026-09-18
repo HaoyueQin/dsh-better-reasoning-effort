@@ -287,3 +287,86 @@ describe('arrow keys under an active filter', () => {
     })
   })
 })
+
+describe('official card re-place after injection', () => {
+  /** The drilled-in model pane markup, as the official drill-in renders it. */
+  const MODEL_PANE_HTML = `
+    <div class="Uc5hea_groups scrollable">
+      <section role="group" aria-labelledby="g-ds">
+        <div id="g-ds">DeepSeek</div>
+        <button role="menuitemradio" aria-checked="true" title="DeepSeek V4.1 Flash"><span>DeepSeek V4.1 Flash</span></button>
+      </section>
+    </div>
+  `
+
+  it('re-places the official card once when the model pane is injected', async () => {
+    await withAppliedMenu('root', async (menu) => {
+      let resizes = 0
+      const onResize = (): void => { resizes += 1 }
+      window.addEventListener('resize', onResize)
+      try {
+        menu.insertAdjacentHTML('beforeend', MODEL_PANE_HTML)
+        await waitFor(() => resizes > 0)
+        expect(resizes).toBe(1)
+      } finally {
+        window.removeEventListener('resize', onResize)
+      }
+    })
+  })
+
+  it('mounts a foreign root synchronously when asked (the input cannot lag a frame)', async () => {
+    const { mountReact, unmountReact } = await import('../src/client/injection/mount.js')
+    const { createElement } = await import('react')
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const mount = mountReact(host, createElement('input', { className: 'sync-probe' }), { sync: true })
+    try {
+      expect(host.querySelector('input.sync-probe')).not.toBeNull()
+    } finally {
+      unmountReact(mount)
+    }
+  })
+
+  it('re-places the card in the SAME turn as the injection (no frame in between)', async () => {
+    await withAppliedMenu('root', async (menu) => {
+      let resizes = 0
+      const onResize = (): void => { resizes += 1 }
+      window.addEventListener('resize', onResize)
+      let resizesWhenInjected: number | null = null
+      const observer = new MutationObserver(() => {
+        if (resizesWhenInjected !== null) return
+        if (menu.querySelector('[data-bre-search="1"]') !== null) resizesWhenInjected = resizes
+      })
+      observer.observe(menu, { childList: true, subtree: true })
+      try {
+        menu.insertAdjacentHTML('beforeend', MODEL_PANE_HTML)
+        await waitFor(() => resizesWhenInjected !== null)
+        // The re-place must have happened by the time the injected box exists:
+        // one frame later is exactly the visible jump we are fixing.
+        expect(resizesWhenInjected).toBeGreaterThan(0)
+      } finally {
+        observer.disconnect()
+        window.removeEventListener('resize', onResize)
+      }
+    })
+  })
+
+  it('stays put while the user filters: no re-place per keystroke', async () => {
+    await withAppliedMenu('model', async (menu) => {
+      await waitFor(() => menu.querySelector('input.bre-search-input') !== null)
+      let resizes = 0
+      const onResize = (): void => { resizes += 1 }
+      // Attach after the initial pane injection has fired, then filter.
+      window.addEventListener('resize', onResize)
+      try {
+        await new Promise(resolve => setTimeout(resolve, 150))
+        const settled = resizes
+        await typeQuery(menu, 'gpt')
+        await new Promise(resolve => setTimeout(resolve, 150))
+        expect(resizes).toBe(settled)
+      } finally {
+        window.removeEventListener('resize', onResize)
+      }
+    })
+  })
+})
