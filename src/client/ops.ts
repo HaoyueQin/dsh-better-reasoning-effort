@@ -323,6 +323,12 @@ export interface RowWriteResult {
    * the caller drops the intent instead of retrying it forever.
    */
   modelNotFound?: boolean
+  /**
+   * True when the write was abandoned before reaching the wire because an
+   * official card opened during the read. Not a failure: the caller keeps the
+   * intent and does not back off.
+   */
+  aborted?: boolean
   /** The refusal message, when `ok` is false and it is a real failure. */
   error?: string
 }
@@ -342,6 +348,10 @@ export interface RowWriteResult {
  * @param route - the provider route whose models array to rebuild.
  * @param rows - the intents to apply, in order.
  * @param describe - the read seam; a conflict retry forces the wire read.
+ * @param abort - checked after the read and before the mutate: an official
+ * card may have opened while we were reading, and writing then would land
+ * behind that card's frozen revision baseline (issue #7). An aborted write
+ * returns `{ ok: false, aborted: true }` for every row and consumes nothing.
  * @returns one result per row, in the same order.
  */
 export async function writeModelRows(
@@ -349,6 +359,7 @@ export async function writeModelRows(
   route: string,
   rows: readonly RowIntent[],
   describe: () => Promise<SettingsJoin> = () => describeNamespace(api),
+  abort?: () => boolean,
 ): Promise<RowWriteResult[]> {
   if (rows.length === 0) return []
   // Retry once on a revision conflict: a concurrent writer (this plugin's own
@@ -394,6 +405,10 @@ export async function writeModelRows(
           ? { ok: false, modelNotFound: true }
           : { ok: false, error: 'model-not-found' }))
       }
+      // The card fence, re-checked at the last possible moment: a card that
+      // opened during the read must not have this write land behind its frozen
+      // baseline. Aborting consumes nothing -- every row stays for a retry.
+      if (abort?.() === true) return rows.map(() => ({ ok: false, aborted: true }))
       const response = await api.settings.mutate(
         PI_AI_NS,
         // The rebuilt models array is JSON-shaped by construction (a settings

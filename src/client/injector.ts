@@ -124,6 +124,12 @@ export interface InjectorDeps {
    * editing" is the only moment this side may safely write the document.
    */
   onIdle?(): void
+  /**
+   * Arm a timed retry after a failed idle pass. The backoff clock only helps
+   * if something wakes the injector when it expires; a settled page has no DOM
+   * mutation to schedule the next scan. Optional so tests drive passes by hand.
+   */
+  onBackoff?(delayMs: number): void
 }
 
 /** One mounted editor: unmount disposes the React root; render swaps props in place. */
@@ -224,6 +230,12 @@ export interface ScanState {
    * silently losing the user's declaration is not.
    */
   signalsUnavailable: boolean
+  /**
+   * Whether an official card was open at the last scan. An in-flight write
+   * re-checks it right before mutating: a card that opened during the read
+   * must not have the write land behind its frozen revision baseline.
+   */
+  flushAbort: boolean
   /** Commit buttons already wired, so a re-scan never double-registers. */
   submitWired: WeakSet<Element>
   /** Cancel buttons already wired. */
@@ -250,13 +262,36 @@ export interface StagedDeclaration {
 }
 
 /**
- * The held-write ledgers as `sessionStorage` keeps them. Only the two maps are
- * serialized: every entry is the user's own declaration, already JSON-shaped,
- * so the file IS the intent (no derivation on the way back in).
+ * The held-write ledgers as `sessionStorage` keeps them: the two maps, plus the
+ * document identity and the commit evidence a same-document restore needs.
+ * Every entry is the user's own declaration, already JSON-shaped, so the file
+ * IS the intent (no derivation on the way back in).
  */
 interface LedgerFile {
+  /** Identity of the document that wrote the file; a different one is a reload. */
+  document: string
+  /**
+   * Routes whose held write had COMMIT EVIDENCE when persisted (the user
+   * pressed the official Save). A restored queued entry without its route here
+   * is an abandoned edit and is dropped, matching the official draft.
+   */
+  committed: string[]
   pending: [string, [string, StagedDeclaration][]][]
   queued: [string, [string, HeldWrite][]][]
+}
+
+/**
+ * The `sessionStorage` ledger key, and the module-local sentinel identifying
+ * the CURRENT document across a same-page fiber cycle. The sentinel lives on
+ * the window, so a real reload (a fresh window) reads a different id and the
+ * old file is discarded; HMR / disable-enable keeps it.
+ */
+const LEDGER_DOCUMENT_KEY = '__breLedgerDocument'
+
+/** The current document's ledger identity, minting one on first use. */
+function documentId(): string {
+  const holder = globalThis as { [LEDGER_DOCUMENT_KEY]?: string }
+  return (holder[LEDGER_DOCUMENT_KEY] ??= `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`)
 }
 
 /**
@@ -290,6 +325,10 @@ function persistLedger(state: ScanState): void {
       return
     }
     const file: LedgerFile = {
+      document: documentId(),
+      // Only routes that still hold a write matter: a spent marker is never
+      // restored (and flushQueued prunes it).
+      committed: [...state.committing].filter(route => state.queued.has(route)),
       pending: [...state.pending].map(([route, models]) => [route, [...models]]),
       queued: [...state.queued].map(([route, models]) => [route, [...models]]),
     }
@@ -322,9 +361,15 @@ function ledgerEntry<T>(value: unknown): [string, [string, T][]][] | undefined {
 }
 
 /**
- * Restore both ledgers from `sessionStorage`. A malformed or foreign file is
- * ignored wholesale rather than partially applied: a half-read intent is worse
- * than a dropped one on a document the user can edit by hand.
+ * Restore the ledgers from `sessionStorage`.
+ *
+ * A file written by a PREVIOUS document is a reload: the official card's own
+ * draft would have died with it, so both ledgers are discarded outright. A
+ * same-document file (HMR / disable-enable) comes back, but a held write is
+ * restored ONLY with commit evidence -- an edit the user never saved must not
+ * be resurrected behind a later Save. A malformed or foreign file is ignored
+ * wholesale rather than partially applied: a half-read intent is worse than a
+ * dropped one on a document the user can edit by hand.
  * @param state - the fresh scan state to fill.
  */
 function restoreLedger(state: ScanState): void {
@@ -334,21 +379,30 @@ function restoreLedger(state: ScanState): void {
     const raw = store.getItem(LEDGER_KEY)
     if (raw === null) return
     const parsed = JSON.parse(raw) as Partial<LedgerFile>
+    if (parsed.document !== documentId()) return
     const pending = ledgerEntry<StagedDeclaration>(parsed.pending)
     const queued = ledgerEntry<HeldWrite>(parsed.queued)
     if (pending === undefined || queued === undefined) return
+    const committed = Array.isArray(parsed.committed)
+      ? parsed.committed.filter((route): route is string => typeof route === 'string')
+      : []
     for (const [route, models] of pending) state.pending.set(route, new Map(models))
-    for (const [route, models] of queued) state.queued.set(route, new Map(models))
+    for (const [route, models] of queued) {
+      // No evidence = the user never saved this route: drop it.
+      if (!committed.includes(route)) continue
+      state.queued.set(route, new Map(models))
+      state.committing.add(route)
+    }
   } catch {
     // Unreadable file: start clean.
   }
 }
 
 /**
- * Land whatever the session held back, best effort, at the moments the fiber is
- * about to go away (plugin disable / HMR / page unload). The ledgers stay in
- * `sessionStorage`, so a flush the browser cuts short is simply retried by the
- * next page load's idle pass.
+ * Land whatever the session held back, best effort, when the fiber is about to
+ * go away (plugin disable / HMR). The ledgers STAY in `sessionStorage` (with
+ * their commit evidence), so the next fiber in the same document picks the work
+ * up; a flush the runtime cuts short is simply retried by that fiber.
  * @param state - the scan state whose ledgers to drain.
  * @param deps - the injection dependencies.
  */
@@ -359,6 +413,35 @@ export function flushOnTeardown(state: ScanState, deps: InjectorDeps): void {
       await flushPending(deps, state)
     } catch (error) {
       console.error(`[bre] teardown flush failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  })()
+}
+
+/**
+ * The page is going away: land the committed intents best effort, then CLEAR
+ * the ledger. Unlike a fiber cycle, a reload discards the official card's own
+ * draft, so the plugin's must go too -- anything the cut-short flush could not
+ * land must not be resurrected by the next document. (The window sentinel
+ * covers the case pagehide never fires: crash / plugin already disabled.)
+ * @param state - the scan state whose ledgers to drain.
+ * @param deps - the injection dependencies.
+ */
+export function flushOnUnload(state: ScanState, deps: InjectorDeps): void {
+  // The page is going away: an open card's frozen baseline no longer matters,
+  // so the in-flight fence must not block this last best-effort landing.
+  state.flushAbort = false
+  void (async () => {
+    try {
+      await flushQueued(deps, state)
+      await flushPending(deps, state)
+    } catch (error) {
+      console.error(`[bre] unload flush failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      try {
+        ledgerStorage()?.removeItem(LEDGER_KEY)
+      } catch {
+        // Disabled storage: nothing to clear.
+      }
     }
   })()
 }
@@ -376,6 +459,7 @@ export function createScanState(): ScanState {
     nextFlushAt: 0,
     committing: new Set(),
     signalsUnavailable: false,
+    flushAbort: false,
     submitWired: new WeakSet(),
     cancelWired: new WeakSet(),
   }
@@ -397,18 +481,42 @@ async function runIdlePass(deps: InjectorDeps, state: ScanState): Promise<void> 
   if (state.flushing) return
   state.flushing = true
   try {
-    await flushQueued(deps, state)
-    await flushPending(deps, state)
-    state.flushFailures = 0
-    state.nextFlushAt = 0
+    const queuedFailed = await flushQueued(deps, state)
+    const pendingFailed = await flushPending(deps, state)
+    if (queuedFailed || pendingFailed) {
+      // A refusal arrives as a VALUE, not a throw: folding it into the same
+      // backoff keeps a doomed route from being re-mutated on every scan, and
+      // puts both failure shapes (refused, unreachable) on one clock.
+      armBackoff(deps, state)
+    } else {
+      state.flushFailures = 0
+      state.nextFlushAt = 0
+    }
   } catch (error) {
-    state.flushFailures += 1
-    state.nextFlushAt = Date.now() + Math.min(2 ** state.flushFailures * 500, 30_000)
+    armBackoff(deps, state)
     console.error(`[bre] idle flush failed: ${error instanceof Error ? error.message : String(error)}`)
   } finally {
     state.flushing = false
   }
-  deps.onIdle?.()
+  // The hook is a courtesy seat for the browser half's autofill: a fault in
+  // it must not reject the pass (the caller void-s the promise) and become an
+  // unhandled rejection.
+  try {
+    deps.onIdle?.()
+  } catch (error) {
+    console.error(`[bre] idle hook failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/**
+ * Push the next attempt out on the exponential backoff and tell the host to
+ * wake the injector when it expires (a settled page has no DOM mutation).
+ */
+function armBackoff(deps: InjectorDeps, state: ScanState): void {
+  state.flushFailures += 1
+  const delay = Math.min(2 ** state.flushFailures * 500, 30_000)
+  state.nextFlushAt = Date.now() + delay
+  deps.onBackoff?.(delay)
 }
 
 /** Whether either ledger still holds work the idle pass has to land. */
@@ -529,7 +637,9 @@ export function withdrawIntent(state: ScanState, route: string, modelId: string)
  * leaves nothing for a later pass to drain), and the next card for that same
  * route would then be read as already-dismissed: its Save would never be
  * wired, and the user's fresh edit would be dropped silently. Clearing the
- * ledger here leaves no state at all to misinterpret.
+ * ledgers here leaves no state at all to misinterpret -- including the staged
+ * declaration a dismissed CREATE card was holding for a route that does not
+ * exist yet, which would otherwise land the moment that route appeared.
  *
  * Safe by construction: the official page keeps ONE editing card at a time
  * (create and edit mutually exclusive), so the route this resolves is the only
@@ -539,6 +649,8 @@ export function withdrawIntent(state: ScanState, route: string, modelId: string)
  */
 export function forgetRoute(state: ScanState, route: string): void {
   state.queued.delete(route)
+  state.pending.delete(route)
+  state.missedScans.delete(route)
   state.committing.delete(route)
   persistLedger(state)
 }
@@ -670,13 +782,14 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
  * user intent. A write that still fails (conflict retry exhausted) stays
  * staged; the write's own document-updated invalidation re-scans and
  * re-flushes it.
+ * @returns whether a write of this route was refused and left unlanded.
  */
 async function flushRoute(
   deps: InjectorDeps,
   state: ScanState,
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
-): Promise<void> {
+): Promise<boolean> {
   // ONE read for the whole route: the rows all live in the same array, so a
   // per-model read was pure repetition. Every arbitration below still runs
   // per model against this same snapshot -- the write is one whole-array set.
@@ -718,7 +831,7 @@ async function flushRoute(
       ...(effective.defaultEffort === undefined ? {} : { defaultEffort: effective.defaultEffort }),
     })
   }
-  if (intents.length === 0) return
+  if (intents.length === 0) return false
   // Seed the write's FIRST read with the snapshot this pass already took: one
   // read per route instead of two. A conflict retry re-describes fresh through
   // the live seam, so the seed never costs the write its recovery path.
@@ -729,17 +842,23 @@ async function flushRoute(
       return Promise.resolve(join)
     }
     return deps.describeNamespace()
-  })
+  }, () => state.flushAbort)
+  let failed = false
   intents.forEach((intent, at) => {
     const result = results[at]
+    // A card opened during the read: keep the staging, do not back off.
+    if (result?.aborted === true) return
     if (result?.ok === true || result?.modelNotFound === true) {
       stageEffortsInto(state, route, intent.modelId, undefined)
       return
     }
     // Anything else keeps the staging (the next scan retries it), but a
-    // silent keep is unobservable -- surface the failure for diagnostics.
+    // silent keep is unobservable -- surface the failure for diagnostics, and
+    // report it so the pass can back off instead of hammering.
+    failed = true
     console.error(`[bre] staged flush write failed for "${route}"/"${intent.modelId}": ${result?.error ?? 'unknown'}`)
   })
+  return failed
 }
 
 /**
@@ -762,15 +881,37 @@ async function flushRoute(
  * outlive the card it belonged to and swallow a later save of the same route.
  * @param deps - the injection dependencies.
  * @param state - mutable scan state.
+ * @returns whether this pass left a write unlanded (the caller backs off).
  */
-async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> {
+async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<boolean> {
+  // A commit marker with nothing queued is SPENT: the official Save carried no
+  // plugin edit (or the route was already landed). Dropping it here keeps it
+  // from authorizing a later edit the user never saved.
+  for (const route of [...state.committing]) {
+    if (!state.queued.has(route)) state.committing.delete(route)
+  }
+  // Writability is the document's call, not the commit signal's: a memory /
+  // non-loopback page refuses writes, and the held ledger obeys the same gate
+  // the staged ledger already does. Wait for a landable route before paying
+  // for the read, so a page whose intents are all uncommitted costs nothing.
+  const landable = [...state.queued.keys()]
+    .some(route => state.committing.has(route) || state.signalsUnavailable)
+  if (!landable) {
+    persistLedger(state)
+    return false
+  }
+  const join = await deps.describeNamespace()
+  if (join.writable !== true) {
+    persistLedger(state)
+    return false
+  }
+  let failed = false
   for (const [route, models] of [...state.queued]) {
     // The staged ledger has no official row whose Save could commit it; this
     // one does, so an uncommitted route waits instead of landing behind that
     // card's frozen revision baseline.
     const committed = state.committing.has(route)
     if (!committed && !state.signalsUnavailable) continue
-    state.committing.delete(route)
     // One read, one mutate for the whole route: the held intents are per model
     // but the document is a single models array, so a per-model write was
     // rebuilding and rewriting that same array N times.
@@ -782,21 +923,32 @@ async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> 
       ...(write.clearCompatKeys === undefined ? {} : { clearCompatKeys: write.clearCompatKeys }),
       ...(write.defaultEffort === undefined ? {} : { defaultEffort: write.defaultEffort }),
     }))
-    const results = await writeModelRows(deps.api, route, intents)
+    const results = await writeModelRows(deps.api, route, intents, undefined, () => state.flushAbort)
+    let aborted = false
     intents.forEach((intent, at) => {
       const result = results[at]
+      // A card opened during the read: keep every intent, do not back off.
+      if (result?.aborted === true) { aborted = true; return }
       if (result?.ok === true || result?.modelNotFound === true) {
         models.delete(intent.modelId)
         return
       }
       console.error(`[bre] held write failed for "${route}"/"${intent.modelId}": ${result?.error ?? 'unknown'}`)
     })
-    if (models.size === 0) state.queued.delete(route)
+    if (models.size === 0) {
+      state.queued.delete(route)
+      // The marker is what authorizes the landing, so it is dropped only once
+      // every intent of the route made it -- a refusal keeps both the intent
+      // and the authority to retry it on the next pass.
+      state.committing.delete(route)
+    } else if (!aborted) {
+      failed = true
+    }
   }
-  // The queue just shrank (landed or dropped intents) or stayed as it was
-  // (a route still waiting for its card): either way the stored file must
-  // match what is left to do.
+  // The queue just shrank (landed intents) or stayed as it was (a route still
+  // waiting for its card): either way the stored file must match what is left.
   persistLedger(state)
+  return failed
 }
 
 /**
@@ -805,12 +957,14 @@ async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<void> 
  * that would have landed.
  * @param deps - the injection dependencies.
  * @param state - mutable scan state.
+ * @returns whether a write was refused and left unlanded.
  */
-async function flushPending(deps: InjectorDeps, state: ScanState): Promise<void> {
-  if (state.pending.size === 0) return
+async function flushPending(deps: InjectorDeps, state: ScanState): Promise<boolean> {
+  if (state.pending.size === 0) return false
   const join = await deps.describeNamespace()
-  if (join.writable !== true) return
+  if (join.writable !== true) return false
   const providers = providersOf(join.namespace)
+  let failed = false
   for (const [route, models] of [...state.pending]) {
     if (models.size === 0) {
       state.pending.delete(route)
@@ -818,9 +972,10 @@ async function flushPending(deps: InjectorDeps, state: ScanState): Promise<void>
     }
     // A create card still owns a route the document has not taken yet.
     if (!hasOwn(providers, route)) continue
-    await flushRoute(deps, state, route, models)
+    if (await flushRoute(deps, state, route, models)) failed = true
   }
   persistLedger(state)
+  return failed
 }
 
 /** Find the first input/select whose aria-label starts with one of the labels. */
@@ -1047,6 +1202,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
   // from those buttons alone would let a write slip into that card's frozen
   // revision baseline -- issue #7 again, under a rarer trigger.
   const cardOpen = officialCardOf(root) !== undefined
+  // The fence an in-flight write checks: while this is true, no landing write
+  // may mutate (it would sit behind the open card's frozen revision).
+  state.flushAbort = cardOpen
   const hasCapacityRows = labels.capacity.some(aria =>
     root.querySelector(`button[aria-label^="${aria}"]`) !== null)
   if (!cardOpen) {
@@ -1063,7 +1221,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     const wasEditing = state.editing
     state.editing = false
     if (wasEditing !== false || (hasOutstanding(state) && Date.now() >= state.nextFlushAt)) {
-      void runIdlePass(deps, state)
+      void runIdlePass(deps, state).catch(error => {
+        console.error(`[bre] idle pass failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
     }
     return
   }
@@ -1197,12 +1357,21 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       if (actions === undefined) {
         state.signalsUnavailable = true
       } else {
+        // A readable row is positive evidence the signal works: clear the
+        // degrade flag so one transient unreadable card does not disable the
+        // "commits with the official Save" gate for the rest of the session.
+        state.signalsUnavailable = false
+        // Resolve the route AT CLICK TIME: a create card's Provider ID can be
+        // (re)typed after the buttons were first wired, and React reuses the
+        // button element -- a captured route would mark / clear the wrong one.
         wireOnce(actions.submit, state.submitWired, () => {
-          state.committing.add(route)
+          const live = routeOfCard(target.card, providers, labels)?.route ?? route
+          state.committing.add(live)
           persistLedger(state)
         })
         wireOnce(actions.cancel, state.cancelWired, () => {
-          forgetRoute(state, route)
+          const live = routeOfCard(target.card, providers, labels)?.route ?? route
+          forgetRoute(state, live)
         })
       }
       const routeApi = routeStaged && typedApi.length > 0

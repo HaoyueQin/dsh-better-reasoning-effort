@@ -55,11 +55,27 @@ export interface SettingsRemoteApi {
 }
 
 /**
- * The READ face of the official settings scope (`ctx.settingsScope`, provided
- * by `@deepseek-ai/dsh-client-ui-settings`). One shared describe mirror backs
- * every namespace scope in the browser, so reading through the snapshot costs
- * no wire round trip and always reports the revision the settings surface
- * itself is working from.
+ * `ctx.get('settingsScope')`, as the kernel's `ui-settings` plugin registers
+ * it: a `SettingsScopeBinder`, NOT a scope. The binder only mints scopes via
+ * {@link bind} (and offers a cross-namespace `describe()`); `getSnapshot()`
+ * lives on the scope `bind` returns. Treating the binder as a scope makes
+ * every read throw, so the plugin must bind its own namespace first.
+ */
+export interface SettingsScopeBinderLike {
+  /**
+   * Bind one namespace scope on the CALLING fiber's lifecycle.
+   * @param spec - namespace identity (`{ namespace }`).
+   * @returns the bound scope whose snapshot this half reads.
+   */
+  bind(spec: { namespace: string }): SettingsScopeReadLike
+}
+
+/**
+ * The READ face of one BOUND official settings scope (the object
+ * `SettingsScopeBinder.bind({ namespace })` returns). One shared describe
+ * mirror backs every namespace scope in the browser, so reading through the
+ * snapshot costs no wire round trip and always reports the revision the
+ * settings surface itself is working from.
  *
  * Deliberately read-only: the scope's `mutate` settles `void`, which makes a
  * refused write indistinguishable from a committed one. The plugin's queues
@@ -87,10 +103,11 @@ export interface SettingsScopeReadLike {
 export interface RemoteApi {
   settings: SettingsRemoteApi
   /**
-   * The official settings scope, when the shell provides one. Optional: an
-   * older kernel without `settingsScope` keeps the wire-describe path, and the
-   * plugin never declares the service in its `inject` (a hard dependency would
-   * refuse to activate the whole browser half on that kernel).
+   * The BOUND official settings scope (already `bind({ namespace })`-ed), when
+   * the shell provides one. Optional: an older kernel without `settingsScope`
+   * keeps the wire-describe path, and the plugin never declares the service in
+   * its `inject` (a hard dependency would refuse to activate the whole browser
+   * half on that kernel).
    */
   scope?: SettingsScopeReadLike
 }

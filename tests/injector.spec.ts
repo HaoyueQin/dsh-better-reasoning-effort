@@ -7,7 +7,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, effectiveStagedIntents, queueWriteInto, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
+import { createScanState, effectiveStagedIntents, flushOnUnload, queueWriteInto, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
 import { suggestEfforts, type ReasoningEfforts } from '../src/knowledge.js'
 import type { RemoteApi } from '../src/client/types.js'
 
@@ -1002,31 +1002,89 @@ describe('ghosted staging recycling', () => {
 })
 
 describe('held-write ledgers (persistence, retry, the card fence)', () => {
-  it('persists both ledgers and restores them into a fresh scan state', () => {
+  it('persists both ledgers and restores them into a same-document scan state', () => {
     const state = createScanState()
     stageEffortsInto(state, 'acme-gateway', 'new-model', { high: 'high' })
+    // The commit evidence must be persisted WITH the held write: the ledger
+    // can now carry the premise it previously could not.
+    state.committing.add('aliyun')
     queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
 
-    // A reload builds a brand-new scan state: the intents must come back.
+    // A plugin-HMR cycle (same document) builds a new scan state: the intents
+    // must come back, commit evidence included.
     const restored = createScanState()
     expect(restored.pending.get('acme-gateway')?.get('new-model')).toEqual({ efforts: { high: 'high' } })
     expect(restored.queued.get('aliyun')?.get('qwen-max')).toEqual({ efforts: { high: 'high' } })
+    expect(restored.committing.has('aliyun')).toBe(true)
   })
 
-  it('lands a restored intent on the first idle pass after a reload', async () => {
+  it('drops a restored held write that carries no commit evidence', () => {
+    // A queued edit the user never saved dies with the card (official draft
+    // semantics): restoring it without evidence would later resurrect an
+    // abandoned edit behind the next Save.
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    const restored = createScanState()
+    expect(restored.queued.size).toBe(0)
+    expect(restored.committing.size).toBe(0)
+  })
+
+  it('discards a ledger written by a previous document (a reload)', () => {
+    const state = createScanState()
+    stageEffortsInto(state, 'acme-gateway', 'new-model', { high: 'high' })
+    state.committing.add('aliyun')
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    // A NEW document: the page reloaded, so both ledgers are gone -- the
+    // official card's draft would be gone too.
+    delete (globalThis as Record<string, unknown>)['__breLedgerDocument']
+    const reloaded = createScanState()
+    expect(reloaded.pending.size).toBe(0)
+    expect(reloaded.queued.size).toBe(0)
+  })
+
+  it('lands a restored, committed intent on the first idle pass after an HMR', async () => {
     const seeded = createScanState()
+    seeded.committing.add('aliyun')
     queueWriteInto(seeded, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
 
     const deps = makeDeps()
+    // Same document: the evidence itself restores the authority to land.
     const reloaded = createScanState()
-    // The premise the ledger itself cannot carry (it is session memory, by
-    // design): the user had committed this card before the reload. What THIS
-    // case pins is that the restored intent then lands on the first idle pass.
-    reloaded.committing.add('aliyun')
     await settleIdle(deps, reloaded)
 
     expect(deps.mutate).toHaveBeenCalledTimes(1)
     expect(reloaded.queued.size).toBe(0)
+  })
+
+  it('flushOnUnload lands the committed intents and clears the ledger', async () => {
+    const state = createScanState()
+    state.committing.add('aliyun')
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+
+    const deps = makeDeps()
+    flushOnUnload(state, deps)
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    // The FILE is gone: a fresh state restores nothing (even though the
+    // landed route had commit evidence).
+    expect(createScanState().queued.size).toBe(0)
+  })
+
+  it('flushOnUnload lands even while a card was fenced open', async () => {
+    const state = createScanState()
+    state.committing.add('aliyun')
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    // The last scan saw a card open; the page is now going away, so its frozen
+    // baseline no longer matters and the last landing must not be aborted.
+    state.flushAbort = true
+
+    const deps = makeDeps()
+    flushOnUnload(state, deps)
+    await new Promise(resolve => { setTimeout(resolve, 0) })
+
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
   })
 
   it('keeps working when sessionStorage refuses the write', () => {
@@ -1068,7 +1126,27 @@ describe('held-write ledgers (persistence, retry, the card fence)', () => {
     expect(state.queued.size).toBe(1)
   })
 
-  it('retries a refused flush on the next idle pass instead of dropping it', async () => {
+  it('aborts an in-flight landing when a card opens during the read', async () => {
+    const state = createScanState()
+    // The card opens in the window between our read and our mutate: landing
+    // now would sit behind its frozen revision baseline (issue #7), so the
+    // write must abort and keep the intent for a later pass.
+    const deps = makeDeps({
+      describeNamespace: async () => {
+        state.flushAbort = true
+        return join
+      },
+    })
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    state.committing.add('aliyun')
+
+    await settleIdle(deps, state)
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.size).toBe(1)
+    expect(state.committing.has('aliyun')).toBe(true)
+  })
+
+  it('keeps the commit marker when a flush is refused, so the retry can happen', async () => {
     const deps = makeDeps()
     deps.mutate.mockResolvedValueOnce({
       ok: false,
@@ -1076,19 +1154,106 @@ describe('held-write ledgers (persistence, retry, the card fence)', () => {
     })
     const state = createScanState()
     queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
-    // The premise the ledger cannot carry: the user had committed this card.
-    // The guard itself is covered by "drops the held write when the card was
-    // dismissed"; THIS case is about a refused write surviving to the retry.
     state.committing.add('aliyun')
 
     await settleIdle(deps, state)
-    // A refusal arrives as a value, not a throw: the intent stays for the retry.
+    // A refusal arrives as a value, not a throw: the intent stays for the
+    // retry -- and so must the commit marker that authorizes it. Dropping the
+    // marker here is what made a refused write wait forever: the next pass
+    // reads the route as "never committed" and lands nothing.
     expect(state.queued.size).toBe(1)
+    expect(state.committing.has('aliyun')).toBe(true)
 
-    state.committing.add('aliyun')
+    // The refused pass armed a backoff; let it expire and the retry lands.
+    state.nextFlushAt = 0
     await settleIdle(deps, state)
     expect(state.queued.size).toBe(0)
+    expect(state.committing.has('aliyun')).toBe(false)
     expect(deps.mutate).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let a spent commit marker authorize a later uncommitted edit', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    // The user pressed the official Save but had no plugin edit: the marker is
+    // spent. Left behind, it would silently land a LATER edit the user never
+    // saved -- the card's Save is the contract, and it must stay spent.
+    state.committing.add('aliyun')
+    await settleIdle(deps, state)
+    expect(state.committing.has('aliyun')).toBe(false)
+
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    await settleIdle(deps, state)
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.size).toBe(1)
+  })
+
+  it('backs off after a refused write instead of hammering the wire', async () => {
+    const deps = makeDeps()
+    deps.mutate.mockResolvedValue({
+      ok: false,
+      error: { code: 'settings/rejected', message: 'refused' },
+    })
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    state.committing.add('aliyun')
+
+    await settleIdle(deps, state)
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    // A refusal is a failure of the PASS, not just of the row: without this
+    // counter every later scan retries the same doomed write immediately.
+    expect(state.flushFailures).toBeGreaterThan(0)
+    expect(state.nextFlushAt).toBeGreaterThan(Date.now())
+
+    // A scan inside the backoff window must not write again.
+    await settleIdle(deps, state)
+    expect(deps.mutate).toHaveBeenCalledTimes(1)
+    expect(state.queued.size).toBe(1)
+  })
+
+  it('never lands the held ledger on a read-only document', async () => {
+    // A commit signal is not permission: a memory / non-loopback document
+    // refuses writes, and the held ledger must obey the same writability gate
+    // the staged ledger already does.
+    const deps = makeDeps({ describeNamespace: async () => ({ ...join, writable: false }) })
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    state.committing.add('aliyun')
+
+    await settleIdle(deps, state)
+    expect(deps.mutate).not.toHaveBeenCalled()
+    expect(state.queued.size).toBe(1)
+  })
+
+  it('signals a timed retry when a pass arms a backoff', async () => {
+    // The backoff clock only helps if something wakes the injector when it
+    // expires; a static page has no DOM mutation to trigger the next scan.
+    const backoffs: number[] = []
+    const deps = makeDeps({ onBackoff: (delay: number) => { backoffs.push(delay) } })
+    deps.mutate.mockResolvedValue({ ok: false, error: { code: 'settings/rejected', message: 'refused' } })
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    state.committing.add('aliyun')
+
+    await settleIdle(deps, state)
+    expect(backoffs.length).toBeGreaterThan(0)
+    expect(backoffs[0]).toBeGreaterThan(0)
+  })
+
+  it('isolates a throwing onIdle hook instead of rejecting the pass', async () => {
+    const errors: unknown[][] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => { errors.push(args) })
+    const deps = makeDeps({ onIdle: () => { throw new Error('hook blew up') } })
+    const state = createScanState()
+    queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
+    state.committing.add('aliyun')
+
+    await settleIdle(deps, state)
+    // The write still landed, and the hook failure was reported, not thrown
+    // into an unhandled rejection (the pass is void-ed by reconcile).
+    expect(state.queued.size).toBe(0)
+    expect(errors.some(args => String(args[0]).includes('idle hook failed'))).toBe(true)
+    spy.mockRestore()
   })
 
   it('backs the next attempt off when a whole idle pass throws', async () => {
@@ -1231,6 +1396,57 @@ describe('the official commit signal (C2)', () => {
     expect(state.queued.size).toBe(0)
   })
 
+  it('withdraws a dismissed create card\'s staged declaration', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildCreateDom()
+    root.querySelector('.editor')!.insertAdjacentHTML('beforeend', `
+      <div class="editorActions">
+        <button type="button" class="secondaryButton">Cancel</button>
+        <button type="button" class="primaryButton">Apply</button>
+      </div>`)
+    await settle(() => reconcile(root, deps, state), state)
+    stageEffortsInto(state, 'acme-gateway', 'deepseek-v4-flash-free', { high: 'high' })
+
+    // The user dismisses the create card: its own fields go away, and the
+    // declaration staged against its route must go with them.
+    root.querySelectorAll<HTMLButtonElement>('div.editorActions button')[0]!.click()
+    await tick()
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+
+    expect(state.pending.size).toBe(0)
+    expect(deps.mutate).not.toHaveBeenCalled()
+  })
+
+  it('resolves the create card route at CLICK time, not first-wire time', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildCreateDom('acme-one')
+    root.querySelector('.editor')!.insertAdjacentHTML('beforeend', `
+      <div class="editorActions">
+        <button type="button" class="secondaryButton">Cancel</button>
+        <button type="button" class="primaryButton">Apply</button>
+      </div>`)
+    await settle(() => reconcile(root, deps, state), state)
+
+    // The user finishes typing a DIFFERENT provider id after the buttons were
+    // first wired. React reuses the button element, so a closure captured at
+    // wiring time would clear the wrong route and leave this edit staged.
+    const input = root.querySelector<HTMLInputElement>('input[aria-label="Provider ID"]')!
+    input.value = 'acme-two'
+    await settle(() => reconcile(root, deps, state), state)
+    stageEffortsInto(state, 'acme-two', 'deepseek-v4-flash-free', { high: 'high' })
+
+    root.querySelectorAll<HTMLButtonElement>('div.editorActions button')[0]!.click()
+    await tick()
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+
+    expect(state.pending.size).toBe(0)
+    expect(deps.mutate).not.toHaveBeenCalled()
+  })
+
   it('degrades to landing on unmount when the action row yields no buttons', async () => {
     const deps = makeDeps()
     const state = createScanState()
@@ -1248,6 +1464,25 @@ describe('the official commit signal (C2)', () => {
     expect(state.queued.size).toBe(0)
   })
 
+  it('recovers the official save signal once a readable action row appears', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    // Card 1 has no nameable button pair: the degrade flag trips.
+    const broken = buildActionCardDom('<button type="button">Frobnicate</button>')
+    await settle(() => reconcile(broken, deps, state), state)
+    expect(state.signalsUnavailable).toBe(true)
+    document.body.innerHTML = ''
+    await settleIdle(deps, state)
+
+    // A later normal card proves the signal works again: the latch is not a
+    // one-way door for the rest of the session.
+    const good = buildActionCardDom(`
+      <button type="button" class="secondaryButton">Cancel</button>
+      <button type="button" class="primaryButton">Apply</button>`)
+    await settle(() => reconcile(good, deps, state), state)
+    expect(state.signalsUnavailable).toBe(false)
+  })
+
   it('fences the idle pass while a readable card is open, with no signal yet', async () => {
     const deps = makeDeps()
     const state = createScanState()
@@ -1263,8 +1498,6 @@ describe('the official commit signal (C2)', () => {
     expect(deps.mutate).not.toHaveBeenCalled()
     expect(state.queued.size).toBe(1)
   })
-
-  /** Run an idle pass WITHOUT tearing the card down (the fence has to hold). */
 })
 
 describe('batch writes (one route, one mutate)', () => {

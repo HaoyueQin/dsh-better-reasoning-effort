@@ -31,7 +31,7 @@ import type { ErrorInfo, ReactNode } from 'react'
 import { AUTOFILL_CONFIG_PATH, DEFAULT_EFFORT_FIELD, PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
 import { wireEffortMemory } from './effort-memory.js'
-import { createScanState, flushOnTeardown, reconcile, type HostLabels, type InjectorDeps } from './injector.ts'
+import { createScanState, flushOnTeardown, flushOnUnload, reconcile, type HostLabels, type InjectorDeps } from './injector.ts'
 import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
 import { buildAutofillPatch } from '../autofill.js'
@@ -40,7 +40,7 @@ import { ComposerSlider } from './ComposerSlider.js'
 import { SliderToggle } from './SliderToggle.js'
 import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabled } from './slider-pref.js'
 import { STYLES } from './styles.ts'
-import type { RemoteApi, SettingsScopeReadLike } from './types.ts'
+import type { RemoteApi, SettingsScopeBinderLike, SettingsScopeReadLike } from './types.ts'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
 export const name = PLUGIN_ID
@@ -206,7 +206,11 @@ export function apply(ctx: ClientContext): void {
   // service must still activate the browser half, on the wire-describe path.
   const settingsScope = ((): SettingsScopeReadLike | undefined => {
     try {
-      return ctx.get?.('settingsScope') as SettingsScopeReadLike | undefined
+      // `ctx.get('settingsScope')` yields the kernel's BINDER, not a scope:
+      // only `bind({ namespace })` mints the read face (getSnapshot). Using
+      // the binder directly made every describe throw a TypeError.
+      const binder = ctx.get?.('settingsScope') as SettingsScopeBinderLike | undefined
+      return binder?.bind?.({ namespace: PI_AI_NS })
     } catch {
       return undefined
     }
@@ -270,7 +274,13 @@ export function apply(ctx: ClientContext): void {
   const SCAN_DEBOUNCE_MS = 120
   const scanState = createScanState()
   let scanTimer: number | undefined
+  let retryTimer: number | undefined
   let observer: MutationObserver | undefined
+  // Set on dispose. An idle pass already in flight can still call onBackoff
+  // after stopObserver cleared the timer; without this gate that would re-arm
+  // a retry timer on a dead fiber, restarting the scan chain (and re-mounting
+  // editors nothing will ever unmount).
+  let stopped = false
 
   // ---- Composer slider mount (DOM path) ----
   let sliderMount: ForeignMount | undefined
@@ -551,7 +561,11 @@ export function apply(ctx: ClientContext): void {
     try {
       const switches = await autofillSwitchesOf()
       if (!switches.autofill) return
-      const join = await describeNamespace(settingsApi)
+      // Fresh: the scope mirror folds a just-settled write in asynchronously,
+      // so reading it here would fence this fill on a superseded revision and
+      // manufacture a `settings/conflict` (the same reason a conflict retry
+      // re-reads the wire).
+      const join = await describeNamespace(settingsApi, { fresh: true })
       const namespace = join.namespace
       if (namespace === undefined || join.writable !== true) return
       const userProviders = userProvidersOf(namespace)
@@ -592,6 +606,9 @@ export function apply(ctx: ClientContext): void {
     // The idle pass landed everything the session held back; the autofill
     // complement rides the same moment (see runIdleAutofill).
     onIdle: () => { void runIdleAutofill() },
+    // A refused held write arms a backoff; nothing on a settled page would
+    // schedule the retry scan, so the injector asks for a timer.
+    onBackoff: (delayMs) => { scheduleRetry(delayMs) },
     mount(container, props) {
       const rootEl = document.createElement('div')
       // The slot class carries the grid-column span: this wrapper — not
@@ -628,8 +645,22 @@ export function apply(ctx: ClientContext): void {
     },
   }
 
+  /**
+   * Wake the injector when a failed idle pass's backoff expires: a settled
+   * settings page emits no DOM mutation, so without this the held intent would
+   * wait for a scan that never comes. One timer at a time; the fired timer
+   * re-runs the scan, which re-arms the next backoff if the write is refused.
+   */
+  function scheduleRetry(delayMs: number): void {
+    if (stopped || retryTimer !== undefined) return
+    retryTimer = window.setTimeout(() => {
+      retryTimer = undefined
+      scheduleScan()
+    }, delayMs)
+  }
+
   const scheduleScan = (): void => {
-    if (scanTimer !== undefined) return
+    if (stopped || scanTimer !== undefined) return
     // Debounce: the official page re-renders in bursts (typing, expanding,
     // applying); one scan per frame keeps the editor stable mid-keystroke.
     scanTimer = window.setTimeout(() => {
@@ -645,7 +676,7 @@ export function apply(ctx: ClientContext): void {
   }
 
   const startObserver = (): void => {
-    if (observer !== undefined) return
+    if (stopped || observer !== undefined) return
     // A session may already be resident when the fiber starts (page reload,
     // HMR): wire it before the first mutation has a chance to land.
     ensureSessionDirectory()
@@ -667,9 +698,14 @@ export function apply(ctx: ClientContext): void {
     scheduleScan()
   }
   const stopObserver = (): void => {
+    stopped = true
     if (scanTimer !== undefined) {
       window.clearTimeout(scanTimer)
       scanTimer = undefined
+    }
+    if (retryTimer !== undefined) {
+      window.clearTimeout(retryTimer)
+      retryTimer = undefined
     }
     observer?.disconnect()
     observer = undefined
@@ -681,8 +717,8 @@ export function apply(ctx: ClientContext): void {
       stopObserver()
       // Land what the session held back before the fiber goes away: a plugin
       // disable or HMR must not strand the user's intent in memory alone. The
-      // ledgers stay in sessionStorage, so a flush the runtime cuts short is
-      // retried by the next load's idle pass.
+      // ledgers stay in sessionStorage WITH their commit evidence, so the next
+      // fiber in this document retries a flush the runtime cut short.
       flushOnTeardown(scanState, injectorDeps)
       // Orphaned editors must not outlive the fiber: on plugin disable or
       // HMR they would keep rendering with a stale api face, failing every
@@ -698,12 +734,13 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-better-reasoning-effort: DOM injector')
 
-  // A page unload is the last moment the ledgers can be landed. A write may
-  // still be cut short by the browser tearing the page down, which is exactly
-  // why the intents also ride sessionStorage: an interrupted flush is retried
-  // by the next load's idle pass instead of vanishing.
+  // A page unload is the last moment the committed ledgers can be landed, and
+  // the moment the rest must be DISCARDED: a reload drops the official card's
+  // own draft, so the plugin's uncommitted edits go with it. (The dispose
+  // effect above keeps the ledger for a same-document fiber cycle, where the
+  // card survives.)
   ctx.effect(() => {
-    const onPageHide = (): void => { flushOnTeardown(scanState, injectorDeps) }
+    const onPageHide = (): void => { flushOnUnload(scanState, injectorDeps) }
     window.addEventListener('pagehide', onPageHide)
     return () => { window.removeEventListener('pagehide', onPageHide) }
   }, 'dsh-better-reasoning-effort: ledger flush on unload')

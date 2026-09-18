@@ -333,6 +333,39 @@ describe('client apply()', () => {
     }
   })
 
+  it('reads through the BOUND settings scope, never treating the binder as a scope', async () => {
+    // Regression (issue #7 branch, C1): `ctx.get('settingsScope')` yields the
+    // kernel's SettingsScopeBinder -- it has `bind()`/`describe()`, NOT
+    // `getSnapshot()`. The plugin used the binder directly, so the optional
+    // chain only guarded a missing SERVICE and every describe threw a
+    // TypeError, leaving the Models page without editors. The binder must be
+    // bound to this plugin's namespace first; that bound scope is the reader.
+    const providers = structuredClone(JOIN_FIXTURE)
+    const api = fakeApi(() => Promise.resolve(makeJoin(providers)))
+    const snapshot = {
+      status: 'ready' as const,
+      value: { providers },
+      user: { providers },
+      base: { providers },
+      revision: 7,
+      writable: true,
+    }
+    const bind = vi.fn(() => ({ getSnapshot: () => snapshot }))
+    const h = makeCtx(api, { services: { settingsScope: { bind } } })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      // Bound on the plugin's own namespace, and the snapshot (not the wire)
+      // answered the scan.
+      expect(bind).toHaveBeenCalledWith({ namespace: PI_AI_NS })
+      expect(api.describeSpy).not.toHaveBeenCalled()
+    } finally {
+      h.disposeAll()
+    }
+  })
+
   it('fills the models added mid-session on the idle pass, never while a card is open', async () => {
     // The running auto-fill complement the host no longer performs (issue #7):
     // a write the moment a commit lands rides the official card's frozen
@@ -401,6 +434,43 @@ describe('client apply()', () => {
       expect(refused.mock.calls.some(
         call => String(call[0]).includes('[bre] idle autofill refused: refused'),
       )).toBe(true)
+    } finally {
+      h.disposeAll()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reads the autofill revision from the wire, not a possibly-stale scope snapshot', async () => {
+    // The scope mirror folds a fresh view in asynchronously; the plugin's own
+    // idle autofill runs right after its own writes, so a non-fresh read would
+    // hand back the revision those writes already superseded and manufacture a
+    // `settings/conflict`. The autofill read is explicitly fresh.
+    const providers = structuredClone(JOIN_FIXTURE)
+    const wire = makeJoin(structuredClone(JOIN_FIXTURE), structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(wire))
+    const snapshot = {
+      status: 'ready' as const,
+      value: { providers },
+      user: { providers },
+      base: { providers },
+      revision: 99,
+      writable: true,
+    }
+    const bind = vi.fn(() => ({ getSnapshot: () => snapshot }))
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }) as Response))
+    const h = makeCtx(api, { services: { settingsScope: { bind } } })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      const mutate = api.settings.mutate as ReturnType<typeof vi.fn>
+      expect(mutate).not.toHaveBeenCalled()
+
+      document.body.innerHTML = ''
+      await waitFor(() => mutate.mock.calls.length > 0)
+      // The wire revision (1), NOT the snapshot's stale 99.
+      expect(mutate.mock.calls[0]![2]).toBe(1)
     } finally {
       h.disposeAll()
       vi.unstubAllGlobals()

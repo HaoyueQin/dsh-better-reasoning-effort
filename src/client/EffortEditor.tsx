@@ -147,6 +147,27 @@ export function clearedCompatKeys(routeApi: string | undefined, draft: CompatSug
   return owned.filter(key => !set.has(key))
 }
 
+/**
+ * The `clearCompatKeys` part of a commit, derived from the draft.
+ *
+ * A DEFINED draft always reports (an empty array is meaningful: every owned
+ * field it shows is set). An EMPTY draft must still clear the fields the
+ * protocol OWNS -- dropping the last owned pick is a user decision to unset --
+ * but only when there is something to clear: an unrelated route keeps the
+ * shape it always had (no `clearCompatKeys` at all).
+ * @param routeApi - the route's wire protocol.
+ * @param writeCompat - the compat bytes this commit writes, if any.
+ * @returns the clear part to spread into the commit payload.
+ */
+export function compatClearIntent(
+  routeApi: string | undefined,
+  writeCompat: CompatSuggestion | undefined,
+): { clearCompatKeys?: readonly string[] } {
+  if (writeCompat !== undefined) return { clearCompatKeys: clearedCompatKeys(routeApi, writeCompat) }
+  const owned = clearedCompatKeys(routeApi, undefined)
+  return owned.length === 0 ? {} : { clearCompatKeys: owned }
+}
+
 /** Semantic equality between a modality draft and a stored declaration. */
 function sameModality(draft: DraftModality, stored: InputModalities | undefined): boolean {
   if (!draft.declared) return stored === undefined
@@ -319,7 +340,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
       efforts: effortsIntent,
       ...(writeCompat === undefined ? {} : { compat: writeCompat }),
       ...(nextInput === undefined ? {} : { input: nextInput }),
-      ...(writeCompat === undefined ? {} : { clearCompatKeys: clearedCompatKeys(routeApi, writeCompat) }),
+      ...compatClearIntent(routeApi, writeCompat),
       ...(defaultEffortOut === undefined ? {} : { defaultEffort: defaultEffortOut }),
     })
     // "Modified" is DERIVED, never messaged: every handler below clears the

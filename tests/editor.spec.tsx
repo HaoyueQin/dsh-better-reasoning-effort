@@ -11,7 +11,7 @@ import { act } from 'react'
 import { createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Root } from 'react-dom/client'
-import { EffortEditor, clearedCompatKeys, type EffortEditorProps } from '../src/client/EffortEditor.js'
+import { EffortEditor, clearedCompatKeys, compatClearIntent, type EffortEditorProps } from '../src/client/EffortEditor.js'
 import type { SuggestReply, WriteEffortsReply, EffortEditorApi } from '../src/client/types.js'
 import { en } from '../src/client/locales.js'
 import type { ReasoningEfforts } from '../src/knowledge.js'
@@ -520,6 +520,19 @@ describe('EffortEditor compat controls', () => {
     expect(clearedCompatKeys('openai-responses', { supportsMaxOutputTokens: false })).toEqual([])
     // The protocol owns no key elsewhere, so an unsupported route clears nothing.
     expect(clearedCompatKeys(undefined, { supportsMaxOutputTokens: false })).toEqual([])
+  })
+  it('clears the owned keys even when the whole draft is empty', () => {
+    // Regression (C2): the commit path only attached `clearCompatKeys` when the
+    // DRAFT had bytes, so dropping the last owned field (e.g. the responses
+    // max-output pick back to "unset") sent no clear at all and the stored key
+    // survived. The owned-key clear must ride an empty draft too.
+    expect(compatClearIntent('openai-responses', undefined))
+      .toEqual({ clearCompatKeys: ['supportsMaxOutputTokens'] })
+    // A defined draft still reports every owned field it left empty...
+    expect(compatClearIntent('openai-responses', { supportsMaxOutputTokens: false }))
+      .toEqual({ clearCompatKeys: [] })
+    // ...while a route owning no key (or none at all) attaches nothing.
+    expect(compatClearIntent(undefined, undefined)).toEqual({})
   })
 
   it('writes the compat draft alongside the ladder', async () => {
