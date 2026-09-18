@@ -580,6 +580,18 @@ export function apply(ctx: Context, config: Config = {}): void {
                 // Anthropic endpoint answers through x-api-key + a fixed
                 // anthropic-version instead of a Bearer.
                 headers: composeProbeHeaders(profile['headers'], apiKey, api),
+                // A probe carries the user's stored credential, so it must
+                // reach exactly the authority the profile names: Fetch's
+                // default would FOLLOW a cross-origin redirect, and the
+                // headers composed here (`x-api-key`, a profile's own auth
+                // header) are not stripped on that hop the way `authorization`
+                // is. Official discovery keeps the default; this route is
+                // stricter on purpose, and the cost is bounded — a gateway
+                // that lists only behind a redirect yields no endpoint
+                // evidence, so Auto-adapt falls back to the knowledge base /
+                // protocol inference, the path every unanswerable endpoint
+                // takes.
+                redirect: 'error',
                 signal: AbortSignal.timeout(resolved.probeTimeoutMs),
               })
               if (!upstream.ok) {

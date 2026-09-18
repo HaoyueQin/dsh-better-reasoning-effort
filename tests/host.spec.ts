@@ -354,6 +354,38 @@ describe('apply() probe route', () => {
     vi.unstubAllGlobals()
   })
 
+  it('refuses to follow a redirect away from the authority the profile names', async () => {
+    const settings = fakeSettings({
+      aliyun: { api: 'openai-completions', baseURL: 'https://gw.example.com/v1', apiKeyEnv: 'ALIYUN_KEY', models: [] },
+    })
+    const credentials = { resolve: async () => ({ value: 'sk-secret' }) }
+    const { ctx, routes } = fakeHost(settings, { credentials })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    const handler = routes.get(PROBE_PATH)!
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      headers: { get: () => null },
+      body: new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(JSON.stringify({ data: [{ id: 'qwen-max' }] })))
+          controller.close()
+        },
+      }),
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { res, out } = fakeRes()
+    await handler!(fakeReq(), res)
+    expect(out().status).toBe(200)
+    // Fetch follows a cross-origin redirect by default while keeping the
+    // probe's own credential headers attached, so refusing the hop is what
+    // keeps the credential bound to the configured authority.
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, { redirect?: string }]
+    expect(init.redirect).toBe('error')
+    vi.unstubAllGlobals()
+  })
+
   it('probes an Anthropic Messages route through /v1/models with x-api-key', async () => {
     const settings = fakeSettings({
       anthropic: { api: 'anthropic-messages', baseURL: 'https://api.anthropic.com/v1', apiKeyEnv: 'ANTHROPIC_KEY', models: [] },

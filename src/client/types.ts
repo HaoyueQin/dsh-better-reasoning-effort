@@ -22,7 +22,6 @@
  */
 
 import type {
-  ModelCatalogModel,
   ModelProviderGroup,
   ModelReasoning,
   ModelSelection,

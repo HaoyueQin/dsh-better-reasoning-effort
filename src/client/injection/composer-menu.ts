@@ -27,7 +27,6 @@ import { ComposerSlider } from '../ComposerSlider.js'
 import { ModelSearch, isModelPane } from '../ModelSearch.js'
 import type { ModelDirectoryLike } from '../types.js'
 import { EffortBoundary, mountReact, unmountReact, type ForeignMount } from './mount.js'
-import { modelMenuOf } from './model-menu.js'
 
 /** Everything the composer injection needs from its host. */
 export interface ComposerMenuDeps {

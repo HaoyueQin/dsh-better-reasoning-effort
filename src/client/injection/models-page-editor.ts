@@ -31,7 +31,7 @@ import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '..
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../../knowledge.js'
 import { modelsOf, routeFactsOf, isRecord } from '../../shared.js'
 import { sameEfforts } from '../effort.js'
-import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf, writeModelRows, type RowIntent } from '../ops.js'
+import { compatOf, createEditorApi, defaultEffortOf, effortsOf, inputOf, nameOf, providersOf, writeModelRows, type RowIntent } from '../ops.js'
 import type { EffortEditorApi, EffortWriteIntent, HeldWrite, RemoteApi, SettingsJoin } from '../types.js'
 import { panelRoot } from './mount.js'
 
@@ -189,8 +189,9 @@ export interface ScanState {
   /**
    * Declarations staged against routes that do not exist in the settings
    * document yet (the create card's typed route id), keyed route → model id.
-   * Flushed automatically once a route appears; lives only in memory, so it
-   * dies with the plugin fiber.
+   * Flushed automatically once a route appears. Mirrored into `sessionStorage`
+   * so a same-document fiber cycle (HMR, disable-then-enable) keeps the user's
+   * mid-edit staging; a real reload discards it (see {@link restoreLedger}).
    */
   pending: Map<string, Map<string, StagedDeclaration>>
   /**
@@ -204,7 +205,10 @@ export interface ScanState {
    * Writes an ON-SCREEN editor asked for while the official card held the
    * document, keyed route → model id. Kept verbatim (this is the user's own
    * declaration, so no suggestion arbitration applies) and replayed the
-   * moment the card is gone. In memory only: it dies with the fiber.
+   * moment the card is gone. Persisted beside its commit evidence, so a
+   * same-document fiber cycle still lands a write the official Save
+   * authorized, while a reload or a dismissed card drops it (see
+   * {@link restoreLedger} / {@link forgetRoute}).
    */
   queued: Map<string, Map<string, HeldWrite>>
   /**
