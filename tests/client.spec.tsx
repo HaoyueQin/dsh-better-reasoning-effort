@@ -412,6 +412,12 @@ describe('client apply()', () => {
       // scheduled, so wait for the range input to land.
       await waitFor(() => wrapper.querySelector('input[type="range"]') !== null)
       const range = wrapper.querySelector<HTMLInputElement>('input[type="range"]')!
+      // `preview` starts at 0 and is moved onto the session's level by a
+      // passive effect, so the input exists one commit BEFORE it carries the
+      // value. Reading it the moment the element appears is a race: it passed
+      // on Windows by luck and lost on Linux CI, where the effect had not
+      // flushed yet. Wait for the value, then assert it.
+      await waitFor(() => range.value === '2')
       expect(range.value).toBe('2') // medium = index 2 of the fixture's ladder
 
       // The popover body replicates upstream: slider area + separator + ONE

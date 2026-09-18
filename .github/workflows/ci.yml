@@ -1,0 +1,41 @@
+# Every pull request and every push to master runs the three gates this repo
+# already has locally: typecheck, the vitest suite, and the release build.
+#
+# Nothing else looks at code quality: release.yml only runs for a pushed v* tag,
+# and sync-to-gitee.yml only mirrors. Before this workflow a red typecheck, a
+# failing test or a broken bundle could therefore reach master -- and a
+# contributor's pull request could be merged -- with nothing saying so.
+#
+# For pull_request events GitHub takes the workflow definition from the base
+# branch, so this only starts guarding PRs once it lives on master.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read          # a forked PR needs no write access to anything
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json engines: ^22.19.0 || >=24
+        node: ['22.19.0', '24']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      # .npmrc pins legacy-peer-deps=true: the kernel's 0.1.6 workspace peer
+      # closures cannot be satisfied by npm's strict mode outside the monorepo.
+      # `npm ci` also runs the `prepare` script, so a broken build fails here.
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
