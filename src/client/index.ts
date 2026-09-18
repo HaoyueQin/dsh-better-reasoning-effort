@@ -36,6 +36,7 @@ import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
 import { describeNamespace, providersOf } from './ops.ts'
 import { ComposerSlider } from './ComposerSlider.js'
+import { ModelSearch, type ModelSearchProps } from './ModelSearch.js'
 import { SliderToggle } from './SliderToggle.js'
 import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabled } from './slider-pref.js'
 import { STYLES } from './styles.ts'
@@ -251,6 +252,7 @@ export function apply(ctx: ClientContext): void {
 
   // ---- Composer slider mount (DOM path) ----
   let sliderMount: ForeignMount | undefined
+  let searchMount: ForeignMount | undefined
   let sliderDirectory: { sessionId: string; directory: ModelDirectoryLike } | undefined
   // One effort-memory wiretap per directory instance, with each original
   // `select` kept for the fiber disposer to restore. Entries record their
@@ -394,26 +396,74 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
+  const unmountSearch = (): void => {
+    if (searchMount !== undefined) {
+      unmountReact(searchMount)
+      searchMount = undefined
+    }
+  }
+
+  /** Reconcile the search filter into the official model menu (idempotent). */
+  const reconcileSearch = (menu: HTMLElement): void => {
+    // Keep searchMount behind sliderMount so sliderMount remains menu's firstChild.
+    const groupsEl = menu.querySelector<HTMLElement>('.groups, .scrollable, section[role="group"]')
+    const referenceNode = (groupsEl !== null && groupsEl.parentElement === menu)
+      ? groupsEl
+      : (sliderMount !== undefined && sliderMount.wrapper.parentElement === menu
+        ? sliderMount.wrapper.nextSibling
+        : null)
+
+    if (searchMount === undefined) {
+      const wrapper = document.createElement('div')
+      wrapper.dataset['plugin'] = PLUGIN_ID
+      wrapper.dataset['breSearch'] = '1'
+      menu.insertBefore(wrapper, referenceNode)
+      searchMount = mountReact(
+        wrapper,
+        createElement(EffortBoundary, {
+          fallbackText: t('renderFailed'),
+          children: refreshed(() => createElement(ModelSearch, { menu, t })),
+        }),
+      )
+    } else if (
+      searchMount.wrapper.parentElement !== menu ||
+      (referenceNode !== null && searchMount.wrapper.nextSibling !== referenceNode && searchMount.wrapper !== referenceNode)
+    ) {
+      menu.insertBefore(searchMount.wrapper, referenceNode)
+    }
+  }
+
   /** Reconcile the slider into the official model menu (idempotent). */
   const reconcileSlider = (): void => {
-    const menu = sliderEnabled() ? modelMenuOf() : undefined
-    if (menu === undefined) {
+    const rawMenu = modelMenuOf()
+    if (rawMenu === undefined) {
       unmountReact(sliderMount)
       sliderMount = undefined
-      // The preference flipped off while the menu stayed open: the host menu
-      // must go back to the official content-sized box AND its root cells
-      // must become visible again (the active branch hides them inline).
-      const hostMenu = modelMenuOf()
-      if (hostMenu !== undefined) {
-        hostMenu.classList.remove('bre-model-menu-host')
-        for (const el of Array.from(hostMenu.children)) {
-          if (el instanceof HTMLButtonElement && el.getAttribute('role') === 'menuitem') {
-            el.style.display = ''
-          }
+      unmountSearch()
+      return
+    }
+
+    // Model search filter runs whenever the drilled-in model list is open,
+    // even if the slider itself is disabled.
+    if (rawMenu.querySelector('[role="menuitemradio"]') !== null) {
+      reconcileSearch(rawMenu)
+    } else {
+      unmountSearch()
+    }
+
+    if (!sliderEnabled()) {
+      unmountReact(sliderMount)
+      sliderMount = undefined
+      rawMenu.classList.remove('bre-model-menu-host')
+      for (const el of Array.from(rawMenu.children)) {
+        if (el instanceof HTMLButtonElement && el.getAttribute('role') === 'menuitem') {
+          el.style.display = ''
         }
       }
       return
     }
+
+    const menu = rawMenu
     const directory = ensureSessionDirectory()
     if (directory === undefined) {
       // Transient boot window only: the seat itself cannot mount before the
@@ -585,6 +635,7 @@ export function apply(ctx: ClientContext): void {
       scanState.mounted.clear()
       unmountReact(sliderMount)
       sliderMount = undefined
+      unmountSearch()
       // Restore every wrapped directory's original select (the instances
       // outlive the fiber on disable/HMR and must submit officially again).
       for (const [, entry] of wiredDirectories) entry.restore()
@@ -651,6 +702,8 @@ export function apply(ctx: ClientContext): void {
 export type { BreKey }
 export { EffortEditor }
 export type { EffortEditorProps, EffortModel } from './EffortEditor.tsx'
+export { ModelSearch }
+export type { ModelSearchProps } from './ModelSearch.js'
 export type { InjectorDeps, EditorMountProps, ScanState } from './injector.ts'
 export * from './ops.ts'
 export * from './types.ts'

@@ -74,6 +74,9 @@ export const en = {
   maxOutputOff: 'Omit it',
   maxOutputHint: 'For Responses-protocol gateways only, and only when a request carries an output cap: some of them reject the parameter, so "Omit it" keeps the cap out of the request entirely. Unset is the safe choice.',
   aliasMigrated: 'Legacy alias detected — saving writes the explicit budget field.',
+  modelSearchPlaceholder: 'Search models…',
+  modelSearchNoMatches: 'No matching models',
+  modelSearchClear: 'Clear search',
 }
 
 /** The plugin's locale key union. */
@@ -153,4 +156,7 @@ export const zh: { [Key in keyof typeof en]: string } = {
   maxOutputOff: '不发送',
   maxOutputHint: '仅对 Responses 协议的网关生效，且只在请求带输出上限时才起作用：部分网关会拒收该参数，选"不发送"可让请求完全不携带输出上限。未设置是最安全的选择。',
   aliasMigrated: '检测到旧别名——保存时会写入显式预算字段。',
+  modelSearchPlaceholder: '搜索模型…',
+  modelSearchNoMatches: '未找到匹配模型',
+  modelSearchClear: '清空搜索',
 }

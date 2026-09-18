@@ -597,4 +597,94 @@ body:not([data-ds-dark-theme]) .bre-effort.is-dragging .bre-effort-knob {
   transition: transform 170ms cubic-bezier(.22,1,.36,1);
 }
 .bre-slider-setting-switch.is-on .bre-slider-setting-switch-knob { transform: translateX(16px); }
+
+/* Model selection search box */
+.bre-model-search-box {
+  padding: 6px 8px 4px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1, #1e1f22));
+}
+.bre-search-input-wrapper {
+  display: flex;
+  align-items: center;
+  position: relative;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2, rgba(255, 255, 255, 0.06));
+  border: 0.5px solid var(--dsw-alias-border-l4, rgba(255, 255, 255, 0.12));
+  color: var(--dsw-alias-label-primary);
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.bre-search-input-wrapper:focus-within {
+  border-color: var(--dsw-static-deepseek-500, #4d70ff);
+  box-shadow: 0 0 0 2px rgba(77, 112, 255, 0.2);
+}
+.bre-search-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  pointer-events: none;
+}
+.bre-search-icon svg {
+  width: 14px;
+  height: 14px;
+}
+.bre-search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+.bre-search-input::placeholder {
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  opacity: 0.85;
+}
+.bre-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.bre-search-clear:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(255, 255, 255, 0.1));
+  color: var(--dsw-alias-label-primary);
+}
+.bre-search-clear svg {
+  width: 12px;
+  height: 12px;
+}
+.bre-search-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  font-size: 13px;
+  line-height: 20px;
+}
 `
