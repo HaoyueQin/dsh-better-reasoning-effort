@@ -20,9 +20,13 @@ import type { ClientContext, SlotRegistrarFace } from '../types.js'
  * @param ctx - client root context (its `slots` service registers the seat).
  * @param t - the plugin's locale-bound translator.
  */
-export function registerSliderToggleSlot(ctx: ClientContext, t: Translate): void {
+export function registerSliderToggleSlot(ctx: ClientContext, t: Translate): () => void {
   const host = ctx as unknown as { slots?: SlotRegistrarFace }
-  host.slots?.inject('settings.models.footer', () => {
+  // `register` hands back the remover for its seat; the `inject` seam is where
+  // the official registrar binds it to the calling scope. Wire whatever comes
+  // back so a plugin disable / HMR leaves no seat (and no stale component)
+  // behind instead of dropping the disposer on the floor.
+  const injected = host.slots?.inject('settings.models.footer', () => {
     host.slots?.register({
       name: 'settings.models.footer',
       id: PLUGIN_ID + '-slider-toggle',
@@ -30,4 +34,5 @@ export function registerSliderToggleSlot(ctx: ClientContext, t: Translate): void
       inject: () => ({ t }),
     }, SliderToggle)
   })
+  return typeof injected === 'function' ? injected as () => void : () => {}
 }

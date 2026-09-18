@@ -29,10 +29,11 @@
 
 import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../../constants.js'
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../../knowledge.js'
-import { modelsOf, routeFactsOf } from '../../shared.js'
+import { modelsOf, routeFactsOf, isRecord } from '../../shared.js'
 import { sameEfforts } from '../effort.js'
 import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf, writeModelRows, type RowIntent } from '../ops.js'
 import type { EffortEditorApi, EffortWriteIntent, HeldWrite, RemoteApi, SettingsJoin } from '../types.js'
+import { panelRoot } from './mount.js'
 
 export type { SettingsJoin }
 
@@ -238,12 +239,6 @@ export interface ScanState {
    * silently losing the user's declaration is not.
    */
   signalsUnavailable: boolean
-  /**
-   * Whether an official card was open at the last scan. An in-flight write
-   * re-checks it right before mutating: a card that opened during the read
-   * must not have the write land behind its frozen revision baseline.
-   */
-  flushAbort: boolean
   /** Commit buttons already wired, so a re-scan never double-registers. */
   submitWired: WeakSet<Element>
   /** Cancel buttons already wired. */
@@ -347,7 +342,7 @@ function persistLedger(state: ScanState): void {
 }
 
 /** One ledger entry as the file carries it, or undefined when malformed. */
-function ledgerEntry<T>(value: unknown): [string, [string, T][]][] | undefined {
+function ledgerEntry<T>(value: unknown, validate?: (write: unknown) => boolean): [string, [string, T][]][] | undefined {
   if (!Array.isArray(value)) return undefined
   const routes: [string, [string, T][]][] = []
   for (const row of value) {
@@ -358,9 +353,8 @@ function ledgerEntry<T>(value: unknown): [string, [string, T][]][] | undefined {
     for (const entry of models) {
       if (!Array.isArray(entry) || entry.length !== 2) return undefined
       const [modelId, write] = entry as [unknown, unknown]
-      if (typeof modelId !== 'string' || typeof write !== 'object' || write === null || Array.isArray(write)) {
-        return undefined
-      }
+      if (typeof modelId !== 'string' || !isRecord(write)) return undefined
+      if (validate !== undefined && !validate(write)) return undefined
       entries.push([modelId, write as T])
     }
     routes.push([route, entries])
@@ -389,7 +383,7 @@ function restoreLedger(state: ScanState): void {
     const parsed = JSON.parse(raw) as Partial<LedgerFile>
     if (parsed.document !== documentId()) return
     const pending = ledgerEntry<StagedDeclaration>(parsed.pending)
-    const queued = ledgerEntry<HeldWrite>(parsed.queued)
+    const queued = ledgerEntry<HeldWrite>(parsed.queued, isHeldWrite)
     if (pending === undefined || queued === undefined) return
     const committed = Array.isArray(parsed.committed)
       ? parsed.committed.filter((route): route is string => typeof route === 'string')
@@ -437,11 +431,10 @@ export function flushOnTeardown(state: ScanState, deps: InjectorDeps): void {
 export function flushOnUnload(state: ScanState, deps: InjectorDeps): void {
   // The page is going away: an open card's frozen baseline no longer matters,
   // so the in-flight fence must not block this last best-effort landing.
-  state.flushAbort = false
   void (async () => {
     try {
-      await flushQueued(deps, state)
-      await flushPending(deps, state)
+      await flushQueued(deps, state, true)
+      await flushPending(deps, state, true)
     } catch (error) {
       console.error(`[bre] unload flush failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -467,7 +460,6 @@ export function createScanState(): ScanState {
     nextFlushAt: 0,
     committing: new Set(),
     signalsUnavailable: false,
-    flushAbort: false,
     submitWired: new WeakSet(),
     cancelWired: new WeakSet(),
   }
@@ -761,10 +753,11 @@ export interface AutofillFootprint {
 /** Semantic equality of two reasoningEfforts dict values (key set + wire strings). */
 function sameEffortsValue(a: unknown, b: ReasoningEfforts | false): boolean {
   if (a === b) return true
-  if (!isRecordValue(a) || typeof b !== 'object' || b === null || Array.isArray(b)) return false
+  if (!isRecord(a) || !isRecord(b)) return false
   const keys = Object.keys(b)
   if (Object.keys(a).length !== keys.length) return false
-  return keys.every(key => (a as Record<string, unknown>)[key] === (b as Record<string, unknown>)[key])
+  const other = b as Record<string, unknown>
+  return keys.every(key => a[key] === other[key])
 }
 
 /** Semantic equality of a raw input value with a modality list (order-insensitive). */
@@ -774,9 +767,17 @@ function sameInputList(a: unknown, b: InputModalities): boolean {
   return a.every(member => typeof member === 'string' && set.has(member))
 }
 
-/** Plain-object guard local to this module (shared.ts's isRecord stays host/client-neutral). */
-function isRecordValue(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
+/**
+ * Shape guard for a restored held write. The ledger is `sessionStorage`, so a
+ * foreign or half-written file must be rejected before its entries reach
+ * `writeModelRows` (a schema-level refusal there is noisy and late).
+ */
+function isHeldWrite(value: unknown): value is HeldWrite {
+  if (!isRecord(value)) return false
+  const efforts = value['efforts']
+  if (efforts !== false && efforts !== 'keep' && !isRecord(efforts)) return false
+  const clear = value['clearCompatKeys']
+  return clear === undefined || (Array.isArray(clear) && clear.every(key => typeof key === 'string'))
 }
 
 /**
@@ -797,6 +798,7 @@ async function flushRoute(
   state: ScanState,
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
+  ignoreFence = false,
 ): Promise<boolean> {
   // ONE read for the whole route: the rows all live in the same array, so a
   // per-model read was pure repetition. Every arbitration below still runs
@@ -850,7 +852,7 @@ async function flushRoute(
       return Promise.resolve(join)
     }
     return deps.describeNamespace()
-  }, () => state.flushAbort)
+  }, ignoreFence ? undefined : officialCardOpen)
   let failed = false
   intents.forEach((intent, at) => {
     const result = results[at]
@@ -891,7 +893,7 @@ async function flushRoute(
  * @param state - mutable scan state.
  * @returns whether this pass left a write unlanded (the caller backs off).
  */
-async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<boolean> {
+async function flushQueued(deps: InjectorDeps, state: ScanState, ignoreFence = false): Promise<boolean> {
   // A commit marker with nothing queued is SPENT: the official Save carried no
   // plugin edit (or the route was already landed). Dropping it here keeps it
   // from authorizing a later edit the user never saved.
@@ -931,7 +933,7 @@ async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<boolea
       ...(write.clearCompatKeys === undefined ? {} : { clearCompatKeys: write.clearCompatKeys }),
       ...(write.defaultEffort === undefined ? {} : { defaultEffort: write.defaultEffort }),
     }))
-    const results = await writeModelRows(deps.api, route, intents, undefined, () => state.flushAbort)
+    const results = await writeModelRows(deps.api, route, intents, undefined, ignoreFence ? undefined : officialCardOpen)
     let aborted = false
     intents.forEach((intent, at) => {
       const result = results[at]
@@ -967,7 +969,7 @@ async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<boolea
  * @param state - mutable scan state.
  * @returns whether a write was refused and left unlanded.
  */
-async function flushPending(deps: InjectorDeps, state: ScanState): Promise<boolean> {
+async function flushPending(deps: InjectorDeps, state: ScanState, ignoreFence = false): Promise<boolean> {
   if (state.pending.size === 0) return false
   const join = await deps.describeNamespace()
   if (join.writable !== true) return false
@@ -980,7 +982,7 @@ async function flushPending(deps: InjectorDeps, state: ScanState): Promise<boole
     }
     // A create card still owns a route the document has not taken yet.
     if (!hasOwn(providers, route)) continue
-    if (await flushRoute(deps, state, route, models)) failed = true
+    if (await flushRoute(deps, state, route, models, ignoreFence)) failed = true
   }
   persistLedger(state)
   return failed
@@ -1200,6 +1202,20 @@ function officialCardOf(root: HTMLElement): HTMLElement | undefined {
 }
 
 /**
+ * The LIVE form of the write fence: whether an official card is open in the
+ * CURRENT DOM.
+ *
+ * The scan's own boolean lags by `SCAN_DEBOUNCE_MS`, so a write that started
+ * during that window would still see "no card" and land behind the card's
+ * frozen revision baseline — issue #7 again. `writeModelRows` already probes
+ * this at the last possible moment (after its read, before its mutate); this
+ * helper makes that probe read the DOM instead of the last scan's snapshot.
+ */
+function officialCardOpen(): boolean {
+  return officialCardOf(panelRoot()) !== undefined
+}
+
+/**
  * Scan the settings DOM for official model rows and reconcile the injected
  * editors. Idempotent: existing editors are left alone, new disclosures get
  * one, and removed ones are unmounted.
@@ -1224,11 +1240,12 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
   // from those buttons alone would let a write slip into that card's frozen
   // revision baseline -- issue #7 again, under a rarer trigger.
   const cardOpen = officialCardOf(root) !== undefined
-  // The fence an in-flight write checks: while this is true, no landing write
-  // may mutate (it would sit behind the open card's frozen revision).
-  state.flushAbort = cardOpen
-  const hasCapacityRows = labels.capacity.some(aria =>
-    root.querySelector(`button[aria-label^="${aria}"]`) !== null)
+  // Match on the attribute VALUE, never through a selector built out of host
+  // copy: a language pack whose label carries a quote or a bracket would make
+  // `querySelector` throw, and this scan has no try/catch around it, so the
+  // settings injection would stall for that language.
+  const hasCapacityRows = Array.from(root.querySelectorAll<HTMLButtonElement>('button[aria-label]'))
+    .some(button => labels.capacity.some(label => (button.getAttribute('aria-label') ?? '').startsWith(label)))
   if (!cardOpen) {
     if (state.mounted.size > 0) {
       for (const [, entry] of state.mounted) entry.editor.unmount()
@@ -1342,7 +1359,8 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       // a typed-but-unsaved model row on a SAVED route. Writing the latter
       // would bounce model-not-found (the row is not in the document yet);
       // staging rides the same flush-on-save path as the create card.
-      const staged = routeStaged || !models.some(model => model['id'] === target.modelId)
+      const savedModelIds = new Set(models.map(model => model['id']))
+      const staged = routeStaged || !savedModelIds.has(target.modelId)
       // A staged row's baseline is the pending store (the settings document
       // holds nothing for the model yet); the create card's typed protocol
       // and endpoint stand in for the stored profile facts, both for the
@@ -1430,10 +1448,13 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
           (r, m, w) => { queueWriteInto(state, r, m, w) },
           // The editor's Reset drops wherever this row's intent landed.
           r => { withdrawIntent(state, r, target.modelId) },
-          // Read live: the same DOM row can move between unsaved and saved as
-          // the user types a route id, so the ledger decision cannot be frozen
-          // at mount time.
-          () => staged,
+          // Re-resolve the card's staged-ness at CALL time, not at mount time:
+          // the same DOM row moves between unsaved and saved as the user types
+          // a route id (or adds a model row), and the scan snapshot behind this
+          // closure lags that by up to one debounce window. The saved-model arm
+          // still reads the snapshot: the settings document only changes when a
+          // describe does.
+          () => (routeOfCard(target.card, providers, labels)?.staged ?? routeStaged) || !savedModelIds.has(target.modelId),
         ),
         readOnly: join.writable !== true,
         t: deps.t,

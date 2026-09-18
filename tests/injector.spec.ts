@@ -1090,19 +1090,24 @@ describe('held-write ledgers (persistence, retry, the card fence)', () => {
     expect(createScanState().queued.size).toBe(0)
   })
 
-  it('flushOnUnload lands even while a card was fenced open', async () => {
+  it('flushOnUnload lands even while a card is open', async () => {
     const state = createScanState()
     state.committing.add('aliyun')
     queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
-    // The last scan saw a card open; the page is now going away, so its frozen
-    // baseline no longer matters and the last landing must not be aborted.
-    state.flushAbort = true
+    // A card is on the page and the page is going away: its frozen baseline no
+    // longer matters, so the last landing must not be fenced.
+    const card = document.createElement('div')
+    card.className = 'editorActions'
+    document.body.appendChild(card)
+    try {
+      const deps = makeDeps()
+      flushOnUnload(state, deps)
+      await new Promise(resolve => { setTimeout(resolve, 0) })
 
-    const deps = makeDeps()
-    flushOnUnload(state, deps)
-    await new Promise(resolve => { setTimeout(resolve, 0) })
-
-    expect(deps.mutate).toHaveBeenCalledTimes(1)
+      expect(deps.mutate).toHaveBeenCalledTimes(1)
+    } finally {
+      card.remove()
+    }
   })
 
   it('keeps working when sessionStorage refuses the write', () => {
@@ -1148,20 +1153,28 @@ describe('held-write ledgers (persistence, retry, the card fence)', () => {
     const state = createScanState()
     // The card opens in the window between our read and our mutate: landing
     // now would sit behind its frozen revision baseline (issue #7), so the
-    // write must abort and keep the intent for a later pass.
+    // write must abort and keep the intent for a later pass. The fence probes
+    // the LIVE DOM, so appending the card during the read is what it sees.
+    let card: HTMLElement | undefined
     const deps = makeDeps({
       describeNamespace: async () => {
-        state.flushAbort = true
+        card = document.createElement('div')
+        card.className = 'editorActions'
+        document.body.appendChild(card)
         return join
       },
     })
     queueWriteInto(state, 'aliyun', 'qwen-max', { efforts: { high: 'high' } })
     state.committing.add('aliyun')
 
-    await settleIdle(deps, state)
-    expect(deps.mutate).not.toHaveBeenCalled()
-    expect(state.queued.size).toBe(1)
-    expect(state.committing.has('aliyun')).toBe(true)
+    try {
+      await settleIdle(deps, state)
+      expect(deps.mutate).not.toHaveBeenCalled()
+      expect(state.queued.size).toBe(1)
+      expect(state.committing.has('aliyun')).toBe(true)
+    } finally {
+      card?.remove()
+    }
   })
 
   it('keeps the commit marker when a flush is refused, so the retry can happen', async () => {

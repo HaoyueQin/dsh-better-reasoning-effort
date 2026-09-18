@@ -226,3 +226,98 @@ describe('ModelSearch component', () => {
     menu.remove()
   })
 })
+
+describe('filter lifecycle', () => {
+  it('restores only the nodes it hid, leaving the menu\'s own inline display alone', () => {
+    const menu = createMenuDom()
+    const group = menu.querySelectorAll('section[role="group"]')[0] as HTMLElement
+    // A value the OFFICIAL menu set itself; the plugin must never clear it.
+    group.style.display = 'contents'
+
+    const touched = new Map<HTMLElement, string>()
+    filterMenuModels(menu, 'gpt', touched)
+    filterMenuModels(menu, '', touched)
+
+    expect(group.style.display).toBe('contents')
+    expect(touched.size).toBe(0)
+    menu.remove()
+  })
+
+  it('re-applies the filter when the official list re-renders underneath it', async () => {
+    const menu = createMenuDom()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(createElement(ModelSearch, { menu, t }))
+    })
+    const input = container.querySelector('input.bre-search-input') as HTMLInputElement
+    await act(async () => {
+      setInputValue(input, 'deepseek')
+    })
+
+    // The official directory pushes a fresh catalog while the menu is open:
+    // React appends a brand-new group + row, which must not come back visible.
+    const fresh = document.createElement('section')
+    fresh.setAttribute('role', 'group')
+    fresh.setAttribute('aria-labelledby', 'group-fresh')
+    const heading = document.createElement('div')
+    heading.id = 'group-fresh'
+    heading.textContent = 'Fresh'
+    const row = document.createElement('button')
+    row.setAttribute('role', 'menuitemradio')
+    row.setAttribute('title', 'Fresh Model')
+    fresh.append(heading, row)
+    menu.appendChild(fresh)
+
+    await act(async () => {
+      await new Promise(resolve => { setTimeout(resolve, 0) })
+    })
+
+    expect(fresh.style.display).toBe('none')
+    expect(row.style.display).toBe('none')
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    menu.remove()
+  })
+
+  it('moves focus to the first/last VISIBLE row on Home and End while filtering', async () => {
+    const menu = createMenuDom()
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    await act(async () => {
+      root.render(createElement(ModelSearch, { menu, t }))
+    })
+    const input = container.querySelector('input.bre-search-input') as HTMLInputElement
+    await act(async () => {
+      setInputValue(input, 'deepseek')
+    })
+
+    const visible = Array.from(menu.querySelectorAll<HTMLButtonElement>('button[role="menuitemradio"]'))
+      .filter(button => button.style.display !== 'none')
+    expect(visible).toHaveLength(2)
+
+    await act(async () => {
+      input.focus()
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(visible[1])
+
+    await act(async () => {
+      visible[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true, cancelable: true }))
+    })
+    expect(document.activeElement).toBe(visible[0])
+
+    await act(async () => {
+      root.unmount()
+    })
+    container.remove()
+    menu.remove()
+  })
+})

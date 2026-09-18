@@ -225,9 +225,7 @@ export function apply(ctx: ClientContext): void {
     }
   }, 'dsh-better-reasoning-effort: slider preference')
 
-  ctx.effect(() => {
-    registerSliderToggleSlot(ctx, t)
-  }, 'dsh-better-reasoning-effort: footer slot activation')
+  ctx.effect(() => registerSliderToggleSlot(ctx, t), 'dsh-better-reasoning-effort: footer slot activation')
 }
 
 export type { BreKey }

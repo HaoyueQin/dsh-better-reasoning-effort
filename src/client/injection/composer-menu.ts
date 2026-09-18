@@ -67,6 +67,14 @@ export interface ComposerMenuInjection {
  *
  * Only the official effect ever writes the card's position: this module still
  * adds no class and no inline style of its own.
+ *
+ * COUPLING (deliberate, and the reason there is no geometry code here): this
+ * works only because the official card re-runs its `place()` on a window
+ * `resize` and commits the result through React state. A kernel that switches
+ * to `requestAnimationFrame` placement or writes the position outside React
+ * would leave this a no-op — the menu would keep the pre-injection `top`
+ * instead of jumping, i.e. it would degrade back to the mis-anchored (not
+ * broken) state the earlier fixes describe, never to a crash.
  */
 const rePlaceInFrame = (): void => {
   flushSync(() => { window.dispatchEvent(new Event('resize')) })
@@ -263,6 +271,7 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
     unmountReact(sliderMount)
     sliderMount = undefined
     unmountSearch()
+    lastModelPane = undefined
   }
 
   return { reconcile, dispose }
