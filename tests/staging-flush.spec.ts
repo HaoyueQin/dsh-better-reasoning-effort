@@ -59,7 +59,17 @@ function makeDeps(host: { doc: Record<string, unknown>; mutate: ReturnType<typeo
   const join = (): SettingsJoin => {
     const value = { providers: structuredClone(host.doc) }
     return {
-      namespace: { ns: 'llm-pi-ai', schema: {}, value, user: {}, revision: 1, applies: 'live', secrets: [] },
+      // The write baseline is the RAW user layer, so the fixture mirrors the
+      // document into it; an empty `user` would read as "no such model".
+      namespace: {
+        ns: 'llm-pi-ai',
+        schema: {},
+        value,
+        user: { providers: structuredClone(host.doc) },
+        revision: 1,
+        applies: 'live',
+        secrets: [],
+      },
       writable: true,
     } as unknown as SettingsJoin
   }
@@ -160,10 +170,26 @@ function commitProvider(host: { doc: Record<string, unknown> }, row: Record<stri
   }
 }
 
+/**
+ * Close the editing surface and run the idle pass. The plugin lands what it
+ * held back only once no official card is open: writing while one is up is
+ * exactly what made the user's own save in that card fail with
+ * `settings/conflict`.
+ */
+async function closeCard(deps: ReturnType<typeof makeDeps>, state: ReturnType<typeof createScanState>): Promise<void> {
+  document.body.innerHTML = ''
+  reconcile(document.body, deps, state)
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+  await new Promise(resolve => { setTimeout(resolve, 0) })
+}
+
+/**
+ * The user closes the saved card -- the idle pass that lands the staging --
+ * and then reopens it, which is where the assertions read the document from.
+ */
 async function reopenEditCard(deps: ReturnType<typeof makeDeps>, state: ReturnType<typeof createScanState>): Promise<void> {
+  await closeCard(deps, state)
   document.body.innerHTML = '<div class="section">' + cardDom('Acme', true) + '</div>'
-  await settle(() => reconcile(document.querySelector('.section') as HTMLElement, deps, state), state)
-  await new Promise(resolve => setTimeout(resolve, 0))
   await settle(() => reconcile(document.querySelector('.section') as HTMLElement, deps, state), state)
 }
 
@@ -254,6 +280,8 @@ describe('review findings (staged flush vs the autofilled compat block)', () => 
     await reopenEditCard(deps, state)
     const editor = deps.editors.at(-1)?.props
     await editor?.api.writeEfforts(ROUTE, MODEL, false, undefined, undefined)
+    // The Apply is held while the card is open; closing it lands the intent.
+    await closeCard(deps, state)
     const disabled = (host.doc[ROUTE] as { models: Record<string, unknown>[] }).models[0]
     expect(disabled['reasoningEfforts']).toBe(false)
     expect(disabled[AUTOFILL_MARKER]).toBeUndefined()

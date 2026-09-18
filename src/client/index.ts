@@ -28,18 +28,19 @@ import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { createRoot, type Root } from 'react-dom/client'
 import { Component, createElement } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
-import { DEFAULT_EFFORT_FIELD, PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
+import { AUTOFILL_CONFIG_PATH, DEFAULT_EFFORT_FIELD, PI_AI_NS, PLUGIN_ID, STORE_NS } from '../constants.js'
 import { EffortEditor } from './EffortEditor.tsx'
 import { wireEffortMemory } from './effort-memory.js'
-import { createScanState, reconcile, type HostLabels } from './injector.ts'
+import { createScanState, flushOnTeardown, flushOnUnload, reconcile, type HostLabels, type InjectorDeps } from './injector.ts'
 import { LocaleRefresh, type LocaleFace } from './LocaleRefresh.tsx'
 import { en, zh, type BreKey } from './locales.ts'
-import { describeNamespace, providersOf } from './ops.ts'
+import { buildAutofillPatch } from '../autofill.js'
+import { describeNamespace, providersOf, userProvidersOf } from './ops.ts'
 import { ComposerSlider } from './ComposerSlider.js'
 import { SliderToggle } from './SliderToggle.js'
 import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabled } from './slider-pref.js'
 import { STYLES } from './styles.ts'
-import type { RemoteApi } from './types.ts'
+import type { RemoteApi, SettingsScopeBinderLike, SettingsScopeReadLike } from './types.ts'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
 export const name = PLUGIN_ID
@@ -65,6 +66,11 @@ const HOST_LABEL_KEYS = {
   routeId: ['customRoute', 'Provider ID'],
   baseUrl: ['baseUrl', 'Base URL'],
   apiProtocol: ['customApi', 'API protocol'],
+  // The editing card's action row. `apply` is the commit (en 'Apply' / zh
+  // '保存'), `cancel` the dismiss; the busy copy is 'applying' and needs no
+  // anchor of its own: the button keeps its position in the row.
+  apply: ['apply', 'Apply'],
+  cancel: ['cancel', 'Cancel'],
 } as const satisfies Record<keyof HostLabels, readonly [string, string]>
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -192,7 +198,26 @@ export function apply(ctx: ClientContext): void {
   // The kernel mounts the settings Remote as an injectable
   // 'remote.settings' service, declared in the plugin's own inject above — so
   // the face is available before apply runs. No runtime seat probing remains.
-  const settingsApi: RemoteApi = { settings: ctx.remote.settings }
+  //
+  // The official settings scope is picked up on top of it when this shell
+  // provides one: reads then ride its shared describe mirror (no wire round
+  // trip, and the revision the settings surface itself fences writes with).
+  // Deliberately NOT part of the plugin's `inject`: a kernel without the
+  // service must still activate the browser half, on the wire-describe path.
+  const settingsScope = ((): SettingsScopeReadLike | undefined => {
+    try {
+      // `ctx.get('settingsScope')` yields the kernel's BINDER, not a scope:
+      // only `bind({ namespace })` mints the read face (getSnapshot). Using
+      // the binder directly made every describe throw a TypeError.
+      const binder = ctx.get?.('settingsScope') as SettingsScopeBinderLike | undefined
+      return binder?.bind?.({ namespace: PI_AI_NS })
+    } catch {
+      return undefined
+    }
+  })()
+  const settingsApi: RemoteApi = settingsScope === undefined
+    ? { settings: ctx.remote.settings }
+    : { settings: ctx.remote.settings, scope: settingsScope }
   // The shell's Translate is `(key: string, params?: Record<string, unknown>)`;
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
@@ -239,6 +264,8 @@ export function apply(ctx: ClientContext): void {
       routeId: resolve(HOST_LABEL_KEYS.routeId),
       baseUrl: resolve(HOST_LABEL_KEYS.baseUrl),
       apiProtocol: resolve(HOST_LABEL_KEYS.apiProtocol),
+      apply: resolve(HOST_LABEL_KEYS.apply),
+      cancel: resolve(HOST_LABEL_KEYS.cancel),
     }
   }
 
@@ -247,7 +274,13 @@ export function apply(ctx: ClientContext): void {
   const SCAN_DEBOUNCE_MS = 120
   const scanState = createScanState()
   let scanTimer: number | undefined
+  let retryTimer: number | undefined
   let observer: MutationObserver | undefined
+  // Set on dispose. An idle pass already in flight can still call onBackoff
+  // after stopObserver cleared the timer; without this gate that would re-arm
+  // a retry timer on a dead fiber, restarting the scan chain (and re-mounting
+  // editors nothing will ever unmount).
+  let stopped = false
 
   // ---- Composer slider mount (DOM path) ----
   let sliderMount: ForeignMount | undefined
@@ -488,8 +521,146 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
+  // ---- The running auto-fill complement (issue #7) ----
+  // The host fills once at boot. Everything a session adds afterwards is filled
+  // HERE, on the idle pass: that is the only moment no official card is holding
+  // a revision baseline a write would invalidate.
+  let autofillSwitches: Promise<{ autofill: boolean; modalityAutofill: boolean }> | undefined
+
+  /**
+   * The host's autofill switches, read once. A `dsh.client` declaration carries
+   * no plugin config, so a deployment configured `autofill: false` would
+   * otherwise still be written to from the page. An unreachable or older host
+   * keeps the documented defaults rather than silently disabling the feature.
+   */
+  const autofillSwitchesOf = (): Promise<{ autofill: boolean; modalityAutofill: boolean }> => {
+    autofillSwitches ??= (async () => {
+      const fallback = { autofill: true, modalityAutofill: true }
+      try {
+        const response = await fetch(AUTOFILL_CONFIG_PATH, { method: 'GET' })
+        if (!response.ok) return fallback
+        const body = (await response.json()) as { ok?: boolean; data?: { autofill?: unknown; modalityAutofill?: unknown } }
+        if (body?.ok !== true) return fallback
+        return {
+          autofill: body.data?.autofill !== false,
+          modalityAutofill: body.data?.modalityAutofill !== false,
+        }
+      } catch {
+        return fallback
+      }
+    })()
+    return autofillSwitches
+  }
+
+  /**
+   * Fill the models this session added, through the very patch builder the
+   * host's boot pass uses (so one suggestion can never produce two different
+   * documents). Runs on the idle pass only.
+   */
+  const runIdleAutofill = async (): Promise<void> => {
+    try {
+      const switches = await autofillSwitchesOf()
+      if (!switches.autofill) return
+      // Fresh: the scope mirror folds a just-settled write in asynchronously,
+      // so reading it here would fence this fill on a superseded revision and
+      // manufacture a `settings/conflict` (the same reason a conflict retry
+      // re-reads the wire).
+      const join = await describeNamespace(settingsApi, { fresh: true })
+      const namespace = join.namespace
+      if (namespace === undefined || join.writable !== true) return
+      const userProviders = userProvidersOf(namespace)
+      if (userProviders === undefined) return
+      const patch = buildAutofillPatch(
+        userProviders, () => true, { modalities: switches.modalityAutofill }, namespace.revision,
+      )
+      if (patch === undefined) return
+      const routes = patch['providers'] as Record<string, { models: unknown }>
+      const ops = Object.entries(routes).map(([route, profile]) => ({
+        op: 'set' as const,
+        path: ['providers', route, 'models'],
+        value: profile.models,
+      })) as unknown as Parameters<typeof settingsApi.settings.mutate>[1]
+      const response = await settingsApi.settings.mutate(PI_AI_NS, ops, namespace.revision)
+      // A refusal arrives as a VALUE, not a throw: without this check the whole
+      // complement failed silently (the catch below never ran). Whatever is
+      // still undeclared is picked up by the next idle pass.
+      if (!response.ok) {
+        console.error(`[bre] idle autofill refused: ${response.error.message}`)
+      }
+    } catch (error) {
+      console.error(`[bre] idle autofill failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
+  /**
+   * The injector's dependencies, built ONCE outside the debounced scan: the
+   * teardown path (plugin dispose, page unload) drains the ledgers through the
+   * very same seam a live scan uses, so a landing write can never take a
+   * different path than an in-session one.
+   */
+  const injectorDeps: InjectorDeps = {
+    api: settingsApi,
+    describeNamespace: () => describeNamespace(settingsApi),
+    t,
+    labels: hostLabels,
+    // The idle pass landed everything the session held back; the autofill
+    // complement rides the same moment (see runIdleAutofill).
+    onIdle: () => { void runIdleAutofill() },
+    // A refused held write arms a backoff; nothing on a settled page would
+    // schedule the retry scan, so the injector asks for a timer.
+    onBackoff: (delayMs) => { scheduleRetry(delayMs) },
+    mount(container, props) {
+      const rootEl = document.createElement('div')
+      // The slot class carries the grid-column span: this wrapper — not
+      // the React editor inside it — is the item the official disclosure
+      // grid places (see STYLES).
+      rootEl.className = 'bre-effort-slot'
+      // Mark the container synchronously — before React renders — so the
+      // idempotency guard (hasEditor) holds from the very first scan.
+      // Without this, the appendChild-triggered MutationObserver scan can
+      // run while React's async render has not produced the editor div
+      // yet, misjudge the row as unmounted, and mount again — an infinite
+      // loop that grows the container without bound.
+      rootEl.dataset['plugin'] = PLUGIN_ID
+      container.appendChild(rootEl)
+      const reactRoot = createRoot(rootEl)
+      const renderEditor = (p: typeof props): void => {
+        reactRoot.render(createElement(
+          EffortBoundary,
+          {
+            fallbackText: t('renderFailed'),
+            // Same seat as the slider and the toggle: without the locale
+            // subscription a language switch re-renders the official page
+            // but not this editor — sameProps compares only document data,
+            // so the copy would stay in the language it rendered in.
+            children: refreshed(() => createElement(EffortEditor, p)),
+          },
+        ))
+      }
+      renderEditor(props)
+      return {
+        unmount: () => { reactRoot.unmount() },
+        render: renderEditor,
+      }
+    },
+  }
+
+  /**
+   * Wake the injector when a failed idle pass's backoff expires: a settled
+   * settings page emits no DOM mutation, so without this the held intent would
+   * wait for a scan that never comes. One timer at a time; the fired timer
+   * re-runs the scan, which re-arms the next backoff if the write is refused.
+   */
+  function scheduleRetry(delayMs: number): void {
+    if (stopped || retryTimer !== undefined) return
+    retryTimer = window.setTimeout(() => {
+      retryTimer = undefined
+      scheduleScan()
+    }, delayMs)
+  }
+
   const scheduleScan = (): void => {
-    if (scanTimer !== undefined) return
+    if (stopped || scanTimer !== undefined) return
     // Debounce: the official page re-renders in bursts (typing, expanding,
     // applying); one scan per frame keeps the editor stable mid-keystroke.
     scanTimer = window.setTimeout(() => {
@@ -499,52 +670,13 @@ export function apply(ctx: ClientContext): void {
       // preference flip.
       ensureSessionDirectory()
       const root = panelRoot()
-      reconcile(root, {
-        api: settingsApi,
-        describeNamespace: () => describeNamespace(settingsApi),
-        t,
-        labels: hostLabels,
-        mount(container, props) {
-          const rootEl = document.createElement('div')
-          // The slot class carries the grid-column span: this wrapper — not
-          // the React editor inside it — is the item the official disclosure
-          // grid places (see STYLES).
-          rootEl.className = 'bre-effort-slot'
-          // Mark the container synchronously — before React renders — so the
-          // idempotency guard (hasEditor) holds from the very first scan.
-          // Without this, the appendChild-triggered MutationObserver scan can
-          // run while React's async render has not produced the editor div
-          // yet, misjudge the row as unmounted, and mount again — an infinite
-          // loop that grows the container without bound.
-          rootEl.dataset['plugin'] = PLUGIN_ID
-          container.appendChild(rootEl)
-          const reactRoot = createRoot(rootEl)
-          const renderEditor = (p: typeof props): void => {
-            reactRoot.render(createElement(
-              EffortBoundary,
-              {
-                fallbackText: t('renderFailed'),
-                // Same seat as the slider and the toggle: without the locale
-                // subscription a language switch re-renders the official page
-                // but not this editor — sameProps compares only document data,
-                // so the copy would stay in the language it rendered in.
-                children: refreshed(() => createElement(EffortEditor, p)),
-              },
-            ))
-          }
-          renderEditor(props)
-          return {
-            unmount: () => { reactRoot.unmount() },
-            render: renderEditor,
-          }
-        },
-      }, scanState)
+      reconcile(root, injectorDeps, scanState)
       reconcileSlider()
     }, SCAN_DEBOUNCE_MS)
   }
 
   const startObserver = (): void => {
-    if (observer !== undefined) return
+    if (stopped || observer !== undefined) return
     // A session may already be resident when the fiber starts (page reload,
     // HMR): wire it before the first mutation has a chance to land.
     ensureSessionDirectory()
@@ -566,9 +698,14 @@ export function apply(ctx: ClientContext): void {
     scheduleScan()
   }
   const stopObserver = (): void => {
+    stopped = true
     if (scanTimer !== undefined) {
       window.clearTimeout(scanTimer)
       scanTimer = undefined
+    }
+    if (retryTimer !== undefined) {
+      window.clearTimeout(retryTimer)
+      retryTimer = undefined
     }
     observer?.disconnect()
     observer = undefined
@@ -578,6 +715,11 @@ export function apply(ctx: ClientContext): void {
     startObserver()
     return () => {
       stopObserver()
+      // Land what the session held back before the fiber goes away: a plugin
+      // disable or HMR must not strand the user's intent in memory alone. The
+      // ledgers stay in sessionStorage WITH their commit evidence, so the next
+      // fiber in this document retries a flush the runtime cut short.
+      flushOnTeardown(scanState, injectorDeps)
       // Orphaned editors must not outlive the fiber: on plugin disable or
       // HMR they would keep rendering with a stale api face, failing every
       // write visibly. Unmount every React root this plugin created.
@@ -591,6 +733,17 @@ export function apply(ctx: ClientContext): void {
       wiredDirectories.clear()
     }
   }, 'dsh-better-reasoning-effort: DOM injector')
+
+  // A page unload is the last moment the committed ledgers can be landed, and
+  // the moment the rest must be DISCARDED: a reload drops the official card's
+  // own draft, so the plugin's uncommitted edits go with it. (The dispose
+  // effect above keeps the ledger for a same-document fiber cycle, where the
+  // card survives.)
+  ctx.effect(() => {
+    const onPageHide = (): void => { flushOnUnload(scanState, injectorDeps) }
+    window.addEventListener('pagehide', onPageHide)
+    return () => { window.removeEventListener('pagehide', onPageHide) }
+  }, 'dsh-better-reasoning-effort: ledger flush on unload')
 
   // Refresh the injection when the settings document changes (an apply from
   // either the official page or this plugin re-renders the rows). The folded

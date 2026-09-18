@@ -16,7 +16,7 @@ import { en, zh } from '../src/client/locales.js'
 import type { ModelDirectoryLike, ModelDirectoryStateLike, RemoteApi, SettingsJoin } from '../src/client/types.js'
 
 /** A settings join shaped like the real wire view. */
-function makeJoin(providers: Record<string, unknown>): SettingsJoin {
+function makeJoin(providers: Record<string, unknown>, userProviders?: Record<string, unknown>): SettingsJoin {
   return {
     // The SettingsNamespaceView pins value/user to JsonValue; the fixtures
     // are plain JSON shapes, so the view asserts once instead of per-field.
@@ -24,7 +24,9 @@ function makeJoin(providers: Record<string, unknown>): SettingsJoin {
       ns: PI_AI_NS,
       schema: {},
       value: { providers },
-      user: {},
+      // The write baseline is the RAW user layer, so a fixture that exercises
+      // the running auto-fill (or any write) mirrors the document into it.
+      user: userProviders === undefined ? {} : { providers: userProviders },
       revision: 1,
       applies: 'live',
       secrets: [],
@@ -328,6 +330,150 @@ describe('client apply()', () => {
       expect(document.querySelectorAll('.bre-effort-editor')).toHaveLength(0)
     } finally {
       h.disposeAll()
+    }
+  })
+
+  it('reads through the BOUND settings scope, never treating the binder as a scope', async () => {
+    // Regression (issue #7 branch, C1): `ctx.get('settingsScope')` yields the
+    // kernel's SettingsScopeBinder -- it has `bind()`/`describe()`, NOT
+    // `getSnapshot()`. The plugin used the binder directly, so the optional
+    // chain only guarded a missing SERVICE and every describe threw a
+    // TypeError, leaving the Models page without editors. The binder must be
+    // bound to this plugin's namespace first; that bound scope is the reader.
+    const providers = structuredClone(JOIN_FIXTURE)
+    const api = fakeApi(() => Promise.resolve(makeJoin(providers)))
+    const snapshot = {
+      status: 'ready' as const,
+      value: { providers },
+      user: { providers },
+      base: { providers },
+      revision: 7,
+      writable: true,
+    }
+    const bind = vi.fn(() => ({ getSnapshot: () => snapshot }))
+    const h = makeCtx(api, { services: { settingsScope: { bind } } })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      // Bound on the plugin's own namespace, and the snapshot (not the wire)
+      // answered the scan.
+      expect(bind).toHaveBeenCalledWith({ namespace: PI_AI_NS })
+      expect(api.describeSpy).not.toHaveBeenCalled()
+    } finally {
+      h.disposeAll()
+    }
+  })
+
+  it('fills the models added mid-session on the idle pass, never while a card is open', async () => {
+    // The running auto-fill complement the host no longer performs (issue #7):
+    // a write the moment a commit lands rides the official card's frozen
+    // revision baseline and makes the user's NEXT save in that card fail with
+    // `settings/conflict`. It waits for the idle pass instead -- the moment no
+    // official card is open.
+    const providers = structuredClone(JOIN_FIXTURE)
+    const join = makeJoin(providers, structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(join))
+    // The config route is an addition of this release; an older/unreachable
+    // host must fall back to the documented defaults, not disable the fill.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }) as Response))
+    const h = makeCtx(api)
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+
+      // The card is open: nothing may be written.
+      const mutate = api.settings.mutate as ReturnType<typeof vi.fn>
+      expect(mutate).not.toHaveBeenCalled()
+
+      // Closing it is the idle pass.
+      document.body.innerHTML = ''
+      await waitFor(() => mutate.mock.calls.length > 0)
+      const ops = mutate.mock.calls[0]![1] as Array<{ path: string[]; value: Array<Record<string, unknown>> }>
+      expect(ops[0]!.path).toEqual(['providers', 'aliyun', 'models'])
+      const models = ops[0]!.value
+      expect(models.map(model => model['id'])).toEqual(['qwen-max', 'qwen-turbo'])
+      // Both rows were undeclared, so the knowledge base fills both.
+      expect(models.every(model => model['reasoningEfforts'] !== undefined)).toBe(true)
+      // Capacities are never this plugin's to write.
+      expect(models.every(model => model['contextWindow'] === undefined)).toBe(true)
+    } finally {
+      h.disposeAll()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('surfaces a refused idle autofill instead of failing silently', async () => {
+    // A refusal arrives as a VALUE, not a throw: `mutate` resolves with
+    // `{ok:false}`, so the catch around the fill never runs. Without an
+    // explicit check the whole complement fails invisibly -- the user is left
+    // with models the page still shows as undeclared and no diagnostic at all.
+    const join = makeJoin(structuredClone(JOIN_FIXTURE), structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(join))
+    const mutate = api.settings.mutate as ReturnType<typeof vi.fn>
+    mutate.mockResolvedValueOnce({ ok: false, error: { code: 'settings/conflict', message: 'refused' } })
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }) as Response))
+    const refused = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const h = makeCtx(api)
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+
+      // The card is open, so the fill is still fenced -- and the refusal has
+      // not happened yet.
+      expect(mutate).not.toHaveBeenCalled()
+
+      // Closing it runs the idle pass, whose autofill the document refuses.
+      document.body.innerHTML = ''
+      await waitFor(() => refused.mock.calls.length > 0)
+      expect(refused.mock.calls.some(
+        call => String(call[0]).includes('[bre] idle autofill refused: refused'),
+      )).toBe(true)
+    } finally {
+      h.disposeAll()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('reads the autofill revision from the wire, not a possibly-stale scope snapshot', async () => {
+    // The scope mirror folds a fresh view in asynchronously; the plugin's own
+    // idle autofill runs right after its own writes, so a non-fresh read would
+    // hand back the revision those writes already superseded and manufacture a
+    // `settings/conflict`. The autofill read is explicitly fresh.
+    const providers = structuredClone(JOIN_FIXTURE)
+    const wire = makeJoin(structuredClone(JOIN_FIXTURE), structuredClone(JOIN_FIXTURE))
+    const api = fakeApi(() => Promise.resolve(wire))
+    const snapshot = {
+      status: 'ready' as const,
+      value: { providers },
+      user: { providers },
+      base: { providers },
+      revision: 99,
+      writable: true,
+    }
+    const bind = vi.fn(() => ({ getSnapshot: () => snapshot }))
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false }) as Response))
+    const h = makeCtx(api, { services: { settingsScope: { bind } } })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      const mutate = api.settings.mutate as ReturnType<typeof vi.fn>
+      expect(mutate).not.toHaveBeenCalled()
+
+      document.body.innerHTML = ''
+      await waitFor(() => mutate.mock.calls.length > 0)
+      // The wire revision (1), NOT the snapshot's stale 99.
+      expect(mutate.mock.calls[0]![2]).toBe(1)
+    } finally {
+      h.disposeAll()
+      vi.unstubAllGlobals()
     }
   })
 
