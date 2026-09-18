@@ -121,7 +121,7 @@ export function ModelSearch({ menu, t }: ModelSearchProps): ReactNode {
 
   return createElement(
     'div',
-    { className: 'bre-model-search-box', 'data-bre-search': '1' },
+    { className: 'bre-model-search-box' + (hasEmptyState ? ' has-empty' : ''), 'data-bre-search': '1' },
     createElement(
       'div',
       { className: 'bre-search-input-wrapper' },

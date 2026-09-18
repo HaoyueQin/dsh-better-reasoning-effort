@@ -398,13 +398,17 @@ export function apply(ctx: ClientContext): void {
 
   const unmountSearch = (): void => {
     if (searchMount !== undefined) {
+      searchMount.wrapper.parentElement?.classList.remove('bre-model-menu-searching')
       unmountReact(searchMount)
       searchMount = undefined
     }
+    const menu = modelMenuOf()
+    menu?.classList.remove('bre-model-menu-searching')
   }
 
   /** Reconcile the search filter into the official model menu (idempotent). */
   const reconcileSearch = (menu: HTMLElement): void => {
+    menu.classList.add('bre-model-menu-searching')
     // Keep searchMount behind sliderMount so sliderMount remains menu's firstChild.
     const groupsEl = menu.querySelector<HTMLElement>('.groups, .scrollable, section[role="group"]')
     const referenceNode = (groupsEl !== null && groupsEl.parentElement === menu)

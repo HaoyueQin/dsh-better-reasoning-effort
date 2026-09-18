@@ -600,11 +600,17 @@ body:not([data-ds-dark-theme]) .bre-effort.is-dragging .bre-effort-knob {
 
 /* Model selection search box */
 .bre-model-search-box {
+  display: flex;
+  flex-direction: column;
   padding: 6px 8px 4px;
   position: sticky;
   top: 0;
   z-index: 2;
   background: var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1, #1e1f22));
+}
+.bre-model-search-box:has(.bre-search-empty),
+.bre-model-search-box.has-empty {
+  flex: 1 1 auto;
 }
 .bre-search-input-wrapper {
   display: flex;
@@ -681,10 +687,35 @@ body:not([data-ds-dark-theme]) .bre-effort.is-dragging .bre-effort-knob {
   height: 12px;
 }
 .bre-search-empty {
-  padding: 16px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 auto;
+  min-height: 180px;
+  padding: 24px 16px;
   text-align: center;
   color: var(--dsw-alias-label-tertiary, #81858c);
   font-size: 13px;
   line-height: 20px;
+  user-select: none;
+}
+
+/* Plan A: Shell stabilization for drilled-in model selection panel */
+.bre-model-menu-searching,
+.bre-model-menu-host:has([data-bre-search]),
+[role="menu"]:has([data-bre-search]) {
+  width: min(320px, calc(100vw - 32px)) !important;
+  min-width: min(320px, calc(100vw - 32px)) !important;
+  height: min(360px, calc(100vh - 96px)) !important;
+}
+.bre-model-menu-searching .groups,
+.bre-model-menu-searching .scrollable,
+.bre-model-menu-host:has([data-bre-search]) .groups,
+.bre-model-menu-host:has([data-bre-search]) .scrollable,
+[role="menu"]:has([data-bre-search]) .groups,
+[role="menu"]:has([data-bre-search]) .scrollable {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 `
