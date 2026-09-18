@@ -14,7 +14,7 @@ import {
 } from '../knowledge.js'
 import { AUTOFILL_MARKER, DEFAULT_EFFORT_FIELD, INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
-import { isRecord, routeFactsOf } from '../shared.js'
+import { isRecord, looksLikeCompatRefusal, routeFactsOf } from '../shared.js'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   DefaultEffortIntent,
@@ -422,8 +422,7 @@ export async function writeModelRows(
         // (the Typert refusal code) means a concurrent writer moved the
         // namespace between our describe and mutate.
         if (attempt === 0 && response.error.code === 'settings/conflict') continue
-        const msg = response.error.message.toLowerCase()
-        const looksCompat = response.error.code === 'settings/rejected' && (msg.includes('compat') || msg.includes('thinkingtokenbudget') || msg.includes('vllmpriority') || msg.includes('supportsmaxoutput'))
+        const looksCompat = response.error.code === 'settings/rejected' && looksLikeCompatRefusal(response.error.message)
         if (!downgraded && looksCompat && rows.some(row => row.compat !== undefined)) {
           downgraded = true
           continue

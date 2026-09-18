@@ -7,9 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   isSelfHostedEndpoint,
-  migrateBudgetAlias,
   sanitizeCompatForProtocol,
-  stripNewCompatKeys,
   suggestEfforts,
 } from '../src/knowledge.js'
 import { buildAutofillPatch } from '../src/index.js'
@@ -64,23 +62,6 @@ describe('sanitizeCompatForProtocol', () => {
   it('drops withheld catalog keys everywhere', () => {
     const dirty = { thinkingFormat: 'openai', supportsMidConvoEffort: true } as unknown as Parameters<typeof sanitizeCompatForProtocol>[0]
     expect(sanitizeCompatForProtocol(dirty, 'openai-completions')).toEqual({ thinkingFormat: 'openai' })
-  })
-})
-
-describe('migrateBudgetAlias / stripNewCompatKeys', () => {
-  it('migrates the legacy alias to the explicit budget field', () => {
-    expect(migrateBudgetAlias({ supportsThinkingTokenBudget: true }))
-      .toEqual({ supportsThinkingTokenBudget: true, thinkingTokenBudgetField: 'thinking_token_budget' })
-    expect(migrateBudgetAlias({ thinkingTokenBudgetField: 'thinking_budget' }))
-      .toEqual({ thinkingTokenBudgetField: 'thinking_budget' })
-  })
-  it('strips only the three newer-only keys', () => {
-    expect(stripNewCompatKeys({
-      thinkingFormat: 'openai',
-      thinkingTokenBudgetField: 'thinking_token_budget',
-      vllmPriority: 1,
-      supportsMaxOutputTokens: true,
-    })).toEqual({ thinkingFormat: 'openai' })
   })
 })
 

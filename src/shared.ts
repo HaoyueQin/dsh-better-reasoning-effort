@@ -12,6 +12,19 @@ import type { RouteFacts } from './knowledge.js'
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
+/**
+ * Whether a settings refusal reads like "this kernel does not know the newer
+ * compat keys". The host autofill and the browser write path each downgrade
+ * once on this signal, so they must answer identically.
+ */
+export function looksLikeCompatRefusal(message: string): boolean {
+  const msg = message.toLowerCase()
+  return msg.includes('compat')
+    || msg.includes('thinkingtokenbudget')
+    || msg.includes('vllmpriority')
+    || msg.includes('supportsmaxoutput')
+}
+
 /** The models array of one route in a providers dict, as records. */
 export function modelsOf(providers: unknown, route: string): Record<string, unknown>[] {
   if (!isRecord(providers)) return []

@@ -1280,13 +1280,6 @@ export function isSelfHostedEndpoint(baseURL: string | undefined): boolean {
   return host.includes(':')
 }
 
-/** Strip newer-only keys for an older-kernel write (downgrade retry). */
-export function stripNewCompatKeys(compat: CompatSuggestion): CompatSuggestion {
-  const copy = { ...compat }
-  for (const key of NEW_COMPAT_KEYS) delete (copy as Record<string, unknown>)[key]
-  return copy
-}
-
 /** Drop catalog-withheld keys pi-ai never accepts from a profile (defensive). */
 export function sanitizeCompatForProtocol(compat: CompatSuggestion, api: string): CompatSuggestion | undefined {
   const norm = normalize(api)
@@ -1307,12 +1300,6 @@ export function sanitizeCompatForProtocol(compat: CompatSuggestion, api: string)
   delete copy['forceAdaptiveThinking']
   delete copy['supportsMaxOutputTokens']
   return Object.keys(copy).length === 0 ? undefined : (copy as CompatSuggestion)
-}
-
-/** Migrate a stored alias to the explicit budget field (explicit wins upstream). */
-export function migrateBudgetAlias(compat: Record<string, unknown>): Record<string, unknown> {
-  if (compat['thinkingTokenBudgetField'] !== undefined || compat['supportsThinkingTokenBudget'] !== true) return compat
-  return { ...compat, thinkingTokenBudgetField: 'thinking_token_budget' }
 }
 
 /** Gate a compat block against the route's real protocol. */

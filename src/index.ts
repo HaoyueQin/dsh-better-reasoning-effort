@@ -29,7 +29,7 @@ import { AUTOFILL_CONFIG_PATH, PI_AI_NS, PLUGIN_ID, PROBE_PATH } from './constan
 import { suggestEfforts } from './knowledge.js'
 import type { ReasoningEfforts } from './knowledge.js'
 import { resolveGuardEffort } from './guard.js'
-import { isRecord, routeFactsOf } from './shared.js'
+import { isRecord, looksLikeCompatRefusal, routeFactsOf } from './shared.js'
 // The knowledge-base patch builder lives in its own module: the browser half
 // builds the SAME patch from its own idle-time read, so one suggestion can
 // never produce two different documents.
@@ -433,9 +433,8 @@ export function apply(ctx: Context, config: Config = {}): void {
       try {
         await settings.update(PI_NS, fullPatch, descriptor?.revision)
       } catch (error) {
-        const msg = String(error instanceof Error ? error.message : error).toLowerCase()
-        const looksCompat = msg.includes('compat') || msg.includes('thinkingtokenbudget') || msg.includes('vllmpriority') || msg.includes('supportsmaxoutput')
-        if (!looksCompat) throw error
+        const msg = String(error instanceof Error ? error.message : error)
+        if (!looksLikeCompatRefusal(msg)) throw error
         const stripped = stripNewCompatKeysDeep(fullPatch)
         if (stripped === undefined) throw error
         await settings.update(PI_NS, stripped, settings.describe().find(entry => entry.ns === PI_NS)?.revision)

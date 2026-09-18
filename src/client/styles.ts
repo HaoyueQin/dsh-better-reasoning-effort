@@ -95,7 +95,7 @@ export const STYLES = `
   gap: 8px;
   justify-content: flex-end;
 }
-.bre-primary-button, .bre-secondary-button {
+.bre-secondary-button {
   height: 26px;
   padding: 0 12px;
   border-radius: 6px;
@@ -103,15 +103,9 @@ export const STYLES = `
   cursor: pointer;
   border: 0.5px solid var(--dsw-alias-border-l3);
 }
-.bre-primary-button {
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-  border-color: transparent;
-}
-.bre-primary-button:disabled, .bre-secondary-button:disabled { opacity: 0.5; cursor: default; }
+.bre-secondary-button:disabled { opacity: 0.5; cursor: default; }
 .bre-secondary-button { background: transparent; color: inherit; }
 .bre-effort-message { font-size: 12px; margin: 0; }
-.bre-effort-message.bre-success { color: #2e7d32; }
 .bre-effort-message.bre-error { color: #c62828; }
 .bre-effort-message.bre-info { color: var(--dsw-alias-link); }
 .bre-effort-note { font-size: 11px; margin: 0; color: var(--dsw-alias-label-tertiary); }

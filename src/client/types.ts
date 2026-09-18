@@ -1,7 +1,7 @@
 /**
  * Wire-surface types the browser half consumes: the settings Remote faces and
  * the pure seam the effort editor needs. The compilation baseline is the
- * 0.1.5-alpha.1 kernel line (a downgrade retry for older kernels' narrower
+ * 0.1.6-alpha.2 kernel line (a downgrade retry for older kernels' narrower
  * compat schema is kept as a safety net):
  * the browser talks to the generated Typert
  * `ctx.remote.settings` stub — `describe()` takes no argument, `mutate` takes
@@ -177,12 +177,6 @@ export interface SlotRegistrarFace {
 /** One effort level exactly as the owning adapter advertised it. */
 export type EffortLevelLike = ModelReasoning['efforts'][number]
 
-/** Per-model reasoning metadata the directory reports. */
-export type ModelReasoningLike = ModelReasoning
-
-/** One directory model row. */
-export type DirectoryModelLike = ModelCatalogModel
-
 /** One provider group of directory models. */
 export type DirectoryGroupLike = ModelProviderGroup
 
@@ -351,8 +345,10 @@ export interface EffortEditorApi {
    * which is what makes "Unset" mean unset instead of "keep the last choice
    * forever".
    *
-   * Not called by the editor since C2 (it reports through {@link commit}); the
-   * injector's idle and teardown passes remain the only callers.
+   * Public seam: the one-row case of the injector's batch writer, kept on the
+   * editor API for embedders and covered by the write-path tests. The editor
+   * itself reports through {@link commit} since C2, and the injector's ledgers
+   * call the batch writer directly — neither goes through this method.
    */
   writeEfforts(
     route: string,

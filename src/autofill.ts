@@ -12,7 +12,7 @@
  */
 
 import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, UNSET_MARKER } from './constants.js'
-import { isSelfHostedRelay, suggestEfforts } from './knowledge.js'
+import { isSelfHostedRelay, NEW_COMPAT_KEYS, suggestEfforts } from './knowledge.js'
 import { isRecord, routeFactsOf } from './shared.js'
 
 /** A JSON object patch. */
@@ -146,7 +146,7 @@ export function stripNewCompatKeysDeep(patch: JsonObject): JsonObject | undefine
       models: (profile['models'] as JsonObject[]).map(model => {
         if (!isRecord(model) || !isRecord(model['compat'])) return model
         const compat = { ...(model['compat'] as JsonObject) }
-        for (const key of ['thinkingTokenBudgetField', 'vllmPriority', 'supportsMaxOutputTokens'] as const) {
+        for (const key of NEW_COMPAT_KEYS) {
           if (key in compat) {
             delete compat[key]
             strippedAny = true

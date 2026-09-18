@@ -36,18 +36,6 @@ import type { EffortEditorApi } from './types.js'
 /** Thousands-grouped token counts, matching the official capacity inputs. */
 const COUNT = new Intl.NumberFormat('en-US')
 
-/** A route's profile facts (as the editor's suggestion inference reads them). */
-export interface EffortRoute {
-  /** Route key. */
-  route: string
-  /** Display name. */
-  displayName: string
-  /** Wire protocol, when configured. */
-  api?: string
-  /** Endpoint, when configured. */
-  baseURL?: string
-}
-
 /** One model row's data the editor needs. */
 export interface EffortModel {
   /** Model id (the settings key). */
