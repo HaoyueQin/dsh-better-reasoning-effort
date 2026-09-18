@@ -1,10 +1,9 @@
 /**
- * Compat tests: new-schema keys, merge writes, downgrade retry,
- * and the provider-level memory tier.
+ * Compat tests: new-schema keys, merge writes, downgrade retry.
  */
 
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   isSelfHostedEndpoint,
   sanitizeCompatForProtocol,
@@ -12,8 +11,6 @@ import {
 } from '../src/knowledge.js'
 import { buildAutofillPatch } from '../src/index.js'
 import { compatOf, createEditorApi } from '../src/client/ops.js'
-import { noteProviderLevel, providerLevel, rememberEffort, wireEffortMemory } from '../src/client/effort-memory.js'
-import { setSliderEnabled } from '../src/client/slider-pref.js'
 import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
 
 describe('isSelfHostedEndpoint', () => {
@@ -162,65 +159,5 @@ describe('writeEfforts dual-kernel', () => {
     const reply = await editor.writeEfforts('r', 'a', { high: 'high' }, { thinkingTokenBudgetField: 'thinking_token_budget', supportsMaxOutputTokens: false }, undefined)
     expect(reply).toEqual({ ok: true })
     expect(writes).toBe(2)
-  })
-})
-
-describe('effort-memory provider tier', () => {
-  const LEVELS = (...ids: string[]) => ids.map(id => ({ id, name: id }))
-  type Selection = Parameters<Parameters<typeof wireEffortMemory>[0]['select']>[0]
-  function fakeDir() {
-    const snapshot = {
-      current: { provider: 'openai', model: 'other' } as { provider: string; model: string; reasoningEffort?: string },
-      routable: true,
-      groups: [{ id: 'openai', name: 'O', models: [{ id: 'gpt-5.6', reasoning: { efforts: LEVELS('low', 'medium', 'high') } }] }],
-    }
-    const submitted: Selection[] = []
-    const directory = {
-      store: { getSnapshot: () => snapshot, subscribe: () => () => {} },
-      select: async (s: Selection): Promise<unknown> => { submitted.push(s); return undefined },
-    } as unknown as Parameters<typeof wireEffortMemory>[0]
-    const restore = wireEffortMemory(directory)
-    return { directory, submitted, snapshot, restore }
-  }
-  beforeEach(() => { window.localStorage.clear(); setSliderEnabled(true) })
-  it('round-trips provider sightings and degrades malformed documents', () => {
-    expect(providerLevel('openai', 'gpt-5.6')).toBeUndefined()
-    noteProviderLevel('openai', 'gpt-5.6', 'high')
-    expect(providerLevel('openai', 'gpt-5.6')).toBe('high')
-    noteProviderLevel('openai', 'gpt-5.6', '   ')
-    expect(providerLevel('openai', 'gpt-5.6')).toBe('high')
-  })
-  it('uses a matching provider sighting before the vendor default', async () => {
-    noteProviderLevel('openai', 'gpt-5.6', 'high')
-    const { directory, submitted, restore } = fakeDir()
-    try {
-      await directory.select({ provider: 'openai', model: 'gpt-5.6' })
-      expect(submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'high' }])
-    } finally {
-      restore()
-    }
-  })
-  it('ignores a sighting outside the advertised ladder', async () => {
-    noteProviderLevel('openai', 'gpt-5.6', 'ultra')
-    const { directory, submitted, snapshot, restore } = fakeDir()
-    try {
-      snapshot.current = { provider: 'openai', model: 'other' }
-      await directory.select({ provider: 'openai', model: 'gpt-5.6' })
-      expect(submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'medium' }])
-    } finally {
-      restore()
-    }
-  })
-  it('prefers remembered levels over provider sightings', async () => {
-    rememberEffort('openai', 'gpt-5.6', 'low')
-    noteProviderLevel('openai', 'gpt-5.6', 'high')
-    const { directory, submitted, snapshot, restore } = fakeDir()
-    try {
-      snapshot.current = { provider: 'openai', model: 'other' }
-      await directory.select({ provider: 'openai', model: 'gpt-5.6' })
-      expect(submitted).toEqual([{ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'low' }])
-    } finally {
-      restore()
-    }
   })
 })

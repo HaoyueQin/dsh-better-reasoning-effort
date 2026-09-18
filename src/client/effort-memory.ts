@@ -17,10 +17,8 @@
  * and display names are editable and never unique. Two delivery paths share
  * one fallback chain (the SESSION'S own sighting of a level the user picked
  * in it, else the per-model configured pick from the settings document, else
- * the last cross-session memory from localStorage, else the last
- * PROVIDER-NATIVE sighting from a replay when it names an advertised
- * level, else the VENDOR'S documented default from the knowledge base, else
- * the official no-effort behaviour):
+ * the last cross-session memory from localStorage, else the VENDOR'S documented
+ * default from the knowledge base, else the official no-effort behaviour):
  *   - the wrapped `select`: a model switch submitted without a level rides
  *     the remembered level in ONE atomic commit — no "Default" flash, and
  *     every surface shows the re-applied level;
@@ -89,44 +87,6 @@ export function selectRefusalMessage(outcome: unknown): string | undefined {
   const code = typeof error?.code === 'string' ? error.code : 'settings/rejected'
   const message = typeof error?.message === 'string' ? error.message : ''
   return message.length > 0 ? `${code}: ${message}` : code
-}
-
-/** Provider-native effort sightings (`providerThinkingLevel` replay): "provider/model-id" → native level. */
-const PROVIDER_LEVEL_KEY = 'dsh-better-reasoning-effort.slider.provider-levels'
-
-type ProviderLevelMemory = Record<string, string>
-
-function readProviderLevels(): ProviderLevelMemory {
-  try {
-    const raw = window.localStorage.getItem(PROVIDER_LEVEL_KEY)
-    if (raw === null) return {}
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
-    const memory: ProviderLevelMemory = {}
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (key.length > 0 && typeof value === 'string' && value.trim().length > 0) memory[key] = value
-    }
-    return memory
-  } catch {
-    return {}
-  }
-}
-
-/** Record a provider-native effort sighting (e.g. from a replay envelope). */
-export function noteProviderLevel(provider: string, model: string, level: string): void {
-  const trimmed = level.trim()
-  if (trimmed.length === 0) return
-  try {
-    const memory = readProviderLevels()
-    memory[memoryKey(provider, model)] = trimmed
-    window.localStorage.setItem(PROVIDER_LEVEL_KEY, JSON.stringify(memory))
-  } catch {
-  }
-}
-
-/** The last provider-native effort sighting for one model, if any. */
-export function providerLevel(provider: string, model: string): string | undefined {
-  return readProviderLevels()[memoryKey(provider, model)]
 }
 
 /** Per-model memory: "provider/model-id" → the last level explicitly picked for it. */
@@ -205,11 +165,10 @@ function isModelSwitch(
  * the SESSION'S own sighting (a level the user picked in this session --
  * switching away and back must not lose it), else the per-model configured
  * pick from the settings document, else the cross-session memory, else the
- * last provider-native sighting from a replay, else the vendor's documented
- * default from the knowledge base — always validated against the ADVERTISED
- * ladder, and undefined when nothing legitimate lands. Async only because
- * the configured pick reads the settings document; every other layer is
- * synchronous.
+ * vendor's documented default from the knowledge base — always validated
+ * against the ADVERTISED ladder, and undefined when nothing legitimate lands.
+ * Async only because the configured pick reads the settings document; every
+ * other layer is synchronous.
  */
 async function resolveFallback(
   snapshot: ModelDirectoryStateLike,
@@ -227,8 +186,6 @@ async function resolveFallback(
   if (configured !== undefined && supported.includes(configured)) return configured
   const memory = rememberedEffort(provider, model)
   if (memory !== undefined && supported.includes(memory)) return memory
-  const native = providerLevel(provider, model)
-  if (native !== undefined && supported.includes(native)) return native
   const fallback = suggestEfforts(model, {}).defaultEffort
   return fallback !== undefined && supported.includes(fallback) ? fallback : undefined
 }
