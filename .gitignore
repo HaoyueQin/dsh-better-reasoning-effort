@@ -35,6 +35,6 @@ research/
 docs/superpowers/
 
 # Handoff notes and any other working markdown under docs/ — internal scratch,
-# never released. The docs/ assets that do ship are images, so this rule only
-# ever catches prose.
+# never released. Only the README's own SVG assets ship (see package.json
+# `files`), so this rule only ever catches prose.
 docs/*.md
