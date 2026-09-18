@@ -4,13 +4,13 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { createEditorApi, defaultEffortOf, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
+import { baselineModelsOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
 import { modelsOf } from '../src/shared.js'
 import { AUTOFILL_MARKER } from '../src/constants.js'
-import type { RemoteApi, SettingsNamespaceView } from '../src/client/types.js'
+import type { RemoteApi, SettingsNamespaceView, SettingsRemoteApi, SettingsScopeReadLike } from '../src/client/types.js'
 
 /** A minimal settings Remote that records mutate calls. */
-function fakeApi(initial: unknown): {
+function fakeApi(initial: unknown, userSection?: unknown, baseSection?: unknown): {
   api: RemoteApi
   mutates: { ns: string; ops: { op: string; path: string[]; value?: unknown }[]; expectedRevision?: number }[]
   namespace(): SettingsNamespaceView | undefined
@@ -21,7 +21,8 @@ function fakeApi(initial: unknown): {
     ns: 'llm-pi-ai',
     schema: {},
     value: initial,
-    user: initial,
+    user: userSection ?? initial,
+    ...(baseSection === undefined ? {} : { base: baseSection }),
     revision: 7,
     applies: 'live',
     secrets: [],
@@ -34,8 +35,9 @@ function fakeApi(initial: unknown): {
       },
       async mutate(ns, ops, expectedRevision) {
         mutates.push({ ns, ops, expectedRevision })
-        // Mutate the fake value so the next read sees the write.
-        const providers = (namespace.value as { providers: Record<string, Record<string, unknown>> }).providers
+        // The write lands in the USER section; the resolved `value` keeps the
+        // fixture's shape (that divergence is exactly what these tests probe).
+        const providers = (namespace.user as { providers: Record<string, Record<string, unknown>> }).providers
         for (const op of ops) {
           if (op.op !== 'set') continue
           const [_, route, key] = op.path
@@ -61,6 +63,82 @@ const initialValue = {
   },
 }
 
+/**
+ * The official settings scope's read face, as `ctx.settingsScope` presents it:
+ * one shared mirror snapshot per bound namespace.
+ */
+function scopeSnapshot(overrides: Partial<ReturnType<SettingsScopeReadLike['getSnapshot']>> = {}): SettingsScopeReadLike {
+  return {
+    getSnapshot: () => ({
+      status: 'ready',
+      value: initialValue,
+      user: initialValue,
+      base: { providers: {} },
+      revision: 42,
+      writable: true,
+      ...overrides,
+    }),
+  }
+}
+
+/** A wire Remote that answers one namespace and counts its describe calls. */
+function wireRemote(revision = 7): { settings: SettingsRemoteApi; describes: () => number } {
+  let calls = 0
+  return {
+    settings: {
+      async describe() {
+        calls += 1
+        return {
+          ok: true,
+          value: {
+            writable: true,
+            hasDocument: true,
+            namespaces: [{
+              ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue,
+              revision, applies: 'live' as const, secrets: [],
+            } as unknown as SettingsNamespaceView],
+          },
+        }
+      },
+      async mutate() { throw new Error('no write is expected in these tests') },
+    },
+    describes: () => calls,
+  }
+}
+
+describe('describeNamespace (official scope snapshot vs the wire)', () => {
+  it('reads the join from the scope snapshot without a wire round trip', async () => {
+    const wire = wireRemote()
+    const join = await describeNamespace({ settings: wire.settings, scope: scopeSnapshot() })
+
+    expect(wire.describes()).toBe(0)
+    expect(join.namespace?.revision).toBe(42)
+    expect(join.writable).toBe(true)
+    // The fields this half actually reads come through verbatim.
+    expect(providersOf(join.namespace)).toEqual(initialValue.providers)
+    expect(baselineModelsOf(join.namespace, 'aliyun')).toEqual(initialValue.providers.aliyun.models)
+  })
+
+  it('keeps the wire path while the snapshot carries no accepted section', async () => {
+    const wire = wireRemote(9)
+    const join = await describeNamespace({
+      settings: wire.settings,
+      scope: scopeSnapshot({ status: 'loading', value: undefined, revision: undefined }),
+    })
+
+    expect(wire.describes()).toBe(1)
+    expect(join.namespace?.revision).toBe(9)
+  })
+
+  it('skips the snapshot for a fresh read, which is what a conflict retry needs', async () => {
+    const wire = wireRemote(11)
+    const join = await describeNamespace({ settings: wire.settings, scope: scopeSnapshot() }, { fresh: true })
+
+    expect(wire.describes()).toBe(1)
+    expect(join.namespace?.revision).toBe(11)
+  })
+})
+
 describe('providersOf / modelsOf / effortsOf', () => {
   const ns = {
     ns: 'llm-pi-ai', schema: {}, value: initialValue, user: initialValue, revision: 1, applies: 'live' as const, secrets: [],
@@ -85,6 +163,43 @@ describe('providersOf / modelsOf / effortsOf', () => {
 })
 
 describe('createEditorApi', () => {
+  it('holds the write while an editor owns the document', async () => {
+    // The official card freezes its own revision baseline, so a write from
+    // this seam makes the user's very next save in that card fail with
+    // `settings/conflict`. While the editor owns the document the write is
+    // therefore queued verbatim, for the injector to replay once it is gone.
+    const { api, mutates } = fakeApi(initialValue)
+    const held: { route: string; modelId: string; write: unknown }[] = []
+    const editor = createEditorApi(api, undefined, undefined, (route, modelId, write) => {
+      held.push({ route, modelId, write })
+    })
+    const reply = await editor.writeEfforts(
+      'aliyun', 'qwen-max', { high: 'high' }, { thinkingFormat: 'qwen' }, ['text'], ['vllmPriority'], 'high',
+    )
+    expect(reply).toEqual({ ok: true, staged: true })
+    expect(mutates).toHaveLength(0)
+    expect(held).toEqual([{
+      route: 'aliyun',
+      modelId: 'qwen-max',
+      write: {
+        efforts: { high: 'high' },
+        compat: { thinkingFormat: 'qwen' },
+        input: ['text'],
+        clearCompatKeys: ['vllmPriority'],
+        defaultEffort: 'high',
+      },
+    }])
+  })
+
+  it('commits straight through when no holder owns the document', async () => {
+    // The replay path itself: the injector builds a holder-less seam, so the
+    // very same call has to reach settings then.
+    const { api, mutates } = fakeApi(initialValue)
+    const replay = createEditorApi(api)
+    expect(await replay.writeEfforts('aliyun', 'qwen-max', { high: 'high' })).toEqual({ ok: true })
+    expect(mutates).toHaveLength(1)
+  })
+
   it('suggests from the knowledge base for a known model', async () => {
     const { api } = fakeApi(initialValue)
     const editor = createEditorApi(api)
@@ -224,6 +339,59 @@ describe('createEditorApi', () => {
     // The mutated value is visible to the next read.
     const after = await editor.suggest('aliyun', 'qwen-max')
     expect(after.ok).toBe(true)
+  })
+
+  it('rebuilds the models array from the USER layer, never the resolved value', async () => {
+    // The resolved view carries schema defaults the user never set (`input: []`,
+    // an empty `compat`, the route-level defaults). A write rebuilt from it
+    // materializes those into the stored document, so the baseline has to be
+    // the raw user section -- the same choice the host autofill makes.
+    const user = {
+      providers: { aliyun: { api: 'openai-completions', models: [{ id: 'qwen-max', contextWindow: 131_072 }] } },
+    }
+    const resolved = {
+      providers: {
+        aliyun: {
+          api: 'openai-completions',
+          models: [{ id: 'qwen-max', contextWindow: 131_072, input: [], compat: { chatTemplateKwargs: {} } }],
+          modelOverrides: {},
+          defaultContextWindow: 262_144,
+          defaultInput: ['text'],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(resolved, user)
+    const editor = createEditorApi(api)
+    expect(await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0]).toEqual({ id: 'qwen-max', contextWindow: 131_072, reasoningEfforts: { high: 'high' } })
+    expect('input' in models[0]).toBe(false)
+    expect('compat' in models[0]).toBe(false)
+  })
+
+  it('falls back to the composition base when the user layer declares no models', async () => {
+    // The official card's inheritance rule: a row the user layer does not own
+    // is read from the base layer, and touching it is what materializes it.
+    const user = { providers: { aliyun: { api: 'openai-completions' } } }
+    const resolved = {
+      providers: { aliyun: { api: 'openai-completions', models: [{ id: 'qwen-max', name: 'Qwen Max', input: [] }] } },
+    }
+    const base = { providers: { aliyun: { models: [{ id: 'qwen-max', name: 'Qwen Max' }] } } }
+    const { api, mutates } = fakeApi(resolved, user, base)
+    const editor = createEditorApi(api)
+    expect(await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' })).toEqual({ ok: true })
+    const models = mutates[0].ops[0].value as Record<string, unknown>[]
+    expect(models[0]).toEqual({ id: 'qwen-max', name: 'Qwen Max', reasoningEfforts: { high: 'high' } })
+  })
+
+  it('refuses a model neither the user layer nor the base declares', async () => {
+    const user = { providers: { aliyun: { api: 'openai-completions' } } }
+    const resolved = { providers: { aliyun: { api: 'openai-completions', models: [] } } }
+    const { api, mutates } = fakeApi(resolved, user)
+    const editor = createEditorApi(api)
+    expect(await editor.writeEfforts('aliyun', 'qwen-max', { high: 'high' }))
+      .toEqual({ ok: false, error: 'model-not-found' })
+    expect(mutates).toHaveLength(0)
   })
 
   it('writes, clears, and leaves the per-model default-effort pick', async () => {

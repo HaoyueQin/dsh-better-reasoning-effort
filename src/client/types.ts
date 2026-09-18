@@ -54,9 +54,62 @@ export interface SettingsRemoteApi {
   ): Promise<SettingsRemoteResult<SettingsNamespaceView>>
 }
 
+/**
+ * `ctx.get('settingsScope')`, as the kernel's `ui-settings` plugin registers
+ * it: a `SettingsScopeBinder`, NOT a scope. The binder only mints scopes via
+ * {@link bind} (and offers a cross-namespace `describe()`); `getSnapshot()`
+ * lives on the scope `bind` returns. Treating the binder as a scope makes
+ * every read throw, so the plugin must bind its own namespace first.
+ */
+export interface SettingsScopeBinderLike {
+  /**
+   * Bind one namespace scope on the CALLING fiber's lifecycle.
+   * @param spec - namespace identity (`{ namespace }`).
+   * @returns the bound scope whose snapshot this half reads.
+   */
+  bind(spec: { namespace: string }): SettingsScopeReadLike
+}
+
+/**
+ * The READ face of one BOUND official settings scope (the object
+ * `SettingsScopeBinder.bind({ namespace })` returns). One shared describe
+ * mirror backs every namespace scope in the browser, so reading through the
+ * snapshot costs no wire round trip and always reports the revision the
+ * settings surface itself is working from.
+ *
+ * Deliberately read-only: the scope's `mutate` settles `void`, which makes a
+ * refused write indistinguishable from a committed one. The plugin's queues
+ * must keep a failed intent for the next pass, so writes still go through
+ * `settings.mutate`, where the refusal code is observable.
+ */
+export interface SettingsScopeReadLike {
+  getSnapshot(): {
+    /** `ready` once a section has been accepted; other states carry no value. */
+    status: 'loading' | 'ready' | 'unavailable'
+    /** Schema-resolved section of the bound namespace. */
+    value?: unknown
+    /** Composition base the section resolves over. */
+    base?: unknown
+    /** Raw user layer as stored. */
+    user?: unknown
+    /** Revision fencing the next write. */
+    revision?: number
+    /** Whether the settings document accepts writes. */
+    writable?: boolean
+  }
+}
+
 /** The Remote faces the browser half consumes. */
 export interface RemoteApi {
   settings: SettingsRemoteApi
+  /**
+   * The BOUND official settings scope (already `bind({ namespace })`-ed), when
+   * the shell provides one. Optional: an older kernel without `settingsScope`
+   * keeps the wire-describe path, and the plugin never declares the service in
+   * its `inject` (a hard dependency would refuse to activate the whole browser
+   * half on that kernel).
+   */
+  scope?: SettingsScopeReadLike
 }
 
 export type { SettingsNamespaceView, SettingsPathOpView }
@@ -145,9 +198,11 @@ export type ModelDirectoryLike = ModelDirectory
 // ---- (rest unchanged) ----
 
 /**
- * One result of writing a model's declaration.
+ * One result of writing a model's declaration. `staged` reports that the
+ * write was queued rather than committed: the editor holds the document while
+ * the official card is open, so the change lands once the user stops editing.
  */
-export type WriteEffortsReply = { ok: true } | { ok: false; error: string }
+export type WriteEffortsReply = { ok: true; staged?: boolean } | { ok: false; error: string }
 
 /**
  * One result of asking for a suggestion for one model. The effort ladder and
@@ -213,6 +268,47 @@ export type EffortWriteIntent = ReasoningEfforts | false | undefined | 'keep'
  */
 export type DefaultEffortIntent = string | null | undefined
 
+/**
+ * The complete write one editor asked for while it held the document. The
+ * injector replays it verbatim once the user stops editing: it is the user's
+ * own declared intent, so no suggestion arbitration applies to it.
+ */
+export interface HeldWrite {
+  /** The ladder part exactly as the editor computed it. */
+  efforts: EffortWriteIntent
+  /** The compat block to write alongside a ladder declaration. */
+  compat?: CompatSuggestion
+  /** The modality part, when this edit made one. */
+  input?: InputIntent
+  /** Compat fields this edit owns and left empty (deleted on the replay). */
+  clearCompatKeys?: readonly string[]
+  /** The per-model default-effort pick, when this edit made one. */
+  defaultEffort?: DefaultEffortIntent
+}
+
+/**
+ * The complete set of edits one editor holds for a row, as it hands them to the
+ * injector after every change.
+ *
+ * Since C2 the editor owns no commit action of its own: a change is reported
+ * the moment it happens, and the injector decides where the intent lands — the
+ * staged ledger while the route is unsaved, the held-write ledger while the
+ * official card is open. The official card's own Save is what commits them
+ * (issue #7), so the editor never branches on `staged` for its write path.
+ */
+export interface PendingWrite {
+  /** The ladder part exactly as the editor computed it. */
+  efforts: EffortWriteIntent
+  /** The compat block to write alongside a ladder declaration. */
+  compat?: CompatSuggestion
+  /** The modality part, when this edit made one. */
+  input?: InputIntent
+  /** Compat fields this edit owns and left empty (deleted when it lands). */
+  clearCompatKeys?: readonly string[]
+  /** The per-model default-effort pick, when this edit made one. */
+  defaultEffort?: DefaultEffortIntent
+}
+
 /** The write seam the effort editor needs. */
 export interface EffortEditorApi {
   /** Ask for a knowledge-base / protocol suggestion for one model. */
@@ -222,6 +318,26 @@ export interface EffortEditorApi {
     name?: string,
     stagedFacts?: StagedRouteFacts,
   ): Promise<SuggestReply>
+  /**
+   * Report the row's complete pending edit. The injector routes it: a route the
+   * settings document does not hold yet goes to the staged ledger, anything
+   * else to the held-write ledger that the official card's Save commits.
+   *
+   * Synchronous and side-effect-free from the editor's point of view: it must
+   * not await a wire write, because the change has to register before the user
+   * can reach the official Save button.
+   *
+   * The row is named explicitly rather than captured when the seam was built:
+   * one seam instance is mounted per DOM row, and the row's identity is what
+   * decides the ledger, so the call carries it instead of trusting a closure.
+   */
+  commit(route: string, modelId: string, write: PendingWrite): void
+  /**
+   * Withdraw everything this editor reported for its row (the editor's own
+   * Reset). Without it, a Reset followed by the official Save would still write
+   * the discarded edits — the ledger outlives the React state.
+   */
+  withdraw(route: string, modelId: string): void
   /**
    * Write one model's reasoningEfforts (unset, disabled, a dict -- or 'keep'
    * to leave it completely untouched) and, when an input intent is supplied,
@@ -234,6 +350,9 @@ export interface EffortEditorApi {
    * the editor does not show is never dropped), while a listed one is deleted,
    * which is what makes "Unset" mean unset instead of "keep the last choice
    * forever".
+   *
+   * Not called by the editor since C2 (it reports through {@link commit}); the
+   * injector's idle and teardown passes remain the only callers.
    */
   writeEfforts(
     route: string,

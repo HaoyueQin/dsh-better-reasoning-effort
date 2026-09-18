@@ -17,8 +17,11 @@ import { detectModelSignal, type EndpointSignal } from '../detection.js'
 import { isRecord, routeFactsOf } from '../shared.js'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
+  DefaultEffortIntent,
   EffortEditorApi,
   EffortWriteIntent,
+  HeldWrite,
+  InputIntent,
   RemoteApi,
   SettingsJoin,
   SettingsNamespaceView,
@@ -33,6 +36,47 @@ export function providersOf(namespace: SettingsNamespaceView | undefined): Recor
     Object.entries(providers as Record<string, unknown>).filter(([, profile]) =>
       typeof profile === 'object' && profile !== null && !Array.isArray(profile)),
   ) as Record<string, Record<string, unknown>>
+}
+
+/** The providers dict of one settings layer (user or base), as a record. */
+function providersOfLayer(layer: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(layer)) return undefined
+  const providers = layer['providers']
+  return isRecord(providers) ? providers : undefined
+}
+
+/**
+ * The `models` value a write must be based on, read from the RAW layers: the
+ * user section when it declares one, else the composition base. That is the
+ * official card's own inheritance rule (`ProviderEditor` seeds its draft from
+ * `namespace.user` and its fallback from `namespace.base`).
+ *
+ * Never the resolved `value`: rebuilding from it materializes every schema
+ * default -- `input: []`, an empty `compat`, an absent `models` -- into the
+ * stored document, so the user's file grows keys they never chose and a later
+ * schema change can no longer reach the row.
+ * @param namespace - the namespace view carrying the layers.
+ * @param route - the provider route key.
+ * @returns the raw `models` value, or undefined when neither layer declares one.
+ */
+export function baselineModelsOf(namespace: SettingsNamespaceView | undefined, route: string): unknown {
+  for (const layer of [namespace?.user, namespace?.base]) {
+    const profile = providersOfLayer(layer)?.[route]
+    if (isRecord(profile) && profile['models'] !== undefined) return profile['models']
+  }
+  return undefined
+}
+
+/**
+ * The RAW USER layer's providers dict, or undefined when the section declares
+ * none. The browser half's running auto-fill builds its patch from this --
+ * never from the resolved `value`, which would materialize schema defaults
+ * into the stored document (the same rule the host's boot pass follows).
+ * @param namespace - the namespace view.
+ * @returns the user section's providers dict, when it has one.
+ */
+export function userProvidersOf(namespace: SettingsNamespaceView | undefined): Record<string, unknown> | undefined {
+  return providersOfLayer(namespace?.user)
 }
 
 /** The reasoningEfforts of one model in a route's models. */
@@ -123,9 +167,34 @@ export function createEditorApi(
     modelId: string,
     efforts: EffortWriteIntent,
     compat?: CompatSuggestion,
-    input?: InputModalities,
+    input?: InputModalities | null,
     defaultEffort?: string | null,
   ) => void,
+  /**
+   * Present only on a seam an ON-SCREEN editor drives: while the official card
+   * is open its own frozen revision baseline makes any write here break the
+   * user's next save in that card, so the seam queues the full intent instead
+   * of committing it. The injector replays it once the card is gone.
+   */
+  hold?: (
+    route: string,
+    modelId: string,
+    write: HeldWrite,
+  ) => void,
+  /**
+   * Present only on the editor's own seam: forget everything this row reported.
+   * The editor's Reset calls it, because the ledger it wrote to outlives the
+   * React state — without this a Reset followed by the official Save would
+   * still write the discarded edits.
+   */
+  withdraw?: (route: string, modelId: string) => void,
+  /**
+   * Whether this row's route is still unsaved (the create card's draft route,
+   * or a typed-but-unsaved row). The injector knows this per row, so it is told
+   * rather than re-derived here: deriving it would cost a wire describe on
+   * every keystroke the editor reports.
+   */
+  stagedOf?: () => boolean,
 ): EffortEditorApi {
   return {
     async suggest(route, modelId, name, stagedFacts) {
@@ -167,145 +236,332 @@ export function createEditorApi(
         },
       }
     },
+    commit(route, modelId, write) {
+      // The editor reports the row's whole pending edit, and whether the route
+      // exists in the document yet decides the ledger: an unsaved route (the
+      // create card, or a typed-but-unsaved row) stages, a saved one queues
+      // until the official card's Save. Both are synchronous and memory-only:
+      // the change must register before the user can reach that Save button.
+      if (stagedOf?.() === true) {
+        stage?.(route, modelId, write.efforts, write.compat, write.input, write.defaultEffort)
+        return
+      }
+      hold?.(route, modelId, {
+        efforts: write.efforts,
+        ...(write.compat === undefined ? {} : { compat: write.compat }),
+        ...(write.input === undefined ? {} : { input: write.input }),
+        ...(write.clearCompatKeys === undefined ? {} : { clearCompatKeys: write.clearCompatKeys }),
+        ...(write.defaultEffort === undefined ? {} : { defaultEffort: write.defaultEffort }),
+      })
+    },
+    withdraw(route, modelId) {
+      withdraw?.(route, modelId)
+    },
     stageEfforts(route, modelId, efforts, compat, input, defaultEffort) {
       stage?.(route, modelId, efforts, compat, input, defaultEffort)
     },
     async writeEfforts(route, modelId, rawEfforts, compat, input, clearCompatKeys, defaultEffort) {
+      // While an editor owns the document (the official editing card is open)
+      // commit nothing: that card froze its own revision baseline, so any
+      // write from here makes the user's NEXT save in it fail with
+      // `settings/conflict` -- which reads exactly like "I configured it,
+      // saved it, and it is gone". Queue the full intent verbatim instead; the
+      // injector replays it once the card is gone. A replay seam passes no
+      // holder, so the same call commits then.
+      if (hold !== undefined) {
+        hold(route, modelId, {
+          efforts: rawEfforts,
+          ...(compat === undefined ? {} : { compat }),
+          ...(input === undefined ? {} : { input }),
+          ...(clearCompatKeys === undefined ? {} : { clearCompatKeys }),
+          ...(defaultEffort === undefined ? {} : { defaultEffort }),
+        })
+        return { ok: true, staged: true }
+      }
       // 'keep' means the ladder part of the edit is a no-op: a modality-only
-      // apply must never fall through to the unset branch (which would stamp
+      // edit must never fall through to the unset branch (which would stamp
       // the durable marker onto a never-declared ladder and silence host
       // auto-fill for it forever).
-      const efforts = rawEfforts === 'keep' ? undefined : rawEfforts;
-      const touchEfforts = rawEfforts !== 'keep';
-      // Retry once on a revision conflict: a concurrent writer (this plugin's
-      // own autofill, or the official page) moved the namespace between our
-      // describe and mutate. Re-reading and retrying with the fresh revision
-      // is the same recovery the official settings form uses; anything else
-      // surfaces as-is.
-      // Downgrade once for older kernels: a `settings/rejected` refusal naming
-      // an unknown compat key means the kernel predates the newer compat schema.
-      // Stripping the newer-only keys and retrying keeps one artifact
-      // writable across kernel lines with no version sniffing.
-      let compatForWrite = compat;
-      let downgraded = false;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const join = await describe()
-          if (join.namespace === undefined) return { ok: false, error: 'no-namespace' }
-          const providers = providersOf(join.namespace)
-          // The write rebuilds the models array verbatim; a row this code
-          // cannot represent must refuse the write rather than silently
-          // drop the row.
-          const rawModels = providers[route]?.['models']
-          if (!Array.isArray(rawModels)) return { ok: false, error: 'model-not-found' }
-          if (!rawModels.every(isRecord)) return { ok: false, error: 'invalid-models' }
-          const models = rawModels as Record<string, unknown>[]
-          const index = models.findIndex(model => model['id'] === modelId)
-          if (index < 0) return { ok: false, error: 'model-not-found' }
-          const nextModels = models.map((model, at) => {
-            if (at !== index) return model
-            const copy = { ...model }
-            if (!touchEfforts) {
-              // Ladder untouched by this edit: no delete, no marker.
-            } else if (efforts === undefined) {
-              // Unset the declaration durably: the marker records the absence
-              // as a decision, so the host's auto-fill never reads it back as
-              // a gap to fill -- not now, and not after the next restart.
-              delete copy['reasoningEfforts']
-              copy[UNSET_MARKER] = true
-            } else {
-              // A real declaration supersedes any earlier unset marker — and
-              // retires the autofill provenance marker: these bytes are now a
-              // user decision, so a later staging must not be allowed to
-              // override them as if they were still the knowledge base's
-              // suggestion (they may be byte-identical to it on purpose).
-              delete copy[UNSET_MARKER]
-              delete copy[AUTOFILL_MARKER]
-              if (efforts === false) {
-                copy['reasoningEfforts'] = false
-              } else {
-                copy['reasoningEfforts'] = { ...efforts }
-                // The compat belongs to the declaration: merge it over the
-                // stored block so hand-tuned keys (incl. newer-only fields
-                // the suggestion never names) survive a declaration edit.
-                // Only the keys THIS edit owns and left empty are deleted --
-                // clearing the UI's own picker has to mean unset, while a
-                // field the editor never showed stays untouched.
-                const stored = isRecord(model['compat']) ? (model['compat'] as Record<string, unknown>) : {}
-                const merged: Record<string, unknown> = { ...stored, ...(compatForWrite ?? {}) }
-                for (const key of clearCompatKeys ?? []) delete merged[key]
-                if (Object.keys(stored).length > 0 || Object.keys(merged).length > 0) {
-                  if (Object.keys(merged).length === 0) delete copy['compat']
-                  else copy['compat'] = merged
-                }
-              }
-            }
-            // The modality part rides the same mutate. An omitted intent
-            // touches nothing (a staged flush must not strip declarations it
-            // never carried); null unsets durably through the marker.
-            if (input !== undefined) {
-              if (input === null) {
-                delete copy['input']
-                copy[INPUT_UNSET_MARKER] = true
-              } else {
-                delete copy[INPUT_UNSET_MARKER]
-                copy['input'] = [...input]
-              }
-            }
-            // The per-model default-effort pick rides the same mutate:
-            // omitted = untouched (a ladder-only edit never clears the pick),
-            // null = cleared (back to the memory chain), a string = the pick.
-            if (defaultEffort !== undefined) {
-              if (defaultEffort === null) delete copy[DEFAULT_EFFORT_FIELD]
-              else copy[DEFAULT_EFFORT_FIELD] = defaultEffort
-            }
-            return copy
-          })
-          const response = await api.settings.mutate(
-            PI_AI_NS,
-            // The rebuilt models array is JSON-shaped by construction (a
-            // settings document is JSON); the value is JsonValue on this
-            // baseline, so the set op asserts once instead of rebuilding the
-            // row's type.
-            [{ op: 'set', path: ['providers', route, 'models'], value: nextModels } as unknown as SettingsPathOpView],
-            join.namespace.revision,
-          )
-          if (!response.ok) {
-            // The stable wire code, not the message prose: 'settings/conflict'
-            // (the Typert refusal code) means a concurrent writer moved
-            // the namespace between our describe and mutate. Re-reading and
-            // retrying with the fresh revision is the same recovery the
-            // official settings form uses; anything else surfaces as-is.
-            if (attempt === 0 && response.error.code === 'settings/conflict') continue
-            const msg = response.error.message.toLowerCase()
-            const looksCompat = response.error.code === 'settings/rejected' && (msg.includes('compat') || msg.includes('thinkingtokenbudget') || msg.includes('vllmpriority') || msg.includes('supportsmaxoutput'))
-            if (!downgraded && looksCompat && compatForWrite !== undefined) {
-              const stripped: Record<string, unknown> = { ...(compatForWrite as Record<string, unknown>) }
-              for (const key of ['thinkingTokenBudgetField', 'vllmPriority', 'supportsMaxOutputTokens'] as const) delete stripped[key]
-              compatForWrite = (Object.keys(stripped).length === 0 ? undefined : stripped) as typeof compat
-              downgraded = true
-              continue
-            }
-            return { ok: false, error: response.error.message }
-          }
-          return { ok: true }
-        } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : String(error) }
-        }
-      }
-      return { ok: false, error: 'conflict' }
+      const results = await writeModelRows(api, route, [{
+        modelId,
+        efforts: rawEfforts,
+        ...(compat === undefined ? {} : { compat }),
+        ...(input === undefined ? {} : { input }),
+        ...(clearCompatKeys === undefined ? {} : { clearCompatKeys }),
+        ...(defaultEffort === undefined ? {} : { defaultEffort }),
+      }], describe)
+      const result = results[0] ?? { ok: false, error: 'no-result' }
+      if (result.ok) return { ok: true }
+      // A vanished row is reported by code so the callers can drop it; the
+      // wire itself says 'model-not-found', which is what this error means.
+      if (result.modelNotFound === true) return { ok: false, error: 'model-not-found' }
+      return { ok: false, error: result.error ?? 'conflict' }
     },
   }
 }
 
 /**
- * Describe the pi-ai namespace plus writability through the settings Remote.
- * The single describe seam for the browser half: both the injector's scan
- * join and the editor's write seam read through it.
+ * One row's intent inside a batch write. `touch` distinguishes "this edit never
+ * carried the ladder" (leave it alone) from "unset it durably"; a modality
+ * `undefined` likewise leaves the stored declaration untouched.
  */
-export async function describeNamespace(api: RemoteApi): Promise<SettingsJoin> {
+export interface RowIntent {
+  modelId: string
+  /** The ladder part; 'keep' means this edit never carried it. */
+  efforts: EffortWriteIntent
+  compat?: CompatSuggestion
+  input?: InputIntent
+  clearCompatKeys?: readonly string[]
+  defaultEffort?: DefaultEffortIntent
+}
+
+/** The outcome of one batch write, as the caller's ledgers need it. */
+export interface RowWriteResult {
+  ok: boolean
+  /**
+   * True when the failure is "this row is not (or no longer) in the document":
+   * the caller drops the intent instead of retrying it forever.
+   */
+  modelNotFound?: boolean
+  /**
+   * True when the write was abandoned before reaching the wire because an
+   * official card opened during the read. Not a failure: the caller keeps the
+   * intent and does not back off.
+   */
+  aborted?: boolean
+  /** The refusal message, when `ok` is false and it is a real failure. */
+  error?: string
+}
+
+/**
+ * Apply every row of ONE route in a single rebuild + single mutate.
+ *
+ * This is the write path's core: `writeEfforts` is the one-row case of it, and
+ * the injector's ledgers call it with every row they hold for that route. One
+ * describe and one `mutate` per route rather than per row -- the official
+ * document is a whole-array set, so batching costs no extra semantics.
+ *
+ * Failing rows are the caller's business: this returns one result per row, all
+ * derived from the same response, so a route that refuses keeps every one of
+ * its intents for the next pass (never a partial landing).
+ * @param api - the settings Remote.
+ * @param route - the provider route whose models array to rebuild.
+ * @param rows - the intents to apply, in order.
+ * @param describe - the read seam; a conflict retry forces the wire read.
+ * @param abort - checked after the read and before the mutate: an official
+ * card may have opened while we were reading, and writing then would land
+ * behind that card's frozen revision baseline (issue #7). An aborted write
+ * returns `{ ok: false, aborted: true }` for every row and consumes nothing.
+ * @returns one result per row, in the same order.
+ */
+export async function writeModelRows(
+  api: RemoteApi,
+  route: string,
+  rows: readonly RowIntent[],
+  describe: () => Promise<SettingsJoin> = () => describeNamespace(api),
+  abort?: () => boolean,
+): Promise<RowWriteResult[]> {
+  if (rows.length === 0) return []
+  // Retry once on a revision conflict: a concurrent writer (this plugin's own
+  // autofill, or the official page) moved the namespace between our describe
+  // and mutate. Re-reading and retrying with the fresh revision is the same
+  // recovery the official settings form uses.
+  // Downgrade once for older kernels: a `settings/rejected` refusal naming an
+  // unknown compat key means the kernel predates the newer compat schema.
+  // Stripping the newer-only keys and retrying keeps one artifact writable
+  // across kernel lines with no version sniffing.
+  let downgraded = false
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      // Attempt 0 reads through the injected seam (the injector seeds it with
+      // the scan's join). A conflict retry MUST go to the wire: the scope
+      // snapshot behind that seam folds a fresh view in asynchronously, so it
+      // would hand back the very revision the write just failed against.
+      const join = attempt === 0 ? await describe() : await describeNamespace(api, { fresh: true })
+      if (join.namespace === undefined) return rows.map(() => ({ ok: false, error: 'no-namespace' }))
+      // The write rebuilds the models array verbatim, from the RAW layers (the
+      // user section, else the composition base) -- never the resolved value.
+      // A row this code cannot represent must refuse the write rather than
+      // silently drop the row.
+      const rawModels = baselineModelsOf(join.namespace, route)
+      if (!Array.isArray(rawModels)) return rows.map(() => ({ ok: false, modelNotFound: true }))
+      if (!rawModels.every(isRecord)) return rows.map(() => ({ ok: false, error: 'invalid-models' }))
+      const models = rawModels as Record<string, unknown>[]
+      // Every row this write intends must still exist: a vanished row is
+      // dropped by the caller, and mixing it into a rebuild would rewrite the
+      // array around a gap.
+      const nextModels = models.map(model => model)
+      const missing: string[] = []
+      for (const row of rows) {
+        const index = nextModels.findIndex(model => model['id'] === row.modelId)
+        if (index < 0) {
+          missing.push(row.modelId)
+          continue
+        }
+        nextModels[index] = mergeRowIntent(nextModels[index]!, row, downgraded ? undefined : row.compat)
+      }
+      if (missing.length > 0) {
+        return rows.map(row => (missing.includes(row.modelId)
+          ? { ok: false, modelNotFound: true }
+          : { ok: false, error: 'model-not-found' }))
+      }
+      // The card fence, re-checked at the last possible moment: a card that
+      // opened during the read must not have this write land behind its frozen
+      // baseline. Aborting consumes nothing -- every row stays for a retry.
+      if (abort?.() === true) return rows.map(() => ({ ok: false, aborted: true }))
+      const response = await api.settings.mutate(
+        PI_AI_NS,
+        // The rebuilt models array is JSON-shaped by construction (a settings
+        // document is JSON); the value is JsonValue on this baseline, so the
+        // set op asserts once instead of rebuilding the row's type.
+        [{ op: 'set', path: ['providers', route, 'models'], value: nextModels } as unknown as SettingsPathOpView],
+        join.namespace.revision,
+      )
+      if (!response.ok) {
+        // The stable wire code, not the message prose: 'settings/conflict'
+        // (the Typert refusal code) means a concurrent writer moved the
+        // namespace between our describe and mutate.
+        if (attempt === 0 && response.error.code === 'settings/conflict') continue
+        const msg = response.error.message.toLowerCase()
+        const looksCompat = response.error.code === 'settings/rejected' && (msg.includes('compat') || msg.includes('thinkingtokenbudget') || msg.includes('vllmpriority') || msg.includes('supportsmaxoutput'))
+        if (!downgraded && looksCompat && rows.some(row => row.compat !== undefined)) {
+          downgraded = true
+          continue
+        }
+        return rows.map(() => ({ ok: false, error: response.error.message }))
+      }
+      return rows.map(() => ({ ok: true }))
+    } catch (error) {
+      return rows.map(() => ({ ok: false, error: error instanceof Error ? error.message : String(error) }))
+    }
+  }
+  return rows.map(() => ({ ok: false, error: 'conflict' }))
+}
+
+/**
+ * Rewrite ONE model row in place: the ladder, its compat block, the modality
+ * declaration, and the default-effort pick.
+ *
+ * Split out of the write loop so a batch shares exactly this row surgery --
+ * including the provenance rules below, which a batch must not be able to
+ * drift away from.
+ * @param model - the row as the document holds it.
+ * @param row - the intent to apply.
+ * @param compat - the compat block to write, or undefined to leave it.
+ * @returns the rebuilt row.
+ */
+function mergeRowIntent(
+  model: Record<string, unknown>,
+  row: RowIntent,
+  compat: CompatSuggestion | undefined,
+): Record<string, unknown> {
+  const copy = { ...model }
+  // 'keep' means the ladder part of the edit is a no-op: a modality-only edit
+  // must never fall through to the unset branch (which would stamp the durable
+  // marker onto a never-declared ladder and silence host auto-fill forever).
+  const touch = row.efforts !== 'keep'
+  const efforts = row.efforts === 'keep' ? undefined : row.efforts
+  if (!touch) {
+    // Ladder untouched by this edit: no delete, no marker.
+  } else if (efforts === undefined) {
+    // Unset the declaration durably: the marker records the absence as a
+    // decision, so the host's auto-fill never reads it back as a gap to fill --
+    // not now, and not after the next restart.
+    delete copy['reasoningEfforts']
+    copy[UNSET_MARKER] = true
+  } else {
+    // A real declaration supersedes any earlier unset marker -- and retires the
+    // autofill provenance marker: these bytes are now a user decision, so a
+    // later staging must not be allowed to override them as if they were still
+    // the knowledge base's suggestion (they may be byte-identical on purpose).
+    delete copy[UNSET_MARKER]
+    delete copy[AUTOFILL_MARKER]
+    if (efforts === false) {
+      copy['reasoningEfforts'] = false
+    } else {
+      copy['reasoningEfforts'] = { ...efforts }
+      // The compat belongs to the declaration: merge it over the stored block so
+      // hand-tuned keys (incl. newer-only fields the suggestion never names)
+      // survive a declaration edit. Only the keys THIS edit owns and left empty
+      // are deleted -- clearing the UI's own picker has to mean unset, while a
+      // field the editor never showed stays untouched.
+      const stored = isRecord(model['compat']) ? (model['compat'] as Record<string, unknown>) : {}
+      const merged: Record<string, unknown> = { ...stored, ...(compat ?? {}) }
+      for (const key of row.clearCompatKeys ?? []) delete merged[key]
+      if (Object.keys(stored).length > 0 || Object.keys(merged).length > 0) {
+        if (Object.keys(merged).length === 0) delete copy['compat']
+        else copy['compat'] = merged
+      }
+    }
+  }
+  // The modality part rides the same mutate. An omitted intent touches nothing
+  // (a staged flush must not strip declarations it never carried); null unsets
+  // durably through the marker.
+  if (row.input !== undefined) {
+    if (row.input === null) {
+      delete copy['input']
+      copy[INPUT_UNSET_MARKER] = true
+    } else {
+      delete copy[INPUT_UNSET_MARKER]
+      copy['input'] = [...row.input]
+    }
+  }
+  // The per-model default-effort pick rides the same mutate: omitted =
+  // untouched (a ladder-only edit never clears the pick), null = cleared (back
+  // to the memory chain), a string = the pick.
+  if (row.defaultEffort !== undefined) {
+    if (row.defaultEffort === null) delete copy[DEFAULT_EFFORT_FIELD]
+    else copy[DEFAULT_EFFORT_FIELD] = row.defaultEffort
+  }
+  return copy
+}
+
+/**
+ * Describe the pi-ai namespace plus writability.
+ *
+ * Prefers the official settings scope's snapshot when the shell provides one:
+ * the shared describe mirror already carries this namespace's resolved section
+ * together with its RAW layers (user / base) and the revision the settings
+ * surface itself fences writes with, so a scan costs no wire round trip.
+ * `fresh: true` skips the snapshot and reads the wire -- what a conflict retry
+ * needs, because the mirror folds a fresh view in asynchronously and would
+ * otherwise hand back the very revision the write just failed against.
+ * @param api - the settings Remote (plus the optional scope).
+ * @param options - `fresh` forces the wire read.
+ */
+export async function describeNamespace(api: RemoteApi, options: { fresh?: boolean } = {}): Promise<SettingsJoin> {
+  const viaScope = options.fresh === true ? undefined : joinFromScope(api)
+  if (viaScope !== undefined) return viaScope
   const response = await api.settings.describe()
   if (!response.ok) return { namespace: undefined, writable: false }
   const namespace = response.value.namespaces.find(ns => ns.ns === PI_AI_NS)
   return { namespace, writable: response.value.writable }
+}
+
+/**
+ * The namespace join as the official scope's snapshot holds it, or undefined
+ * when there is no scope / it has no accepted section yet.
+ *
+ * The snapshot carries only what a browser surface consumes, so the wire-only
+ * fields (`schema`, `applies`, `secrets`) are filled with the shapes the plugin
+ * never reads; every field this half touches (`value`, `user`, `base`,
+ * `revision`) comes from the mirror verbatim.
+ */
+function joinFromScope(api: RemoteApi): SettingsJoin | undefined {
+  const snapshot = api.scope?.getSnapshot()
+  if (snapshot === undefined || snapshot.status !== 'ready') return undefined
+  if (typeof snapshot.revision !== 'number') return undefined
+  return {
+    namespace: {
+      ns: PI_AI_NS,
+      schema: {},
+      value: snapshot.value,
+      user: snapshot.user,
+      base: snapshot.base,
+      revision: snapshot.revision,
+      applies: 'live',
+      secrets: [],
+    } as unknown as SettingsNamespaceView,
+    writable: snapshot.writable === true,
+  }
 }

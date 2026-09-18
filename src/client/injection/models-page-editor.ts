@@ -30,8 +30,8 @@ import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '..
 import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../../knowledge.js'
 import { modelsOf, routeFactsOf } from '../../shared.js'
 import { sameEfforts } from '../effort.js'
-import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from '../ops.js'
-import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from '../types.js'
+import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf, writeModelRows, type RowIntent } from '../ops.js'
+import type { EffortEditorApi, EffortWriteIntent, HeldWrite, RemoteApi, SettingsJoin } from '../types.js'
 
 export type { SettingsJoin }
 
@@ -73,6 +73,15 @@ export interface HostLabels {
   baseUrl: readonly string[]
   /** The create card's protocol select. */
   apiProtocol: readonly string[]
+  /**
+   * The editing card's commit button. C2 drives the plugin's landing write off
+   * the official Save, so the button is resolved when the action row's own
+   * structure cannot be read (the buttons ARE the last child pair of
+   * `[class*="editorActions"]`; the copy is the fallback).
+   */
+  apply: readonly string[]
+  /** The editing card's dismiss button (the commit's left-hand sibling). */
+  cancel: readonly string[]
 }
 
 /** A row's identity as found on the page, resolved from the settings join. */
@@ -109,6 +118,18 @@ export interface InjectorDeps {
   labels(): HostLabels
   /** Mount one editor into a container (React); render() updates its props in place. */
   mount(container: HTMLElement, props: EditorMountProps): MountedEditor
+  /**
+   * Runs after an idle pass landed everything the session held back. The
+   * browser half hangs its autofill complement here: "the user stopped
+   * editing" is the only moment this side may safely write the document.
+   */
+  onIdle?(): void
+  /**
+   * Arm a timed retry after a failed idle pass. The backoff clock only helps
+   * if something wakes the injector when it expires; a settled page has no DOM
+   * mutation to schedule the next scan. Optional so tests drive passes by hand.
+   */
+  onBackoff?(delayMs: number): void
 }
 
 /** One mounted editor: unmount disposes the React root; render swaps props in place. */
@@ -170,6 +191,55 @@ export interface ScanState {
    * mid-edit staging. Mirrors {@link pending}'s key shape.
    */
   missedScans: Map<string, Set<string>>
+  /**
+   * Writes an ON-SCREEN editor asked for while the official card held the
+   * document, keyed route → model id. Kept verbatim (this is the user's own
+   * declaration, so no suggestion arbitration applies) and replayed the
+   * moment the card is gone. In memory only: it dies with the fiber.
+   */
+  queued: Map<string, Map<string, HeldWrite>>
+  /**
+   * Whether an official editing card was on the page at the last reconcile.
+   * `undefined` until the first scan. The `!== false` test is what makes the
+   * idle pass run exactly once per editing session -- and once for a page
+   * that loads straight into the models section without ever editing.
+   */
+  editing: boolean | undefined
+  /**
+   * Whether an idle pass is in flight. One pass at a time: two overlapping
+   * passes would describe the same revision and then fight over it, turning a
+   * clean replay into a self-inflicted `settings/conflict`.
+   */
+  flushing: boolean
+  /** Consecutive failed idle passes; the backoff exponent. Reset on success. */
+  flushFailures: number
+  /** Earliest `Date.now()` at which the next retry may run (0 = any time). */
+  nextFlushAt: number
+  /**
+   * Routes whose OFFICIAL card committed in this session (the user pressed its
+   * commit button). The held ledgers land per route: only the routes the user
+   * actually saved are written, because the official card's Save is now what
+   * commits this plugin's edits too (issue #7 / C2). An intent the user
+   * dismissed without saving is dropped, exactly like the card's own fields.
+   */
+  committing: Set<string>
+  /**
+   * Whether the official action row has failed to yield usable buttons for
+   * every card seen so far. When it has, the landing decision degrades to
+   * "the card went away, so write it" -- writing too much is recoverable,
+   * silently losing the user's declaration is not.
+   */
+  signalsUnavailable: boolean
+  /**
+   * Whether an official card was open at the last scan. An in-flight write
+   * re-checks it right before mutating: a card that opened during the read
+   * must not have the write land behind its frozen revision baseline.
+   */
+  flushAbort: boolean
+  /** Commit buttons already wired, so a re-scan never double-registers. */
+  submitWired: WeakSet<Element>
+  /** Cancel buttons already wired. */
+  cancelWired: WeakSet<Element>
 }
 
 /**
@@ -191,13 +261,267 @@ export interface StagedDeclaration {
   defaultEffort?: string | null
 }
 
+/**
+ * The held-write ledgers as `sessionStorage` keeps them: the two maps, plus the
+ * document identity and the commit evidence a same-document restore needs.
+ * Every entry is the user's own declaration, already JSON-shaped, so the file
+ * IS the intent (no derivation on the way back in).
+ */
+interface LedgerFile {
+  /** Identity of the document that wrote the file; a different one is a reload. */
+  document: string
+  /**
+   * Routes whose held write had COMMIT EVIDENCE when persisted (the user
+   * pressed the official Save). A restored queued entry without its route here
+   * is an abandoned edit and is dropped, matching the official draft.
+   */
+  committed: string[]
+  pending: [string, [string, StagedDeclaration][]][]
+  queued: [string, [string, HeldWrite][]][]
+}
+
+/**
+ * The `sessionStorage` ledger key, and the module-local sentinel identifying
+ * the CURRENT document across a same-page fiber cycle. The sentinel lives on
+ * the window, so a real reload (a fresh window) reads a different id and the
+ * old file is discarded; HMR / disable-enable keeps it.
+ */
+const LEDGER_DOCUMENT_KEY = '__breLedgerDocument'
+
+/** The current document's ledger identity, minting one on first use. */
+function documentId(): string {
+  const holder = globalThis as { [LEDGER_DOCUMENT_KEY]?: string }
+  return (holder[LEDGER_DOCUMENT_KEY] ??= `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`)
+}
+
+/**
+ * The `sessionStorage` slot holding both ledgers. Session-scoped on purpose:
+ * the intents belong to the card session the user was working in, and a NEW
+ * tab must not inherit another tab's half-finished edit.
+ */
+const LEDGER_KEY = 'bre:held-writes:v1'
+
+/** `sessionStorage`, or undefined when the environment has none (node, privacy mode). */
+function ledgerStorage(): Storage | undefined {
+  try {
+    return typeof sessionStorage === 'undefined' ? undefined : sessionStorage
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Mirror both ledgers into `sessionStorage`. Called after every change and
+ * best-effort by nature: an unavailable or full storage keeps the ledgers in
+ * memory alone (the behaviour before they were persisted), never an error the
+ * user has to see.
+ */
+function persistLedger(state: ScanState): void {
+  const store = ledgerStorage()
+  if (store === undefined) return
+  try {
+    if (state.pending.size === 0 && state.queued.size === 0) {
+      store.removeItem(LEDGER_KEY)
+      return
+    }
+    const file: LedgerFile = {
+      document: documentId(),
+      // Only routes that still hold a write matter: a spent marker is never
+      // restored (and flushQueued prunes it).
+      committed: [...state.committing].filter(route => state.queued.has(route)),
+      pending: [...state.pending].map(([route, models]) => [route, [...models]]),
+      queued: [...state.queued].map(([route, models]) => [route, [...models]]),
+    }
+    store.setItem(LEDGER_KEY, JSON.stringify(file))
+  } catch {
+    // Quota / disabled storage: the in-memory ledgers remain authoritative.
+  }
+}
+
+/** One ledger entry as the file carries it, or undefined when malformed. */
+function ledgerEntry<T>(value: unknown): [string, [string, T][]][] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const routes: [string, [string, T][]][] = []
+  for (const row of value) {
+    if (!Array.isArray(row) || row.length !== 2) return undefined
+    const [route, models] = row as [unknown, unknown]
+    if (typeof route !== 'string' || !Array.isArray(models)) return undefined
+    const entries: [string, T][] = []
+    for (const entry of models) {
+      if (!Array.isArray(entry) || entry.length !== 2) return undefined
+      const [modelId, write] = entry as [unknown, unknown]
+      if (typeof modelId !== 'string' || typeof write !== 'object' || write === null || Array.isArray(write)) {
+        return undefined
+      }
+      entries.push([modelId, write as T])
+    }
+    routes.push([route, entries])
+  }
+  return routes
+}
+
+/**
+ * Restore the ledgers from `sessionStorage`.
+ *
+ * A file written by a PREVIOUS document is a reload: the official card's own
+ * draft would have died with it, so both ledgers are discarded outright. A
+ * same-document file (HMR / disable-enable) comes back, but a held write is
+ * restored ONLY with commit evidence -- an edit the user never saved must not
+ * be resurrected behind a later Save. A malformed or foreign file is ignored
+ * wholesale rather than partially applied: a half-read intent is worse than a
+ * dropped one on a document the user can edit by hand.
+ * @param state - the fresh scan state to fill.
+ */
+function restoreLedger(state: ScanState): void {
+  const store = ledgerStorage()
+  if (store === undefined) return
+  try {
+    const raw = store.getItem(LEDGER_KEY)
+    if (raw === null) return
+    const parsed = JSON.parse(raw) as Partial<LedgerFile>
+    if (parsed.document !== documentId()) return
+    const pending = ledgerEntry<StagedDeclaration>(parsed.pending)
+    const queued = ledgerEntry<HeldWrite>(parsed.queued)
+    if (pending === undefined || queued === undefined) return
+    const committed = Array.isArray(parsed.committed)
+      ? parsed.committed.filter((route): route is string => typeof route === 'string')
+      : []
+    for (const [route, models] of pending) state.pending.set(route, new Map(models))
+    for (const [route, models] of queued) {
+      // No evidence = the user never saved this route: drop it.
+      if (!committed.includes(route)) continue
+      state.queued.set(route, new Map(models))
+      state.committing.add(route)
+    }
+  } catch {
+    // Unreadable file: start clean.
+  }
+}
+
+/**
+ * Land whatever the session held back, best effort, when the fiber is about to
+ * go away (plugin disable / HMR). The ledgers STAY in `sessionStorage` (with
+ * their commit evidence), so the next fiber in the same document picks the work
+ * up; a flush the runtime cuts short is simply retried by that fiber.
+ * @param state - the scan state whose ledgers to drain.
+ * @param deps - the injection dependencies.
+ */
+export function flushOnTeardown(state: ScanState, deps: InjectorDeps): void {
+  void (async () => {
+    try {
+      await flushQueued(deps, state)
+      await flushPending(deps, state)
+    } catch (error) {
+      console.error(`[bre] teardown flush failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  })()
+}
+
+/**
+ * The page is going away: land the committed intents best effort, then CLEAR
+ * the ledger. Unlike a fiber cycle, a reload discards the official card's own
+ * draft, so the plugin's must go too -- anything the cut-short flush could not
+ * land must not be resurrected by the next document. (The window sentinel
+ * covers the case pagehide never fires: crash / plugin already disabled.)
+ * @param state - the scan state whose ledgers to drain.
+ * @param deps - the injection dependencies.
+ */
+export function flushOnUnload(state: ScanState, deps: InjectorDeps): void {
+  // The page is going away: an open card's frozen baseline no longer matters,
+  // so the in-flight fence must not block this last best-effort landing.
+  state.flushAbort = false
+  void (async () => {
+    try {
+      await flushQueued(deps, state)
+      await flushPending(deps, state)
+    } catch (error) {
+      console.error(`[bre] unload flush failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      try {
+        ledgerStorage()?.removeItem(LEDGER_KEY)
+      } catch {
+        // Disabled storage: nothing to clear.
+      }
+    }
+  })()
+}
+
 export function createScanState(): ScanState {
-  return {
+  const state: ScanState = {
     mounted: new Map(),
     describePromise: undefined,
     pending: new Map(),
     missedScans: new Map(),
+    queued: new Map(),
+    editing: undefined,
+    flushing: false,
+    flushFailures: 0,
+    nextFlushAt: 0,
+    committing: new Set(),
+    signalsUnavailable: false,
+    flushAbort: false,
+    submitWired: new WeakSet(),
+    cancelWired: new WeakSet(),
   }
+  restoreLedger(state)
+  return state
+}
+
+/**
+ * Land everything the session held back, one pass at a time.
+ *
+ * A refusal keeps its intent in the ledger and pushes the next attempt out on
+ * a backoff, so a settled document is not hammered while a genuinely stuck
+ * write (a refused compat key, a vanished route) is retried indefinitely
+ * instead of being lost on the first failure.
+ * @param deps - the injection dependencies.
+ * @param state - mutable scan state.
+ */
+async function runIdlePass(deps: InjectorDeps, state: ScanState): Promise<void> {
+  if (state.flushing) return
+  state.flushing = true
+  try {
+    const queuedFailed = await flushQueued(deps, state)
+    const pendingFailed = await flushPending(deps, state)
+    if (queuedFailed || pendingFailed) {
+      // A refusal arrives as a VALUE, not a throw: folding it into the same
+      // backoff keeps a doomed route from being re-mutated on every scan, and
+      // puts both failure shapes (refused, unreachable) on one clock.
+      armBackoff(deps, state)
+    } else {
+      state.flushFailures = 0
+      state.nextFlushAt = 0
+    }
+  } catch (error) {
+    armBackoff(deps, state)
+    console.error(`[bre] idle flush failed: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    state.flushing = false
+  }
+  // The hook is a courtesy seat for the browser half's autofill: a fault in
+  // it must not reject the pass (the caller void-s the promise) and become an
+  // unhandled rejection.
+  try {
+    deps.onIdle?.()
+  } catch (error) {
+    console.error(`[bre] idle hook failed: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/**
+ * Push the next attempt out on the exponential backoff and tell the host to
+ * wake the injector when it expires (a settled page has no DOM mutation).
+ */
+function armBackoff(deps: InjectorDeps, state: ScanState): void {
+  state.flushFailures += 1
+  const delay = Math.min(2 ** state.flushFailures * 500, 30_000)
+  state.nextFlushAt = Date.now() + delay
+  deps.onBackoff?.(delay)
+}
+
+/** Whether either ledger still holds work the idle pass has to land. */
+function hasOutstanding(state: ScanState): boolean {
+  return state.queued.size > 0 || state.pending.size > 0
 }
 
 /**
@@ -210,24 +534,125 @@ export function stageEffortsInto(
   modelId: string,
   efforts: EffortWriteIntent,
   compat?: CompatSuggestion,
-  input?: InputModalities,
+  /**
+   * The modality part. `null` is a deliberate unset (the editor's "clear
+   * declaration" on an unsaved route) and stores as such: the staged flush
+   * reads it back verbatim, exactly like the saved-row seam does.
+   */
+  input?: InputModalities | null,
   defaultEffort?: string | null,
 ): void {
-  const models = state.pending.get(route)
-  if (efforts === undefined) {
-    if (models === undefined) return
-    models.delete(modelId)
-    if (models.size === 0) state.pending.delete(route)
-    return
+  try {
+    const models = state.pending.get(route)
+    if (efforts === undefined) {
+      if (models === undefined) return
+      models.delete(modelId)
+      if (models.size === 0) state.pending.delete(route)
+      return
+    }
+    // 'keep' is storable: a modality-only staging must survive the flush as a
+    // declaration that touches everything EXCEPT the ladder.
+    state.pending.set(route, (models ?? new Map()).set(modelId, {
+      efforts,
+      ...(compat === undefined ? {} : { compat }),
+      ...(input === undefined ? {} : { input }),
+      ...(defaultEffort === undefined ? {} : { defaultEffort }),
+    }))
+  } finally {
+    // Both arms changed the ledger (or provably did not): persisting here
+    // keeps the early returns from having to remember it.
+    persistLedger(state)
   }
-  // 'keep' is storable: a modality-only staging must survive the flush as a
-  // declaration that touches everything EXCEPT the ladder.
-  state.pending.set(route, (models ?? new Map()).set(modelId, {
-    efforts,
-    ...(compat === undefined ? {} : { compat }),
-    ...(input === undefined ? {} : { input }),
-    ...(defaultEffort === undefined ? {} : { defaultEffort }),
-  }))
+}
+
+/**
+ * Record (or replace) the write an on-screen editor asked for while the
+ * official card held the document. The latest intent for a row wins: the user
+ * may apply twice before closing the card.
+ * @param state - mutable scan state.
+ * @param route - the route being edited.
+ * @param modelId - the model id being edited.
+ * @param write - the full intent, kept verbatim for the replay.
+ */
+export function queueWriteInto(state: ScanState, route: string, modelId: string, write: HeldWrite): void {
+  state.queued.set(route, (state.queued.get(route) ?? new Map()).set(modelId, write))
+  persistLedger(state)
+}
+
+/**
+ * Withdraw one row's staged intent (the create card's erase-that-row flow, and
+ * the editor's Reset on a route the document does not hold yet). Idempotent,
+ * and it clears the route entry once its last model is gone.
+ * @param state - mutable scan state.
+ * @param route - the route the staging was made against.
+ * @param modelId - the model whose intent to drop.
+ */
+export function withdrawStaged(state: ScanState, route: string, modelId: string): void {
+  const models = state.pending.get(route)
+  if (models === undefined) return
+  models.delete(modelId)
+  if (models.size === 0) state.pending.delete(route)
+  persistLedger(state)
+}
+
+/**
+ * Withdraw one row's held intent (the editor's own Reset, or any later
+ * "discard this edit"). Idempotent, and it clears the route entry once its
+ * last model is gone.
+ * @param state - mutable scan state.
+ * @param route - the route the editor was editing.
+ * @param modelId - the model whose intent to drop.
+ */
+export function withdrawHeldWrite(state: ScanState, route: string, modelId: string): void {
+  const models = state.queued.get(route)
+  if (models === undefined) return
+  models.delete(modelId)
+  if (models.size === 0) state.queued.delete(route)
+  persistLedger(state)
+}
+
+/**
+ * Withdraw a row's intent wherever it landed.
+ *
+ * The editor's Reset is the caller and it does not know which ledger its own
+ * `commit` fed — the create card stages, a saved row queues, and the same row
+ * can move between the two as the user edits the route id. Discarding only one
+ * of them would leave the Reset cosmetic on the other: the official Save would
+ * still write edits the user explicitly threw away.
+ * @param state - mutable scan state.
+ * @param route - the route the editor was editing.
+ * @param modelId - the model whose intent to drop.
+ */
+export function withdrawIntent(state: ScanState, route: string, modelId: string): void {
+  withdrawStaged(state, route, modelId)
+  withdrawHeldWrite(state, route, modelId)
+}
+
+/**
+ * Drop every intent one route holds, right now: the official card's cancel.
+ *
+ * The card's own fields die with the dismissal, so the plugin's must too -- and
+ * they must die at the CLICK, not on some later scan. A deferred "discarded"
+ * marker would outlive the card that set it (a dismiss carrying no plugin edit
+ * leaves nothing for a later pass to drain), and the next card for that same
+ * route would then be read as already-dismissed: its Save would never be
+ * wired, and the user's fresh edit would be dropped silently. Clearing the
+ * ledgers here leaves no state at all to misinterpret -- including the staged
+ * declaration a dismissed CREATE card was holding for a route that does not
+ * exist yet, which would otherwise land the moment that route appeared.
+ *
+ * Safe by construction: the official page keeps ONE editing card at a time
+ * (create and edit mutually exclusive), so the route this resolves is the only
+ * card that could own these entries.
+ * @param state - mutable scan state.
+ * @param route - the route whose official card was dismissed.
+ */
+export function forgetRoute(state: ScanState, route: string): void {
+  state.queued.delete(route)
+  state.pending.delete(route)
+  state.missedScans.delete(route)
+  state.committing.delete(route)
+  persistLedger(state)
 }
 
 /**
@@ -357,26 +782,32 @@ function isRecordValue(value: unknown): value is Record<string, unknown> {
  * user intent. A write that still fails (conflict retry exhausted) stays
  * staged; the write's own document-updated invalidation re-scans and
  * re-flushes it.
+ * @returns whether a write of this route was refused and left unlanded.
  */
 async function flushRoute(
   deps: InjectorDeps,
   state: ScanState,
   route: string,
   models: ReadonlyMap<string, StagedDeclaration>,
-): Promise<void> {
-  // Snapshot: stageEffortsInto below mutates the stored map as writes land.
+): Promise<boolean> {
+  // ONE read for the whole route: the rows all live in the same array, so a
+  // per-model read was pure repetition. Every arbitration below still runs
+  // per model against this same snapshot -- the write is one whole-array set.
+  const join = await deps.describeNamespace()
+  const providers = providersOf(join.namespace)
+  // Snapshot: the loop below withdraws entries whose edit proved empty, and
+  // the batch then reports back per model as its results land.
+  const intents: RowIntent[] = []
   for (const [modelId, declaration] of [...models]) {
-    const join = await deps.describeNamespace()
-    const providers = providersOf(join.namespace)
     const current = modelsOf(providers, route).find(model => model['id'] === modelId)
     // The row is not saved yet (mid-edit card, or the user renamed it):
     // keep the staging instead of dropping it -- it lands when a row with
     // this id first appears; the scan's ghost pass withdraws staging whose
     // row is provably gone.
     if (current === undefined) continue
-    // A concurrent scan may have withdrawn this staging while our describe
-    // was in flight (the two-scan ghost pass): writing it anyway would
-    // resurrect a declaration nothing on the page owns anymore.
+    // A concurrent scan may have withdrawn this staging while our read was
+    // in flight (the two-scan ghost pass): writing it anyway would resurrect
+    // a declaration nothing on the page owns anymore.
     if (state.pending.get(route)?.get(modelId) !== declaration) continue
     // Mirror the host autofill's suggestion for this exact row (same facts,
     // same knowledge base) so {@link effectiveStagedIntents} can tell the
@@ -392,27 +823,159 @@ async function flushRoute(
       stageEffortsInto(state, route, modelId, undefined)
       continue
     }
-    // Seed the write's FIRST describe attempt with the join this loop
-    // already read — one wire read per model instead of two. A conflict
-    // retry re-describes fresh through the live seam, so the seed never
-    // costs the write its recovery path.
-    let seeded = false
-    const seededApi = createEditorApi(deps.api, () => {
-      if (!seeded) {
-        seeded = true
-        return Promise.resolve(join)
-      }
-      return describeNamespace(deps.api)
+    intents.push({
+      modelId,
+      efforts: effective.efforts,
+      ...(effective.compat === undefined ? {} : { compat: effective.compat }),
+      ...(effective.input === undefined ? {} : { input: effective.input }),
+      ...(effective.defaultEffort === undefined ? {} : { defaultEffort: effective.defaultEffort }),
     })
-    const reply = await seededApi.writeEfforts(route, modelId, effective.efforts, effective.compat, effective.input, undefined, effective.defaultEffort)
-    if (reply.ok || reply.error === 'model-not-found') {
-      stageEffortsInto(state, route, modelId, undefined)
-    } else {
-      // Anything else keeps the staging (the next scan retries it), but a
-      // silent keep is unobservable -- surface the failure for diagnostics.
-      console.error(`[bre] staged flush write failed for "${route}"/"${modelId}": ${reply.error}`)
+  }
+  if (intents.length === 0) return false
+  // Seed the write's FIRST read with the snapshot this pass already took: one
+  // read per route instead of two. A conflict retry re-describes fresh through
+  // the live seam, so the seed never costs the write its recovery path.
+  let seeded = false
+  const results = await writeModelRows(deps.api, route, intents, () => {
+    if (!seeded) {
+      seeded = true
+      return Promise.resolve(join)
+    }
+    return deps.describeNamespace()
+  }, () => state.flushAbort)
+  let failed = false
+  intents.forEach((intent, at) => {
+    const result = results[at]
+    // A card opened during the read: keep the staging, do not back off.
+    if (result?.aborted === true) return
+    if (result?.ok === true || result?.modelNotFound === true) {
+      stageEffortsInto(state, route, intent.modelId, undefined)
+      return
+    }
+    // Anything else keeps the staging (the next scan retries it), but a
+    // silent keep is unobservable -- surface the failure for diagnostics, and
+    // report it so the pass can back off instead of hammering.
+    failed = true
+    console.error(`[bre] staged flush write failed for "${route}"/"${intent.modelId}": ${result?.error ?? 'unknown'}`)
+  })
+  return failed
+}
+
+/**
+ * Replay every editor-held write through a HOLDER-LESS seam, so the very call
+ * that would have fought the official card now commits. A row that vanished
+ * meanwhile drops its entry instead of retrying forever; any other failure
+ * stays queued for the next idle pass.
+ *
+ * The LANDING DECISION lives here (issue #7 / C2), per route, because this
+ * ledger is the one the official card's Save governs:
+ *   - the user committed -> write it, now that the card is gone;
+ *   - the official action row was never readable in this session -> the signal
+ *     cannot be trusted, so degrade to "the card went away, write it": writing
+ *     too much is recoverable, losing the declaration is not;
+ *   - otherwise the card closed with neither signal (the user just walked
+ *     away) -> the intent waits rather than landing behind a frozen baseline.
+ *
+ * A DISMISSED card has no branch here on purpose: its cancel clears the ledger
+ * the moment it is pressed ({@link forgetRoute}), so "dismissed" can never
+ * outlive the card it belonged to and swallow a later save of the same route.
+ * @param deps - the injection dependencies.
+ * @param state - mutable scan state.
+ * @returns whether this pass left a write unlanded (the caller backs off).
+ */
+async function flushQueued(deps: InjectorDeps, state: ScanState): Promise<boolean> {
+  // A commit marker with nothing queued is SPENT: the official Save carried no
+  // plugin edit (or the route was already landed). Dropping it here keeps it
+  // from authorizing a later edit the user never saved.
+  for (const route of [...state.committing]) {
+    if (!state.queued.has(route)) state.committing.delete(route)
+  }
+  // Writability is the document's call, not the commit signal's: a memory /
+  // non-loopback page refuses writes, and the held ledger obeys the same gate
+  // the staged ledger already does. Wait for a landable route before paying
+  // for the read, so a page whose intents are all uncommitted costs nothing.
+  const landable = [...state.queued.keys()]
+    .some(route => state.committing.has(route) || state.signalsUnavailable)
+  if (!landable) {
+    persistLedger(state)
+    return false
+  }
+  const join = await deps.describeNamespace()
+  if (join.writable !== true) {
+    persistLedger(state)
+    return false
+  }
+  let failed = false
+  for (const [route, models] of [...state.queued]) {
+    // The staged ledger has no official row whose Save could commit it; this
+    // one does, so an uncommitted route waits instead of landing behind that
+    // card's frozen revision baseline.
+    const committed = state.committing.has(route)
+    if (!committed && !state.signalsUnavailable) continue
+    // One read, one mutate for the whole route: the held intents are per model
+    // but the document is a single models array, so a per-model write was
+    // rebuilding and rewriting that same array N times.
+    const intents: RowIntent[] = [...models].map(([modelId, write]) => ({
+      modelId,
+      efforts: write.efforts,
+      ...(write.compat === undefined ? {} : { compat: write.compat }),
+      ...(write.input === undefined ? {} : { input: write.input }),
+      ...(write.clearCompatKeys === undefined ? {} : { clearCompatKeys: write.clearCompatKeys }),
+      ...(write.defaultEffort === undefined ? {} : { defaultEffort: write.defaultEffort }),
+    }))
+    const results = await writeModelRows(deps.api, route, intents, undefined, () => state.flushAbort)
+    let aborted = false
+    intents.forEach((intent, at) => {
+      const result = results[at]
+      // A card opened during the read: keep every intent, do not back off.
+      if (result?.aborted === true) { aborted = true; return }
+      if (result?.ok === true || result?.modelNotFound === true) {
+        models.delete(intent.modelId)
+        return
+      }
+      console.error(`[bre] held write failed for "${route}"/"${intent.modelId}": ${result?.error ?? 'unknown'}`)
+    })
+    if (models.size === 0) {
+      state.queued.delete(route)
+      // The marker is what authorizes the landing, so it is dropped only once
+      // every intent of the route made it -- a refusal keeps both the intent
+      // and the authority to retry it on the next pass.
+      state.committing.delete(route)
+    } else if (!aborted) {
+      failed = true
     }
   }
+  // The queue just shrank (landed intents) or stayed as it was (a route still
+  // waiting for its card): either way the stored file must match what is left.
+  persistLedger(state)
+  return failed
+}
+
+/**
+ * Land the create-card declarations whose route has appeared. Each route goes
+ * through its own live describe, so one refused route cannot poison a sibling
+ * that would have landed.
+ * @param deps - the injection dependencies.
+ * @param state - mutable scan state.
+ * @returns whether a write was refused and left unlanded.
+ */
+async function flushPending(deps: InjectorDeps, state: ScanState): Promise<boolean> {
+  if (state.pending.size === 0) return false
+  const join = await deps.describeNamespace()
+  if (join.writable !== true) return false
+  const providers = providersOf(join.namespace)
+  let failed = false
+  for (const [route, models] of [...state.pending]) {
+    if (models.size === 0) {
+      state.pending.delete(route)
+      continue
+    }
+    // A create card still owns a route the document has not taken yet.
+    if (!hasOwn(providers, route)) continue
+    if (await flushRoute(deps, state, route, models)) failed = true
+  }
+  persistLedger(state)
+  return failed
 }
 
 /** Find the first input/select whose aria-label starts with one of the labels. */
@@ -539,6 +1102,82 @@ function routeOfCard(
 }
 
 /**
+ * The commit/cancel pair of one card's official action row, or undefined when
+ * the row cannot be read.
+ *
+ * Three tiers, most structural first, because this is the signal the plugin's
+ * landing write hangs on and the official page is free to restyle it:
+ *   1. the last two buttons of `[class*="editorActions"]` -- the commit is the
+ *      rightmost, its dismiss the one before it (`EditorFooter.tsx`: the row is
+ *      a plain two-button div, cancel first, commit last);
+ *   2. the declared CSS Modules classes `primaryButton` / `secondaryButton`
+ *      (they carry a hash suffix, so only the prefix can match);
+ *   3. the host's own copy for that row, resolved through the dictionary it
+ *      renders from (`apply` is 'Apply' in English and '保存' in Chinese, so
+ *      pinning either language would strand one of them).
+ *
+ * A row whose buttons no tier can identify returns undefined, which is what
+ * makes {@link ScanState.signalsUnavailable} trip and the landing decision
+ * degrade to "the card went away, write it" rather than dropping the edit.
+ */
+function actionsOf(card: HTMLElement, labels: HostLabels): { submit: HTMLElement; cancel: HTMLElement } | undefined {
+  const row = card.querySelector<HTMLElement>('[class*="editorActions"]')
+  if (row === null) return undefined
+  const buttons = Array.from(row.querySelectorAll<HTMLElement>('button'))
+  if (buttons.length < 2) return undefined
+  const matches = (node: HTMLElement, label: string): boolean =>
+    (node.textContent ?? '').trim() === label
+  const primary = row.querySelector<HTMLElement>('[class*="primaryButton"]')
+  const secondary = row.querySelector<HTMLElement>('[class*="secondaryButton"]')
+  if (primary !== null && secondary !== null) return { submit: primary, cancel: secondary }
+  const submit = [...buttons].reverse().find(node => labels.apply.some(label => matches(node, label)))
+  const cancel = [...buttons].reverse().find(node => labels.cancel.some(label => matches(node, label)))
+  if (submit !== undefined && cancel !== undefined) return { submit, cancel }
+  // Structural last resort: the rightmost button commits, its left sibling
+  // dismisses. Used only when neither the classes nor the copy resolve, so a
+  // one-button row (a future layout) still yields a commit.
+  const last = buttons[buttons.length - 1]
+  const previous = buttons[buttons.length - 2]
+  if (last === undefined || previous === undefined) return undefined
+  return { submit: last, cancel: previous }
+}
+
+/**
+ * Wire one button's click ONCE, in the capture phase.
+ *
+ * Capture, not bubble: the marker has to be recorded before the official
+ * React handler runs and tears the card down, and React's own listeners sit
+ * on the root container. Capture also makes this independent of whether the
+ * official handler stops propagation.
+ */
+function wireOnce(
+  node: HTMLElement,
+  wired: WeakSet<Element>,
+  onHit: () => void,
+): void {
+  if (wired.has(node)) return
+  wired.add(node)
+  node.addEventListener('click', onHit, { capture: true })
+}
+
+/**
+ * Whether an official editing card is open on the page, told from the card's
+ * own action row (its Cancel/commit pair) with the model-row containers as a
+ * fallback signal.
+ *
+ * The distinction matters: an ON-SCREEN card holds a frozen revision baseline,
+ * so a write landing while it is open is refused on the user's next save --
+ * issue #7. Judging "is a card open" from the capacity buttons alone answers
+ * "is a model row expanded", which is not the same question: an open card with
+ * an empty model list would read as idle and let exactly that write through.
+ */
+function officialCardOf(root: HTMLElement): HTMLElement | undefined {
+  return root.querySelector<HTMLElement>('[class*="editorActions"]')
+    ?? root.querySelector<HTMLElement>('[class*="modelEntry"]')
+    ?? undefined
+}
+
+/**
  * Scan the settings DOM for official model rows and reconcile the injected
  * editors. Idempotent: existing editors are left alone, new disclosures get
  * one, and removed ones are unmounted.
@@ -556,15 +1195,42 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
   // itself matches on them, and reading lazily is what keeps a language switch
   // in step with the page (the labels the host renders change with it).
   const labels = deps.labels()
+  // "Is an official editing card open?" is the gate that decides whether this
+  // plugin may write at all. The card's own action row answers it structurally,
+  // with the model-row containers as a second signal: an open card whose model
+  // list happens to be empty carries no capacity button, and judging idleness
+  // from those buttons alone would let a write slip into that card's frozen
+  // revision baseline -- issue #7 again, under a rarer trigger.
+  const cardOpen = officialCardOf(root) !== undefined
+  // The fence an in-flight write checks: while this is true, no landing write
+  // may mutate (it would sit behind the open card's frozen revision).
+  state.flushAbort = cardOpen
   const hasCapacityRows = labels.capacity.some(aria =>
     root.querySelector(`button[aria-label^="${aria}"]`) !== null)
-  if (!hasCapacityRows) {
+  if (!cardOpen) {
     if (state.mounted.size > 0) {
       for (const [, entry] of state.mounted) entry.editor.unmount()
       state.mounted.clear()
     }
+    // No editing card is on the page, so no on-screen revision baseline can be
+    // invalidated by a write: THIS is the moment to land everything the
+    // session held back. `!== false` also covers the first scan (undefined) --
+    // and a page that reloaded onto restored ledgers -- so outstanding work
+    // always gets its pass; the second arm only fires while intents wait, so a
+    // settled page costs nothing beyond the check.
+    const wasEditing = state.editing
+    state.editing = false
+    if (wasEditing !== false || (hasOutstanding(state) && Date.now() >= state.nextFlushAt)) {
+      void runIdlePass(deps, state).catch(error => {
+        console.error(`[bre] idle pass failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
+    }
     return
   }
+  state.editing = true
+  // An open card showing no model row has nothing to equip: the idle pass
+  // stays fenced until the card goes away (or a row appears).
+  if (!hasCapacityRows) return
   // Fold the describe request across scans (one wire read per wave). A
   // promise's .then ALWAYS runs asynchronously (microtask), even when already
   // resolved — the fold just keeps concurrent scans from stacking wire reads.
@@ -578,31 +1244,9 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
     const namespace = join.namespace
     const providers = providersOf(namespace)
 
-    // Staged declarations whose route has appeared (the create card's save
-    // landed) are written before the editors render, so the edit card's
-    // editor mounts over the declaration the user staged, not over a gap.
-    // flushRoute drops each model as it lands and keeps failed ones staged;
-    // a concurrent re-scan re-flushing the same route self-heals — the
-    // second pass sees the first pass's declaration and skips.
-    if (join.writable === true) {
-      for (const [route, models] of state.pending) {
-        // An emptied entry can only ever be skipped again — drop it instead
-        // of rescanning it on every future pass.
-        if (models.size === 0) {
-          state.pending.delete(route)
-          continue
-        }
-        if (!hasOwn(providers, route)) continue
-        // flushRoute reads the wire through the live describe seam; a
-        // transport failure there rejects, and a bare `void` would surface
-        // as an unhandled promise rejection. The staged declarations stay
-        // staged, and the next scan retries — logging is all the failure
-        // owes the user.
-        void flushRoute(deps, state, route, models).catch((error: unknown) => {
-          console.error(`[bre] staged flush failed for "${route}": ${error instanceof Error ? error.message : String(error)}`)
-        })
-      }
-    }
+    // Staged declarations land on the IDLE pass, never from an open card:
+    // writing while the official editor holds the document is exactly what
+    // made the user's own save in that card fail with `settings/conflict`.
 
     const found: FoundModel[] = []
     for (const aria of labels.capacity) {
@@ -702,6 +1346,34 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
       const modelName = staged ? (typedName.length > 0 ? typedName : undefined) : nameOf(models, target.modelId)
       const typedApi = routeStaged ? inputValueByLabel(target.card, labels.apiProtocol) : ''
       const typedBaseURL = routeStaged ? inputValueByLabel(target.card, labels.baseUrl) : ''
+      // The official action row is the signal this row's landing write hangs
+      // on (C2): wire its two buttons. A row whose buttons no tier can name
+      // flips the global degrade flag, so the landing decision falls back to
+      // "the card went away, write it" instead of silently dropping the edit.
+      // No guard on the route's current markers: a REOPENED card is a new
+      // element whose buttons must be wired again, and `wireOnce`'s WeakSet
+      // already collapses every repeat within one element.
+      const actions = actionsOf(target.card, labels)
+      if (actions === undefined) {
+        state.signalsUnavailable = true
+      } else {
+        // A readable row is positive evidence the signal works: clear the
+        // degrade flag so one transient unreadable card does not disable the
+        // "commits with the official Save" gate for the rest of the session.
+        state.signalsUnavailable = false
+        // Resolve the route AT CLICK TIME: a create card's Provider ID can be
+        // (re)typed after the buttons were first wired, and React reuses the
+        // button element -- a captured route would mark / clear the wrong one.
+        wireOnce(actions.submit, state.submitWired, () => {
+          const live = routeOfCard(target.card, providers, labels)?.route ?? route
+          state.committing.add(live)
+          persistLedger(state)
+        })
+        wireOnce(actions.cancel, state.cancelWired, () => {
+          const live = routeOfCard(target.card, providers, labels)?.route ?? route
+          forgetRoute(state, live)
+        })
+      }
       const routeApi = routeStaged && typedApi.length > 0
         ? typedApi
         : typeof profile['api'] === 'string' ? profile['api'] as string : undefined
@@ -725,7 +1397,21 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ...defaultEffort === undefined ? {} : { defaultEffort },
         index,
         staged,
-        api: createEditorApi(deps.api, undefined, (r, m, e, c, i, de) => { stageEffortsInto(state, r, m, e, c, i, de) }),
+        api: createEditorApi(
+          deps.api,
+          undefined,
+          (r, m, e, c, i, de) => { stageEffortsInto(state, r, m, e, c, i, de) },
+          // This row is on screen: it ALWAYS holds the document. The card it
+          // lives in froze its revision baseline, so the intent is queued and
+          // the official card's own Save is what commits it (issue #7 / C2).
+          (r, m, w) => { queueWriteInto(state, r, m, w) },
+          // The editor's Reset drops wherever this row's intent landed.
+          r => { withdrawIntent(state, r, target.modelId) },
+          // Read live: the same DOM row can move between unsaved and saved as
+          // the user types a route id, so the ledger decision cannot be frozen
+          // at mount time.
+          () => staged,
+        ),
         readOnly: join.writable !== true,
         t: deps.t,
       }

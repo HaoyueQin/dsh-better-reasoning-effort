@@ -12,6 +12,7 @@
  *   session-directory.ts    the per-session directory + effort-memory wiretaps
  *   configured-efforts.ts   the settings document's per-model `defaultEffort` cache
  *   slider-toggle-slot.ts   the Models-page footer toggle
+ *   autofill-run.ts         the running auto-fill complement (issue #7)
  *   mount.tsx               foreign React roots and the render boundary
  *   model-menu.ts           locating the official composer model menu
  *
@@ -35,7 +36,7 @@
  * @module dsh-better-reasoning-effort/client
  */
 
-import type { ClientContext, RemoteApi } from './types.js'
+import type { ClientContext, RemoteApi, SettingsScopeBinderLike, SettingsScopeReadLike } from './types.js'
 // Type-only: pulls the shell's locale/remote context merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -50,6 +51,7 @@ import { SLIDER_PREF_KEY, sliderEnabled, subscribeSliderEnabled, syncSliderEnabl
 import { STYLES } from './styles.ts'
 import { createComposerMenu } from './injection/composer-menu.js'
 import { createConfiguredEfforts } from './injection/configured-efforts.js'
+import { createIdleAutofill } from './injection/autofill-run.js'
 import { createModelsPage } from './injection/models-page.js'
 import { createSessionDirectoryTracker } from './injection/session-directory.js'
 import { modelMenuOf } from './injection/model-menu.js'
@@ -84,7 +86,26 @@ export function apply(ctx: ClientContext): void {
   // The kernel mounts the settings Remote as an injectable
   // 'remote.settings' service, declared in the plugin's own inject above — so
   // the face is available before apply runs. No runtime seat probing remains.
-  const settingsApi: RemoteApi = { settings: ctx.remote.settings }
+  //
+  // The official settings scope is picked up on top of it when this shell
+  // provides one: reads then ride its shared describe mirror (no wire round
+  // trip, and the revision the settings surface itself fences writes with).
+  // Deliberately NOT part of the plugin's `inject`: a kernel without the
+  // service must still activate the browser half, on the wire-describe path.
+  const settingsScope = ((): SettingsScopeReadLike | undefined => {
+    try {
+      // `ctx.get('settingsScope')` yields the kernel's BINDER, not a scope:
+      // only `bind({ namespace })` mints the read face (getSnapshot). Using
+      // the binder directly made every describe throw a TypeError.
+      const binder = ctx.get?.('settingsScope') as SettingsScopeBinderLike | undefined
+      return binder?.bind?.({ namespace: PI_AI_NS })
+    } catch {
+      return undefined
+    }
+  })()
+  const settingsApi: RemoteApi = settingsScope === undefined
+    ? { settings: ctx.remote.settings }
+    : { settings: ctx.remote.settings, scope: settingsScope }
   // The shell's Translate is `(key: string, params?: Record<string, unknown>)`;
   // our components take a string-keyed face, so the bound translator narrows.
   const t = ctx.locale.bind(STORE_NS) as Translate
@@ -109,7 +130,7 @@ export function apply(ctx: ClientContext): void {
     return face === undefined ? children() : createElement(LocaleRefresh, { locale: face, children })
   }
 
-  // ---- The four injection seams ----
+  // ---- The five injection seams ----
   // Each owns its own state now; see the module list in this file's header.
   const configuredEfforts = createConfiguredEfforts({ api: settingsApi })
   const sessionDirectory = createSessionDirectoryTracker({
@@ -123,7 +144,12 @@ export function apply(ctx: ClientContext): void {
     sliderEnabled,
     directory: sessionDirectory.ensure,
   })
-  const modelsPage = createModelsPage({ ctx, api: settingsApi, t, refreshed })
+  // The running auto-fill complement (issue #7): the host fills once at boot,
+  // everything a session adds afterwards is filled on the idle pass.
+  const autofill = createIdleAutofill({ api: settingsApi })
+  const modelsPage = createModelsPage({
+    ctx, api: settingsApi, t, onIdle: autofill.run, refreshed,
+  })
 
   /**
    * The composer path, run on every mutation burst and on every debounced
@@ -149,6 +175,17 @@ export function apply(ctx: ClientContext): void {
       sessionDirectory.dispose()
     }
   }, 'dsh-better-reasoning-effort: DOM injector')
+
+  // A page unload is the last moment the committed ledgers can be landed, and
+  // the moment the rest must be DISCARDED: a reload drops the official card's
+  // own draft, so the plugin's uncommitted edits go with it. (The dispose
+  // effect above keeps the ledger for a same-document fiber cycle, where the
+  // card survives.)
+  ctx.effect(() => {
+    const onPageHide = (): void => { modelsPage.flushOnUnload() }
+    window.addEventListener('pagehide', onPageHide)
+    return () => { window.removeEventListener('pagehide', onPageHide) }
+  }, 'dsh-better-reasoning-effort: ledger flush on unload')
 
   // Refresh the injection when the settings document changes (an apply from
   // either the official page or this plugin re-renders the rows). The folded

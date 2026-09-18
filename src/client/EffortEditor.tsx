@@ -147,6 +147,27 @@ export function clearedCompatKeys(routeApi: string | undefined, draft: CompatSug
   return owned.filter(key => !set.has(key))
 }
 
+/**
+ * The `clearCompatKeys` part of a commit, derived from the draft.
+ *
+ * A DEFINED draft always reports (an empty array is meaningful: every owned
+ * field it shows is set). An EMPTY draft must still clear the fields the
+ * protocol OWNS -- dropping the last owned pick is a user decision to unset --
+ * but only when there is something to clear: an unrelated route keeps the
+ * shape it always had (no `clearCompatKeys` at all).
+ * @param routeApi - the route's wire protocol.
+ * @param writeCompat - the compat bytes this commit writes, if any.
+ * @returns the clear part to spread into the commit payload.
+ */
+export function compatClearIntent(
+  routeApi: string | undefined,
+  writeCompat: CompatSuggestion | undefined,
+): { clearCompatKeys?: readonly string[] } {
+  if (writeCompat !== undefined) return { clearCompatKeys: clearedCompatKeys(routeApi, writeCompat) }
+  const owned = clearedCompatKeys(routeApi, undefined)
+  return owned.length === 0 ? {} : { clearCompatKeys: owned }
+}
+
 /** Semantic equality between a modality draft and a stored declaration. */
 function sameModality(draft: DraftModality, stored: InputModalities | undefined): boolean {
   if (!draft.declared) return stored === undefined
@@ -254,6 +275,19 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     || compatChanged()
     || defaultEffortIntent !== undefined
 
+  /**
+   * What this editor last handed the injector, serialized for idempotency.
+   *
+   * The editor has no commit action of its own since C2: every change reports
+   * itself, and the injector decides where the intent lands. React's state
+   * updates are asynchronous, so each change point computes its OWN next value
+   * and passes it down — nothing here reads a state value the current event has
+   * not yet committed to. The ref then collapses repeat reports: a controlled
+   * text input fires on every keystroke, and the wire value only moves on some
+   * of them.
+   */
+  const lastCommitRef = useRef<string | undefined>(undefined)
+
   const markDirty = (): void => {
     dirtyRef.current = true
     setSuggested(undefined)
@@ -261,23 +295,73 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     setSuggestedConfidence('low')
     setSuggestedInputSource(undefined)
     // appliedCompatRef deliberately SURVIVES this (see its declaration) --
-    // Apply/stage must still write the applied suggestion's compat bytes.
+    // the commit still has to write the applied suggestion's compat bytes.
     // Reference capacities SURVIVE tweaks too: they are read-only context about
     // the model, not part of the applied suggestion -- only Reset or a fresh
     // Auto-adapt replaces them.
   }
 
+  /**
+   * Report the row's complete pending edit to the injector.
+   *
+   * The whole intent is recomputed from the values handed in, never from the
+   * stored state: the caller has just computed them, and reading `draft` here
+   * would see the pre-update value on the reporting turn.
+   *
+   * The ladder part travels as `'keep'` when nothing is armed and nothing is
+   * stored: that is a no-op, NOT an unset -- sending `undefined` would stamp
+   * the durable unset marker onto a never-declared model and silence host
+   * auto-fill.
+   */
+  const commitPending = (
+    nextDraft: DraftLevels,
+    nextModality: DraftModality,
+    nextDefaultEffort: string,
+  ): void => {
+    const next = buildIntent(nextDraft)
+    const effortsIntent = next === undefined && initialEfforts === undefined ? 'keep' as const : next
+    // The modality part travels ONLY when this edit actually changed it: an
+    // untouched row must omit the intent entirely -- a null would stamp the
+    // durable inputUnset marker onto modalities the user never decided about.
+    const nextInput = sameModality(nextModality, initialInput) ? undefined : buildModalityIntent(nextModality)
+    const manualCompat = compatDraft()
+    const baseCompat = appliedCompatRef.current
+    let writeCompat = baseCompat !== undefined ? { ...baseCompat, ...(manualCompat ?? {}) } : manualCompat
+    if (initialCompat?.supportsThinkingTokenBudget === true && initialCompat?.thinkingTokenBudgetField === undefined && writeCompat?.thinkingTokenBudgetField === undefined && (routeApi ?? '').toLowerCase() === 'openai-completions') {
+      writeCompat = { ...(writeCompat ?? {}), thinkingTokenBudgetField: 'thinking_token_budget' }
+    }
+    const defaultEffortOut = nextDefaultEffort === (initialDefaultEffort ?? '')
+      ? undefined
+      : nextDefaultEffort === '' ? null : nextDefaultEffort
+    const signature = JSON.stringify([effortsIntent, nextInput, writeCompat ?? null, defaultEffortOut ?? null])
+    if (lastCommitRef.current === signature) return
+    lastCommitRef.current = signature
+    api.commit(route, modelId, {
+      efforts: effortsIntent,
+      ...(writeCompat === undefined ? {} : { compat: writeCompat }),
+      ...(nextInput === undefined ? {} : { input: nextInput }),
+      ...compatClearIntent(routeApi, writeCompat),
+      ...(defaultEffortOut === undefined ? {} : { defaultEffort: defaultEffortOut }),
+    })
+    // "Modified" is DERIVED, never messaged: every handler below clears the
+    // message in the same batch, so a pending-save message set here would be
+    // overwritten on the very turn it became true (React folds both updates).
+    // It renders from `changed` instead — see the message block.
+  }
+
   const patchLevel = (level: (typeof LEVEL_ORDER)[number], on: boolean): void => {
     markDirty()
     // Disarming the level the pick names clears the pick with it: the pick is
-    // a level of the declared ladder, and a stale one must not survive Apply.
-    if (!on && defaultEffort === level) setDefaultEffort('')
+    // a level of the declared ladder, and a stale one must not survive.
+    const nextDefaultEffort = !on && defaultEffort === level ? '' : defaultEffort
+    if (nextDefaultEffort !== defaultEffort) setDefaultEffort(nextDefaultEffort)
     setDraft(current => {
       const next = { ...current, [level]: { ...current[level], on } }
       // Enabling a thinking level pre-fills the conventional spelling.
       if (on && level !== 'off' && next[level].wire.trim().length === 0) {
         next[level] = { ...next[level], wire: level }
       }
+      commitPending(next, modality, nextDefaultEffort)
       return next
     })
     setMessage(undefined)
@@ -285,19 +369,57 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
 
   const patchWire = (level: (typeof LEVEL_ORDER)[number], wire: string): void => {
     markDirty()
-    setDraft(current => ({ ...current, [level]: { ...current[level], wire } }))
+    setDraft(current => {
+      const next = { ...current, [level]: { ...current[level], wire } }
+      commitPending(next, modality, defaultEffort)
+      return next
+    })
     setMessage(undefined)
   }
 
   const patchImage = (on: boolean): void => {
     markDirty()
-    setModality({ declared: true, image: on })
+    const nextModality = { declared: true, image: on }
+    setModality(nextModality)
+    commitPending(draft, nextModality, defaultEffort)
     setMessage(undefined)
   }
 
   const clearModality = (): void => {
     markDirty()
-    setModality({ declared: false, image: false })
+    const nextModality = { declared: false, image: false }
+    setModality(nextModality)
+    commitPending(draft, nextModality, defaultEffort)
+    setMessage(undefined)
+  }
+
+  // Each text field reports on its own change: a controlled input fires per
+  // keystroke, and commitPending collapses the ones that do not move the value.
+  const patchBudgetField = (value: string): void => {
+    markDirty()
+    setBudgetField(value)
+    commitPending(draft, modality, defaultEffort)
+    setMessage(undefined)
+  }
+
+  const patchPriority = (value: string): void => {
+    markDirty()
+    setPriorityText(value)
+    commitPending(draft, modality, defaultEffort)
+    setMessage(undefined)
+  }
+
+  const patchMaxOutput = (value: string): void => {
+    markDirty()
+    setMaxOutput(value)
+    commitPending(draft, modality, defaultEffort)
+    setMessage(undefined)
+  }
+
+  const patchDefaultEffort = (value: string): void => {
+    markDirty()
+    setDefaultEffort(value)
+    commitPending(draft, modality, value)
     setMessage(undefined)
   }
 
@@ -314,8 +436,11 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     },
   ): void => {
     markDirty()
-    setDraft(draftFrom(parts.efforts))
-    if (parts.input !== undefined) setModality(modalityFrom(parts.input))
+    const nextDraft = draftFrom(parts.efforts)
+    setDraft(nextDraft)
+    // The suggestion's own modality, when it carries one; else the draft's.
+    const nextModality = parts.input === undefined ? modality : modalityFrom(parts.input)
+    if (parts.input !== undefined) setModality(nextModality)
     setSuggested(parts.efforts)
     setSuggestedSource(parts.source)
     setSuggestedConfidence(parts.confidence)
@@ -327,6 +452,9 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
       kind: 'info',
       text: t('appliedHint', { source: parts.source, confidence: t('confidence_' + parts.confidence) }),
     })
+    // One commit for the whole suggestion, so the ledger never holds the
+    // ladder without the compat block that makes its wire spellings work.
+    commitPending(nextDraft, nextModality, defaultEffort)
   }
 
   const autoAdapt = async (): Promise<void> => {
@@ -350,61 +478,14 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     }
   }
 
-  const save = async (): Promise<void> => {
-    const next = buildIntent(draft)
-    // The modality part travels ONLY when this edit actually changed it: an
-    // untouched row must omit the intent entirely -- sending the unset-null
-    // here would stamp the durable inputUnset marker onto modalities the
-    // user never made any decision about.
-    const nextInput = sameModality(modality, initialInput) ? undefined : buildModalityIntent(modality)
-    // Nothing armed AND nothing stored: the ladder part of this edit is a
-    // no-op, NOT an unset -- sending undefined here would stamp the durable
-    // unset marker onto a never-declared model and silence host auto-fill.
-    const effortsIntent = next === undefined && initialEfforts === undefined ? 'keep' as const : next
-    const manualCompat = compatDraft()
-    const baseCompat = appliedCompatRef.current
-    let writeCompat = baseCompat !== undefined ? { ...baseCompat, ...(manualCompat ?? {}) } : manualCompat
-    if (initialCompat?.supportsThinkingTokenBudget === true && initialCompat?.thinkingTokenBudgetField === undefined && writeCompat?.thinkingTokenBudgetField === undefined && (routeApi ?? '').toLowerCase() === 'openai-completions') {
-      writeCompat = { ...(writeCompat ?? {}), thinkingTokenBudgetField: 'thinking_token_budget' }
-    }
-    setBusy(true)
-    setMessage(undefined)
-    try {
-      // Staged: keep the declaration in memory against the create card's
-      // route id; the settings write happens when the injector sees the
-      // saved route appear.
-      if (staged) {
-        api.stageEfforts(route, modelId, effortsIntent, writeCompat, nextInput ?? undefined, defaultEffortIntent)
-        dirtyRef.current = false
-        setMessage({ kind: 'success', text: t('staged') })
-        return
-      }
-      const reply = await api.writeEfforts(route, modelId, effortsIntent, writeCompat, nextInput, clearedCompatKeys(routeApi, writeCompat), defaultEffortIntent)
-      if (!reply.ok) {
-        setMessage({
-          kind: 'error',
-          text: reply.error === 'invalid-models'
-            ? t('invalidModels')
-            : reply.error === 'conflict'
-              ? t('conflict')
-              : reply.error,
-        })
-        return
-      }
-      dirtyRef.current = false
-      setMessage({ kind: 'success', text: t('saved') })
-    } catch (error) {
-      setMessage({ kind: 'error', text: t('writeError', { message: String(error) }) })
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const reset = (): void => {
     // Back to the SAVED declarations, not to "everything off": Reset means
     // "discard my edits". Clearing a declaration is still one flow away --
-    // uncheck everything and Apply (the unset intent).
+    // uncheck everything (the unset intent).
     dirtyRef.current = false
+    // The ledger outlives this component's state: without withdrawing, the
+    // discard is cosmetic and the official Save writes the edits anyway.
+    api.withdraw(route, modelId)
     setDraft(draftFrom(initialEfforts))
     setModality(modalityFrom(initialInput))
     setDefaultEffort(initialDefaultEffort ?? '')
@@ -419,6 +500,9 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     setReferenceContext(undefined)
     setReferenceMaxTokens(undefined)
     setMessage(undefined)
+    // Let the next edit report itself again: the collapsed signature belongs
+    // to the intent that was just withdrawn.
+    lastCommitRef.current = undefined
   }
 
   // Default-wire warning (issue #2): a stored forced-thinking ladder sends
@@ -489,7 +573,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
               disabled={disabled}
               aria-label={t('defaultEffortLabel') + ' ' + String(index + 1)}
               value={defaultEffort}
-              onChange={(event) => { markDirty(); setDefaultEffort(event.target.value); setMessage(undefined) }}
+              onChange={(event) => { patchDefaultEffort(event.target.value) }}
             >
               <option value="">{t('defaultEffortUnset')}</option>
               {/* A pick pushed from outside the draft (a hand-edited
@@ -508,7 +592,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
                 type="button"
                 className="bre-link-button bre-modality-clear"
                 disabled={disabled}
-                onClick={() => { markDirty(); setDefaultEffort(''); setMessage(undefined) }}
+                onClick={() => { patchDefaultEffort('') }}
               >
                 {t('clearDefaultEffort')}
               </button>
@@ -553,7 +637,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
               disabled={disabled}
               aria-label={t('budgetFieldLabel') + ' ' + String(index + 1)}
               value={budgetField}
-              onChange={(event) => { markDirty(); setBudgetField(event.target.value); setMessage(undefined) }}
+              onChange={(event) => { patchBudgetField(event.target.value) }}
             >
               <option value="">{t('budgetUnset')}</option>
               <option value="thinking_token_budget">thinking_token_budget</option>
@@ -573,7 +657,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
                 disabled={disabled}
                 placeholder={t('priorityPlaceholder')}
                 aria-label={t('priorityLabel') + ' ' + String(index + 1)}
-                onChange={(event) => { markDirty(); setPriorityText(event.target.value); setMessage(undefined) }}
+                onChange={(event) => { patchPriority(event.target.value) }}
               />
             </label>
             <span className="bre-compat-hint">{t('priorityHint')}</span>
@@ -592,7 +676,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
               disabled={disabled}
               aria-label={t('maxOutputLabel') + ' ' + String(index + 1)}
               value={maxOutput}
-              onChange={(event) => { markDirty(); setMaxOutput(event.target.value); setMessage(undefined) }}
+              onChange={(event) => { patchMaxOutput(event.target.value) }}
             >
               <option value="">{t('maxOutputUnset')}</option>
               <option value="true">{t('maxOutputOn')}</option>
@@ -652,19 +736,23 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
           {message.text}
         </p>
       )}
+      {!changed
+        ? null
+        : (
+          <p className="bre-effort-message bre-info" role="status">
+            {t('pendingSave')}
+          </p>
+        )}
+      {!changed ? null : <p className="bre-effort-note">{t('pendingHint')}</p>}
+      {/* No commit button since C2: the row's edits land with the official
+          card's own Save (issue #7), so the only action left is discarding
+          them. A card-level commit would ride the frozen revision baseline
+          that made that Save fail in the first place. */}
       <div className="bre-effort-actions">
         <button
           type="button"
-          className="bre-primary-button"
-          disabled={disabled || !changed}
-          onClick={() => { void save() }}
-        >
-          {busy ? t('saving') : staged ? t('stage') : t('apply')}
-        </button>
-        <button
-          type="button"
           className="bre-secondary-button"
-          disabled={disabled}
+          disabled={disabled || !changed}
           onClick={reset}
         >
           {t('reset')}

@@ -13,7 +13,7 @@ import { en, zh } from '../../src/client/locales.js'
 import type { ModelDirectoryLike, ModelDirectoryStateLike, RemoteApi, SettingsJoin } from '../../src/client/types.js'
 
 /** A settings join shaped like the real wire view. */
-export function makeJoin(providers: Record<string, unknown>): SettingsJoin {
+export function makeJoin(providers: Record<string, unknown>, userProviders?: Record<string, unknown>): SettingsJoin {
   return {
     // The SettingsNamespaceView pins value/user to JsonValue; the fixtures
     // are plain JSON shapes, so the view asserts once instead of per-field.
@@ -21,7 +21,9 @@ export function makeJoin(providers: Record<string, unknown>): SettingsJoin {
       ns: PI_AI_NS,
       schema: {},
       value: { providers },
-      user: {},
+      // The write baseline is the RAW user layer, so a fixture that exercises
+      // the running auto-fill (or any write) mirrors the document into it.
+      user: userProviders === undefined ? {} : { providers: userProviders },
       revision: 1,
       applies: 'live',
       secrets: [],
@@ -225,3 +227,4 @@ export async function waitFor(condition: () => boolean, budgetMs = 2000): Promis
     await new Promise(resolve => setTimeout(resolve, 30))
   }
 }
+
