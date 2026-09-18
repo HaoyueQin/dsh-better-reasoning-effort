@@ -95,6 +95,14 @@ export interface EffortEditorProps {
    * automatically once the row is saved.
    */
   staged?: boolean
+  /**
+   * Whether the official Models page owns input types for this row (the
+   * 0.1.6-alpha.2 `ModelInputTypes` control was sniffed in the disclosure).
+   * True hides the modality section: the official editor is the single
+   * surface, so showing a second one would be duplicate UI. Older kernels
+   * have no such control and keep the section.
+   */
+  officialInputTypes?: boolean
   /** The write seam (settings.mutate plus the suggestion engine). */
   api: EffortEditorApi
   /** Read-only (settings document not writable). */
@@ -180,7 +188,7 @@ function sameModality(draft: DraftModality, stored: InputModalities | undefined)
  * checkboxes, the modality toggle, the auto-adapt action, and the
  * apply/reset actions that own both sections.
  */
-export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, defaultEffort: initialDefaultEffort, index, staged = false, api, readOnly, t }: EffortEditorProps): ReactNode {
+export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, defaultEffort: initialDefaultEffort, index, staged = false, officialInputTypes = false, api, readOnly, t }: EffortEditorProps): ReactNode {
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [modality, setModality] = useState<DraftModality>(() => modalityFrom(initialInput))
   // The per-model default-effort pick (issue #4), as the level id or '' for
@@ -601,32 +609,38 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
           <p className="bre-modality-note">{t('defaultEffortHint')}</p>
         </div>
       ) : null}
-      <div className="bre-modality">
-        <span className="bre-effort-title">{t('inputModality')}</span>
-        <label className="bre-modality-row">
-          <input
-            type="checkbox"
-            checked={modality.declared && modality.image}
-            disabled={disabled}
-            aria-label={t('modalityImage') + ' ' + String(index + 1)}
-            onChange={(event) => { patchImage(event.target.checked) }}
-          />
-          <span className="bre-effort-level">{t('modalityImage')}</span>
-          {modality.declared
-            ? (
-              <button
-                type="button"
-                className="bre-link-button bre-modality-clear"
-                disabled={disabled}
-                onClick={clearModality}
-              >
-                {t('clearDeclaration')}
-              </button>
-            )
-            : null}
-        </label>
-        {!modality.declared ? <p className="bre-modality-note">{t('modalityInherit')}</p> : null}
-      </div>
+      {/* The official page owns input types from 0.1.6-alpha.2 on (its
+          ModelInputTypes control was sniffed in this row's disclosure): the
+          official editor is the single surface then, so this section stands
+          down. Older kernels keep it. */}
+      {officialInputTypes ? null : (
+        <div className="bre-modality">
+          <span className="bre-effort-title">{t('inputModality')}</span>
+          <label className="bre-modality-row">
+            <input
+              type="checkbox"
+              checked={modality.declared && modality.image}
+              disabled={disabled}
+              aria-label={t('modalityImage') + ' ' + String(index + 1)}
+              onChange={(event) => { patchImage(event.target.checked) }}
+            />
+            <span className="bre-effort-level">{t('modalityImage')}</span>
+            {modality.declared
+              ? (
+                <button
+                  type="button"
+                  className="bre-link-button bre-modality-clear"
+                  disabled={disabled}
+                  onClick={clearModality}
+                >
+                  {t('clearDeclaration')}
+                </button>
+              )
+              : null}
+          </label>
+          {!modality.declared ? <p className="bre-modality-note">{t('modalityInherit')}</p> : null}
+        </div>
+      )}
       {(routeApi ?? '').toLowerCase() === 'openai-completions' ? (
         <div className="bre-compat">
           <span className="bre-effort-title">{t('compatTitle')}</span>

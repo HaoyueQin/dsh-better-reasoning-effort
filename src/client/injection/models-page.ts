@@ -40,7 +40,11 @@ const HOST_MODELS_NS = 'settings.models'
  * relabels the page and the anchors together.
  */
 const HOST_LABEL_KEYS = {
-  capacity: ['modelAdvanced', 'Capacities'],
+  // The disclosure copy was renamed `Capacities`/`容量` → `Model options`/
+  // `模型选项` in 0.1.6-alpha.2, so the no-dictionary fallback carries BOTH
+  // English labels (newest first). The dictionary key resolves first on every
+  // host that ships one.
+  capacity: ['modelAdvanced', 'Model options', 'Capacities'],
   modelId: ['modelId', 'Model ID'],
   modelName: ['modelName', 'Display name'],
   routeId: ['customRoute', 'Provider ID'],
@@ -51,7 +55,7 @@ const HOST_LABEL_KEYS = {
   // anchor of its own: the button keeps its position in the row.
   apply: ['apply', 'Apply'],
   cancel: ['cancel', 'Cancel'],
-} as const satisfies Record<keyof HostLabels, readonly [string, string]>
+} as const satisfies Record<keyof HostLabels, readonly [string, string, ...string[]]>
 
 /** What the Models-page injection needs from its host. */
 export interface ModelsPageDeps {
@@ -106,10 +110,10 @@ export function createModelsPage(deps: ModelsPageDeps): ModelsPageInjection {
    */
   const labels = (): HostLabels => {
     const translate = ctx.locale.bind(HOST_MODELS_NS) as (key: string) => string
-    const resolve = ([key, fallback]: readonly [string, string]): readonly string[] => {
+    const resolve = ([key, ...fallbacks]: readonly [string, string, ...string[]]): readonly string[] => {
       const value = translate(key)
       // A host with no such namespace makes translate() echo the key back.
-      return value === key || value.trim() === '' ? [fallback] : [value, fallback]
+      return value === key || value.trim() === '' ? fallbacks : [value, ...fallbacks]
     }
     return {
       capacity: resolve(HOST_LABEL_KEYS.capacity),

@@ -18,14 +18,61 @@ import type { ModelDirectoryLike } from '../types.js'
 // ---- Host faces (structural; both kernels expose the same shape, see
 // ---- client/types.ts). ----
 
-/** The `sessions` service face this needs: the current session id. */
+/**
+ * The `sessions` service face this needs: the current session id.
+ *
+ * Through 0.1.6-alpha.1 the catalog snapshot carried the selection as
+ * `current`; 0.1.6-alpha.2 dropped it (navigation moved to the view owner) and
+ * reports rows as `byId`, each with its `retainedBy` source counts.
+ */
 interface SessionsLike {
-  list?: { getSnapshot(): { current?: string } }
+  list?: {
+    getSnapshot(): {
+      current?: string
+      byId?: Record<string, { id?: string; retainedBy?: Record<string, number> } | undefined>
+    }
+  }
+}
+
+/**
+ * The `ui-session` service face (0.1.6-alpha.2+): its scope adapter exposes the
+ * main-view binding, whose `key` is the current session id.
+ */
+interface UiSessionLike {
+  adapter?: { current?: { getSnapshot(): { key?: string } } }
 }
 
 /** The `modelDirectories` service face this needs. */
 interface ModelDirectoriesLike {
   directoryFor(sessionId: string): ModelDirectoryLike
+}
+
+/**
+ * Resolve the current session id across kernel lines:
+ *   1. the list snapshot's `current` (0.1.6-alpha.1 and earlier);
+ *   2. the ui-session main binding (0.1.6-alpha.2's authoritative source);
+ *   3. the first main-view-retained catalog row — the same preference
+ *      ui-session itself applies, used when that service is absent.
+ * A non-empty string is required at every step: an empty id would resolve no
+ * session scope and only throw inside the resolver.
+ * @param sessions - the sessions service face, when mounted.
+ * @param uiSession - the ui-session service face, when mounted.
+ * @returns the current session id, or undefined in the boot window.
+ */
+function currentSessionId(
+  sessions: SessionsLike | undefined,
+  uiSession: UiSessionLike | undefined,
+): string | undefined {
+  const snapshot = sessions?.list?.getSnapshot()
+  const direct = snapshot?.current
+  if (typeof direct === 'string' && direct.length > 0) return direct
+  const bound = uiSession?.adapter?.current?.getSnapshot?.()?.key
+  if (typeof bound === 'string' && bound.length > 0) return bound
+  for (const [key, row] of Object.entries(snapshot?.byId ?? {})) {
+    if (row === undefined || (row.retainedBy?.['mainView'] ?? 0) <= 0) continue
+    return typeof row.id === 'string' && row.id.length > 0 ? row.id : key
+  }
+  return undefined
 }
 
 /** The context seats this probes, lazily (services mount after boot). */
@@ -96,8 +143,9 @@ export function createSessionDirectoryTracker(deps: SessionDirectoryDeps): Sessi
   const ensure = (): ModelDirectoryLike | undefined => {
     const host = deps.ctx as SliderContext
     const sessions = host.get?.('sessions') as SessionsLike | undefined
+    const uiSession = host.get?.('uiSession') as UiSessionLike | undefined
     const directories = host.get?.('modelDirectories') as ModelDirectoriesLike | undefined
-    const sessionId = sessions?.list?.getSnapshot().current
+    const sessionId = currentSessionId(sessions, uiSession)
     if (sessionId === undefined || directories === undefined) return undefined
     try {
       // Resolve FIRST, then compare identities: a session scope can be torn

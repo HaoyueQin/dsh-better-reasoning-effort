@@ -8,8 +8,9 @@
  * renders after the rows — neither reaches a single model row's editor
  * internals, so this plugin mounts its editor as a DOM contribution next to
  * the official per-model capacity disclosure. The anchor is the official
- * "Capacities" (容量) chevron
- * button, found by aria-label in both locales; the editor is inserted into the
+ * disclosure chevron button, found by aria-label in both locales (the
+ * `modelAdvanced` dictionary value: "Capacities"/容量 through 0.1.6-alpha.1,
+ * "Model options"/模型选项 from 0.1.6-alpha.2); the editor is inserted into the
  * same disclosure container that holds the official context-window / max
  * tokens fields.
  *
@@ -61,7 +62,7 @@ function hasOwn(object: Record<string, unknown>, key: string): boolean {
  * ("Model ID 1", "モデル ID 2", …) and are matched by prefix.
  */
 export interface HostLabels {
-  /** The per-row disclosure button ("Capacities", "容量", …). */
+  /** The per-row disclosure button ("Model options", "模型选项", "Capacities", "容量", …). */
   capacity: readonly string[]
   /** The model-id input. */
   modelId: readonly string[]
@@ -166,6 +167,13 @@ export interface EditorMountProps {
    * model row on a saved route): Apply stages the declaration instead of
    * writing, and the injector lands it once the row is saved. */
   staged?: boolean
+  /**
+   * Whether the official Models page owns input types for this row: 0.1.6-alpha.2
+   * renders its own ModelInputTypes control inside the disclosure. When true,
+   * the editor hides its modality section — a CAPABILITY sniffed from the row
+   * DOM, never a kernel version.
+   */
+  officialInputTypes?: boolean
   api: EffortEditorApi
   readOnly: boolean
   t: (key: string, params?: Record<string, string | number>) => string
@@ -1010,6 +1018,17 @@ function disclosureOf(trigger: HTMLButtonElement): HTMLElement | undefined {
   return candidates.find(candidate => candidate.offsetParent !== null) ?? candidates[0]
 }
 
+/**
+ * Whether the official page ships its own input-types editor inside this
+ * row's disclosure (0.1.6-alpha.2's `ModelInputTypes` fieldset). This is the
+ * CAPABILITY signal the plugin sniffs to stand its own modality section down:
+ * a DOM fact, matched by the official class-name stem the same way the
+ * `modelAdvanced` anchor is — never a kernel version number.
+ */
+function officialInputTypesOf(container: HTMLElement): boolean {
+  return container.querySelector('[class*="modelInputTypes"]') !== null
+}
+
 /** Whether an editor is already mounted in a container (idempotency guard). */
 function hasEditor(container: HTMLElement): boolean {
   return container.querySelector(`[data-plugin="${PLUGIN_ID}"]`) !== null
@@ -1035,6 +1054,9 @@ function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
     // to write mode: staged changes the Apply button's whole contract, so it
     // participates in the diff like any other prop.
     && a.staged === b.staged
+    // The official capability can appear/disappear across an HMR or host
+    // update; the modality section must follow it.
+    && a.officialInputTypes === b.officialInputTypes
     && sameEfforts(a.efforts, b.efforts)
     && sameInput(a.input, b.input)
     && sameCompat(a.compat, b.compat)
@@ -1397,6 +1419,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         ...defaultEffort === undefined ? {} : { defaultEffort },
         index,
         staged,
+        officialInputTypes: officialInputTypesOf(target.container),
         api: createEditorApi(
           deps.api,
           undefined,

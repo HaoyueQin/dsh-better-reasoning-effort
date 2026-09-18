@@ -84,6 +84,12 @@ function fakeDirectory(
     rejectSelects?: boolean
     /** Reject the first N submissions (a session mid-initialization), then accept. */
     rejectFirst?: number
+    /**
+     * How a refusal arrives. 'throw' is the <= 0.1.6-alpha.1 directory;
+     * 'value' is 0.1.6-alpha.2, whose `select` resolves a `{ok:false}` result
+     * instead of throwing.
+     */
+    rejectShape?: 'throw' | 'value'
   },
 ): {
   directory: ModelDirectoryLike
@@ -113,6 +119,9 @@ function fakeDirectory(
         selectCalls += 1
         state = { ...state, status: 'error', error: 'session/invalid: no such effort' }
         for (const listener of [...listeners]) listener()
+        if (opts?.rejectShape === 'value') {
+          return { ok: false, error: { code: 'session/invalid', message: 'no such effort' } }
+        }
         throw new Error('session.selectModel failed: session/invalid: no such effort')
       }
       selectCalls += 1
@@ -186,6 +195,23 @@ describe('wireEffortMemory: model switches', () => {
         fake.directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'xhigh' }),
       ).rejects.toThrow('session.selectModel failed')
       // A refused pick must not poison the memory for every later switch.
+      expect(rememberedEffort('openai', 'gpt-5.6')).toBeUndefined()
+    } finally {
+      restore()
+    }
+  })
+
+  it('does not remember an explicit pick the host refuses as a result (0.1.6-alpha.2)', async () => {
+    // 0.1.6-alpha.2's directory RESOLVES a {ok:false} result on refusal instead
+    // of throwing; the memory must treat it exactly like the thrown refusal.
+    const fake = fakeDirectory(
+      stateWith({ provider: 'openai', model: 'gpt-5.6' }),
+      { rejectSelects: true, rejectShape: 'value' },
+    )
+    const restore = wireEffortMemory(fake.directory)
+    try {
+      const outcome = await fake.directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'xhigh' })
+      expect(outcome).toMatchObject({ ok: false })
       expect(rememberedEffort('openai', 'gpt-5.6')).toBeUndefined()
     } finally {
       restore()
@@ -395,6 +421,27 @@ describe('wireEffortMemory: restored projections', () => {
       // The successful attempt is final: later updates stay quiet.
       fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
       await new Promise(resolve => setTimeout(resolve, 0))
+      expect(fake.attempts()).toBe(3)
+    } finally {
+      restore()
+    }
+  })
+
+  it('retries refused restores when the host returns the refusal as a result (0.1.6-alpha.2)', async () => {
+    // 0.1.6-alpha.2's refusal is a RESOLVED {ok:false}, not a throw: without
+    // normalizing it the refund/retry path is dead and a session mid-init
+    // would lose its remembered level for good.
+    rememberEffort('moonshot', 'kimi-k3', 'low')
+    const fake = fakeDirectory(
+      stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }),
+      { rejectFirst: 2, rejectShape: 'value' },
+    )
+    const restore = wireEffortMemory(fake.directory)
+    try {
+      fake.update(stateWith({ provider: 'moonshot', model: 'kimi-k3' }, { restore: true }))
+      await vi.waitFor(() => expect(fake.submitted).toEqual([
+        { provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' },
+      ]))
       expect(fake.attempts()).toBe(3)
     } finally {
       restore()

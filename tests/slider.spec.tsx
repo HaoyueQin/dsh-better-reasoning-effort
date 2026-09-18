@@ -161,4 +161,26 @@ describe('ComposerSlider commit', () => {
     })
     root.unmount()
   })
+
+  it('rolls back when the directory resolves the refusal as a result (0.1.6-alpha.2)', async () => {
+    // 0.1.6-alpha.2 RESOLVES {ok:false} on refusal instead of throwing. This
+    // fixture's committed selection carries no explicit effort, so the
+    // post-await store read cannot recover the rollback on its own: without
+    // normalizing the refusal the thumb stays on the failed level.
+    const { directory, selectSpy, update } = fixture({ current: { provider: 'aliyun', model: 'qwen-max' } })
+    selectSpy.mockImplementationOnce(async () => {
+      update({ ...directory.store.getSnapshot(), status: 'error', error: 'session/invalid: no such effort' })
+      return { ok: false, error: { code: 'session/invalid', message: 'no such effort' } }
+    })
+    const { root, container } = await mount(directory)
+    const range = container.querySelector<HTMLInputElement>('input[type="range"]')!
+    // The adapter default (medium) is the rest position before any pick.
+    await vi.waitFor(() => expect(range.value).toBe('2'))
+    pressKey(range, 'ArrowRight')
+    await vi.waitFor(() => {
+      expect(container.querySelector('.bre-effort-sr')?.textContent).toContain('no such effort')
+      expect(range.value).toBe('2')
+    })
+    root.unmount()
+  })
 })

@@ -63,6 +63,34 @@ const EFFORT_MEMORY_KEY = 'dsh-better-reasoning-effort.slider.efforts'
 /** Marker guarding against double-wrapping one directory instance (HMR re-apply). */
 const WIRED_MARKER = 'breSelectWired'
 
+/**
+ * Whether a `select` outcome is a refusal.
+ *
+ * Kernels through 0.1.6-alpha.1 reject by THROWING; 0.1.6-alpha.2 resolves the
+ * wire's `RemoteResult` (`{ok:false}`) instead. Normalizing both shapes here
+ * keeps the memory discipline identical on either kernel.
+ * @param outcome - the value `select` resolved with (or undefined on success).
+ * @returns whether the host refused the selection.
+ */
+export function isSelectRefusal(outcome: unknown): boolean {
+  return typeof outcome === 'object' && outcome !== null && (outcome as { ok?: unknown }).ok === false
+}
+
+/**
+ * The user-facing message of a refusal result, or undefined when the outcome
+ * was accepted. Only 0.1.6-alpha.2's resolved shape carries one; a kernel that
+ * rejects by throwing never reaches here.
+ * @param outcome - the value `select` resolved with.
+ * @returns `code: message`, or undefined when accepted.
+ */
+export function selectRefusalMessage(outcome: unknown): string | undefined {
+  if (!isSelectRefusal(outcome)) return undefined
+  const error = (outcome as { error?: { code?: unknown; message?: unknown } }).error
+  const code = typeof error?.code === 'string' ? error.code : 'settings/rejected'
+  const message = typeof error?.message === 'string' ? error.message : ''
+  return message.length > 0 ? `${code}: ${message}` : code
+}
+
 /** Provider-native effort sightings (`providerThinkingLevel` replay): "provider/model-id" → native level. */
 const PROVIDER_LEVEL_KEY = 'dsh-better-reasoning-effort.slider.provider-levels'
 
@@ -264,8 +292,10 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
       // Recording is part of the plugin's presence: with the slider off the
       // plugin is absent, so an explicit pick must not be recorded either —
       // the wrapped submit then stays a pure pass-through, exactly as the
-      // unwired directory behaved.
-      if (sliderEnabled()) {
+      // unwired directory behaved. A REFUSED pick is never recorded, whether
+      // the kernel rejected by throwing (<= 0.1.6-alpha.1) or by resolving a
+      // refusal result (0.1.6-alpha.2).
+      if (!isSelectRefusal(result) && sliderEnabled()) {
         sessionSightings.set(memoryKey(selection.provider, selection.model), selection.reasoningEffort)
         rememberEffort(selection.provider, selection.model, selection.reasoningEffort)
       }
@@ -368,8 +398,12 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
           || !effortIdsOf(fresh, freshCurrent.provider, freshCurrent.model).includes(fallback)) {
           return
         }
-        await original
+        const outcome = await original
           .call(directory, { provider: freshCurrent.provider, model: freshCurrent.model, reasoningEffort: fallback })
+        // 0.1.6-alpha.2 resolves the refusal instead of throwing: route it to
+        // the refund path below, or a transient refusal would spend the
+        // model's only attempt.
+        if (isSelectRefusal(outcome)) throw outcome
       })
       .catch(() => {
         // A refusal is transient (a session mid-initialization), not a

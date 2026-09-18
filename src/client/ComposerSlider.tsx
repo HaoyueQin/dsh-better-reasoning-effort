@@ -21,6 +21,7 @@
  */
 import { createElement, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react'
+import { selectRefusalMessage } from './effort-memory.js'
 import type {
   DirectoryCurrentLike,
   DirectoryGroupLike,
@@ -376,11 +377,16 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
       setEffort(next)
 
       if (current === null) throw new Error(t('sliderNoCurrent'))
-      await directory.select({
+      const outcome = await directory.select({
         provider: current.provider,
         model: current.model,
         reasoningEffort: next,
       })
+      // Kernels through 0.1.6-alpha.1 reject by throwing; 0.1.6-alpha.2
+      // resolves the refusal result instead. Normalizing it into a throw keeps
+      // the optimistic rollback and the in-menu error line identical.
+      const refusal = selectRefusalMessage(outcome)
+      if (refusal !== undefined) throw new Error(refusal)
 
       const snapshot = directory.store.getSnapshot()
       const accepted = effortIndex(freshLevels, snapshot.current?.reasoningEffort)

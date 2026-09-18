@@ -21,9 +21,10 @@
  *      keeps the official Models page's model rows equipped with the
  *      thinking-effort editor, wherever the page lives in the settings
  *      surface (a panel, a dialog, a portal). This is the SINGLE path:
- *      the official per-model disclosure keeps the same anchors
- *      (Capacities / 容量), so the editor lives under each model row
- *      rather than on the provider card.
+ *      the official per-model disclosure keeps the same anchors (the
+ *      `modelAdvanced` dictionary value — Capacities / 容量 through
+ *      0.1.6-alpha.1, Model options / 模型选项 from 0.1.6-alpha.2), so the
+ *      editor lives under each model row rather than on the provider card.
  *   2. The composer reasoning-effort slider AND the model search box, mounted
  *      inside the OFFICIAL model menu opened from the bottom-right seat. The
  *      seat's trigger is never touched — the official "model · effort" display

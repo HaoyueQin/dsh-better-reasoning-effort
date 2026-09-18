@@ -406,6 +406,20 @@ describe('EffortEditor modality', () => {
     expect(checkboxes(container)[7].checked).toBe(false)
   })
 
+  it('hides the modality section when the official input-types editor is present', async () => {
+    // 0.1.6-alpha.2 ships a per-row Input-types editor. The plugin sniffs that
+    // CAPABILITY and drops its own modality section on exactly those rows;
+    // every other section (levels, default pick, actions) stays.
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({ api, input: ['text', 'image'], officialInputTypes: true }))
+    expect(checkboxes(container)).toHaveLength(7) // off…max, no image toggle
+    expect(container.querySelector(`[aria-label^="${t('modalityImage')}"]`)).toBeNull()
+    expect(hasButton(container, t('clearDeclaration'))).toBe(false)
+    // The ladder still commits normally on a row whose modality is official.
+    await act(async () => { checkboxes(container)[4]!.click() })
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: { high: 'high' } })
+  })
+
   it('an undeclared row stays untouched by an effort-only apply', async () => {
     const api = baseApi()
     const { container } = await renderEditor(baseProps({ api }))

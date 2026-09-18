@@ -20,7 +20,7 @@ import { directoryFixture, fakeApi, JOIN_FIXTURE, makeCtx, makeJoin, waitFor } f
 type Ctx = Parameters<typeof import('../src/client/index.js').apply>[0]
 
 /** Build an approximation of the official models page section (two rows). */
-function buildModelsDom(): HTMLElement {
+function buildModelsDom(capacityLabel = 'Capacities'): HTMLElement {
   const section = document.createElement('div')
   section.className = 'section'
   section.innerHTML = `
@@ -29,7 +29,7 @@ function buildModelsDom(): HTMLElement {
       <div class="modelEntry">
         <div class="modelRow">
           <input aria-label="Model ID" value="qwen-max" />
-          <button aria-label="Capacities 1"></button>
+          <button aria-label="${capacityLabel} 1"></button>
         </div>
         <div class="modelAdvanced" style="display:block">
           <label><span>Context window</span><input /></label>
@@ -38,7 +38,7 @@ function buildModelsDom(): HTMLElement {
       <div class="modelEntry">
         <div class="modelRow">
           <input aria-label="Model ID" value="qwen-turbo" />
-          <button aria-label="Capacities 2"></button>
+          <button aria-label="${capacityLabel} 2"></button>
         </div>
         <div class="modelAdvanced" style="display:block">
           <label><span>Context window</span><input /></label>
@@ -114,6 +114,23 @@ describe('client apply()', () => {
       // Fiber disposal removes the stylesheet and unmounts every React root.
       expect(document.head.querySelector(`style[data-plugin-styles="${PLUGIN_ID}"]`)).toBeNull()
       expect(document.querySelectorAll('.bre-effort-editor')).toHaveLength(0)
+    } finally {
+      h.disposeAll()
+    }
+  })
+
+  it('falls back to the 0.1.6-alpha.2 disclosure label when the host dictionary is absent', async () => {
+    // 0.1.6-alpha.2 renamed the disclosure copy to "Model options". A host that
+    // ships no settings.models dictionary (translate echoes the key) must still
+    // be found, so the English fallback has to track the rename — the old
+    // `Capacities`-only fallback silently stopped injecting there.
+    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
+    const h = makeCtx(api, { hostDict: false })
+    try {
+      buildModelsDom('Model options')
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
     } finally {
       h.disposeAll()
     }
@@ -450,6 +467,65 @@ describe('client apply()', () => {
       h.disposeAll()
       // Fiber disposal restores the directory's original select.
       expect(directory.select).toBe(originalSelect)
+    }
+  })
+
+  it('resolves the current session from uiSession when the list snapshot has no `current` (0.1.6-alpha.2)', async () => {
+    // 0.1.6-alpha.2 moved session navigation out of the list snapshot: the
+    // current session is now the main-view binding exposed by ctx.uiSession.
+    // Without this fallback the slider can never resolve a directory and never
+    // mounts at all.
+    const directory = directoryFixture()
+    const routed: string[] = []
+    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
+    const h = makeCtx(api, {
+      services: {
+        sessions: { list: { getSnapshot: () => ({ ids: [], byId: {}, phase: 'ready' }) } },
+        uiSession: { adapter: { current: { getSnapshot: () => ({ key: 's9' }) } } },
+        modelDirectories: {
+          directoryFor: (id: string) => { routed.push(id); return directory },
+        },
+      },
+    })
+    try {
+      buildComposerMenu()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelector('[data-bre-slider="1"]') !== null)
+      expect(routed).toContain('s9')
+    } finally {
+      h.disposeAll()
+    }
+  })
+
+  it('falls back to the main-view-retained row when neither `current` nor uiSession exists', async () => {
+    const directory = directoryFixture()
+    const routed: string[] = []
+    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
+    const h = makeCtx(api, {
+      services: {
+        sessions: {
+          list: {
+            getSnapshot: () => ({
+              ids: ['s1'],
+              byId: { s1: { id: 's1', retainedBy: { mainView: 2 } } },
+              phase: 'ready',
+            }),
+          },
+        },
+        modelDirectories: {
+          directoryFor: (id: string) => { routed.push(id); return directory },
+        },
+      },
+    })
+    try {
+      buildComposerMenu()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelector('[data-bre-slider="1"]') !== null)
+      expect(routed).toContain('s1')
+    } finally {
+      h.disposeAll()
     }
   })
 

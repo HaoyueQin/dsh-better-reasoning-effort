@@ -241,6 +241,24 @@ describe('reconcile', () => {
     expect(secondProps.index).toBe(1)
   })
 
+  it('sniffs the official input-types capability per row from the disclosure DOM', async () => {
+    // 0.1.6-alpha.2 renders its own ModelInputTypes control inside the
+    // expanded disclosure. The plugin reads that DOM fact as the CAPABILITY
+    // (never a version number) so its own modality section can stand down on
+    // exactly the rows the official editor owns.
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    root.querySelectorAll('.modelAdvanced')[0]!.insertAdjacentHTML(
+      'beforeend',
+      '<fieldset class="ModelsSection_modelInputTypes__hash" aria-label="Input types 1"><legend>Input types</legend></fieldset>',
+    )
+    await settle(() => reconcile(root, deps, state), state)
+    const calls = vi.mocked(deps.mount).mock.calls
+    expect((calls[0]![1] as EditorMountProps).officialInputTypes).toBe(true)
+    expect((calls[1]![1] as EditorMountProps).officialInputTypes).toBe(false)
+  })
+
   it('is idempotent: a second scan does not double-mount', async () => {
     const deps = makeDeps()
     const state = createScanState()
