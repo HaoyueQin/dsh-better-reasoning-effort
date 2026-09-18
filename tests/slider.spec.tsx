@@ -127,6 +127,12 @@ describe('ComposerSlider commit', () => {
     const { directory, selectSpy } = fixture()
     const { root, container } = await mount(directory)
     const range = container.querySelector<HTMLInputElement>('input[type="range"]')!
+    // The mount-sync effect moves the thumb from its initial 0 onto the
+    // session's medium only on a passive effect flush. Pressing before that
+    // lands makes the arrow step FROM 0 (off) and commit 'low' instead of
+    // 'high' — a race that lost on the faster Node 24 CI. Wait for the rest
+    // position first, exactly like the visual-skeleton case above.
+    await vi.waitFor(() => expect(range.value).toBe('2'))
     // Arrow keys move one step per press: 2 (medium) → 3 (high) → 4 (max).
     pressKey(range, 'ArrowRight')
     await vi.waitFor(() => expect(selectSpy).toHaveBeenCalledWith({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'high' }))
