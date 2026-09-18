@@ -29,7 +29,9 @@ function createMenuDom(): HTMLElement {
   menu.className = 'menu'
 
   const groupsContainer = document.createElement('div')
-  groupsContainer.className = 'groups scrollable'
+  // The official build ships a CSS-module class here (`Uc5hea_groups`), so a
+  // literal `.groups` selector must not be what the plugin relies on.
+  groupsContainer.className = 'Uc5hea_groups scrollable'
 
   // Group 1: DeepSeek
   const group1 = document.createElement('section')

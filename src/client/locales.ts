@@ -77,6 +77,7 @@ export const en = {
   modelSearchPlaceholder: 'Search models…',
   modelSearchNoMatches: 'No matching models',
   modelSearchClear: 'Clear search',
+  modelSearchFailed: 'Model search failed to render',
 }
 
 /** The plugin's locale key union. */
@@ -159,4 +160,5 @@ export const zh: { [Key in keyof typeof en]: string } = {
   modelSearchPlaceholder: '搜索模型…',
   modelSearchNoMatches: '未找到匹配模型',
   modelSearchClear: '清空搜索',
+  modelSearchFailed: '模型搜索渲染失败',
 }

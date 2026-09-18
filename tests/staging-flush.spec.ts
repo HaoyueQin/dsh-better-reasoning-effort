@@ -12,7 +12,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, effectiveStagedIntents, reconcile, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
+import { createScanState, effectiveStagedIntents, reconcile, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injection/models-page-editor.js'
 import { suggestEfforts } from '../src/knowledge.js'
 import { AUTOFILL_MARKER } from '../src/constants.js'
 import type { RemoteApi } from '../src/client/types.js'

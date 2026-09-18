@@ -23,15 +23,15 @@
  *   - if the official structure it depends on ever stops appearing, it simply
  *     stops injecting — the settings page remains untouched.
  *
- * @module dsh-better-reasoning-effort/injector
+ * @module dsh-better-reasoning-effort/client/injection/models-page-editor
  */
 
-import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../constants.js'
-import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../knowledge.js'
-import { modelsOf, routeFactsOf } from '../shared.js'
-import { sameEfforts } from './effort.js'
-import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from './ops.js'
-import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from './types.js'
+import { AUTOFILL_MARKER, INPUT_UNSET_MARKER, PLUGIN_ID, UNSET_MARKER } from '../../constants.js'
+import { suggestEfforts, type CompatSuggestion, type InputModalities, type ReasoningEfforts } from '../../knowledge.js'
+import { modelsOf, routeFactsOf } from '../../shared.js'
+import { sameEfforts } from '../effort.js'
+import { compatOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, nameOf, providersOf } from '../ops.js'
+import type { EffortEditorApi, EffortWriteIntent, RemoteApi, SettingsJoin } from '../types.js'
 
 export type { SettingsJoin }
 

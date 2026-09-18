@@ -699,23 +699,4 @@ body:not([data-ds-dark-theme]) .bre-effort.is-dragging .bre-effort-knob {
   line-height: 20px;
   user-select: none;
 }
-
-/* Plan A: Shell stabilization for drilled-in model selection panel */
-.bre-model-menu-searching,
-.bre-model-menu-host:has([data-bre-search]),
-[role="menu"]:has([data-bre-search]) {
-  width: min(320px, calc(100vw - 32px)) !important;
-  min-width: min(320px, calc(100vw - 32px)) !important;
-  height: min(360px, calc(100vh - 96px)) !important;
-}
-.bre-model-menu-searching .groups,
-.bre-model-menu-searching .scrollable,
-.bre-model-menu-host:has([data-bre-search]) .groups,
-.bre-model-menu-host:has([data-bre-search]) .scrollable,
-[role="menu"]:has([data-bre-search]) .groups,
-[role="menu"]:has([data-bre-search]) .scrollable {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-}
 `

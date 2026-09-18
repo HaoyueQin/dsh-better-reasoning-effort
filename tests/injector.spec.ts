@@ -7,7 +7,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, effectiveStagedIntents, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injector.js'
+import { createScanState, effectiveStagedIntents, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injection/models-page-editor.js'
 import { suggestEfforts, type ReasoningEfforts } from '../src/knowledge.js'
 import type { RemoteApi } from '../src/client/types.js'
 
