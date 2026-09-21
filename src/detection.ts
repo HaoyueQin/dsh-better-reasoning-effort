@@ -142,7 +142,8 @@ export function analyzeListingEntry(entry: unknown): EndpointSignal {
  *   - `modalities: { input: [...] }`                          (models.dev style)
  *   - `supported_features: [..., "vision"]` /
  *     `capabilities: [..., "vision"]`                         (feature arrays)
- *   - `supports_vision` / `supportsVision`                    (boolean flags)
+ *   - `supports_vision` / `supportsVision` /
+ *     `supports_images` / `supportsImages`                    (boolean flags)
  *   - `context_length` / `top_provider.context_length`        (OpenRouter capacity)
  *
  * Absence stays absent: a listing that names no recognized field yields no
@@ -189,11 +190,18 @@ function signalParts(entry: Record<string, unknown>): Pick<EndpointSignal, 'inpu
   if (input === undefined) {
     if (hasBoolean(entry, 'supports_vision')) input = entry['supports_vision'] === true ? ['image'] : []
     else if (hasBoolean(entry, 'supportsVision')) input = entry['supportsVision'] === true ? ['image'] : []
+    // `supports_images` is the flag CodeBuddy-derived gateways publish (their
+    // model listings carry `supports_images` and none of the spellings above),
+    // so without it such an endpoint reads as silent and the knowledge layer
+    // wins by default -- which under-declares modalities whenever the catalog
+    // entry it matched happens to be text-only.
+    else if (hasBoolean(entry, 'supports_images')) input = entry['supports_images'] === true ? ['image'] : []
+    else if (hasBoolean(entry, 'supportsImages')) input = entry['supportsImages'] === true ? ['image'] : []
   }
   // An empty disclosure still ANSWERED: an explicit refusal (supports_vision:
-  // false, or a gateway declaring no members at all) maps to the text floor
-  // every supported protocol carries -- so the fusion layer can strip an
-  // image claim instead of mistaking refusal for silence.
+  // false, supports_images: false, or a gateway declaring no members at all)
+  // maps to the text floor every supported protocol carries -- so the fusion
+  // layer can strip an image claim instead of mistaking refusal for silence.
   if (input !== undefined) parts.input = input.length === 0 ? ['text'] : input
 
   // Capacity conventions: top-level, OpenRouter's top_provider, the Anthropic
