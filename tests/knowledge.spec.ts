@@ -26,6 +26,13 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('deepseek-v4-flash')?.id).toBe('deepseek-v4')
     expect(matchKnowledgeBase('deepseek-v4-flash-free')?.id).toBe('deepseek-v4')
     expect(matchKnowledgeBase('deepseek-v4-pro')?.id).toBe('deepseek-v4')
+    // The image-capable V4.1 generation keys its own strictly longer entry in
+    // every spelling -- including the display name a relay hangs on an id it
+    // invented, since the match runs over id + display name.
+    expect(matchKnowledgeBase('deepseek-flash')?.id).toBe('deepseek-v4-1-flash')
+    expect(matchKnowledgeBase('deepseek-v4.1-flash')?.id).toBe('deepseek-v4-1-flash')
+    expect(matchKnowledgeBase('deepseek-v4-1-flash')?.id).toBe('deepseek-v4-1-flash')
+    expect(matchKnowledgeBase('relay-invented-id', 'DeepSeek V4.1 Flash')?.id).toBe('deepseek-v4-1-flash')
     // The vision experiment keys its own (strictly longer) entry, so the
     // base stem never claims images for it -- and vice versa.
     expect(matchKnowledgeBase('deepseek-v4-flash-vision-exp')?.id).toBe('deepseek-v4-vision')
@@ -459,6 +466,30 @@ describe('modality + capacity fusion', () => {
 
   it('keys the vision experiment to image input', () => {
     expect(suggestEfforts('deepseek-v4-flash-vision-exp', {}).input).toEqual(['text', 'image'])
+  })
+
+  it('keys V4.1-Flash to image input in every spelling', () => {
+    // Regression: normalizeLoose turns '.' and '-' into the same separator, so
+    // `deepseek-v4.1-flash` reads as "deepseek v4 1 flash" and the base stem's
+    // `deepseek-v4` found a word boundary in front of the "1" -- every V4.1
+    // spelling was answered by the text-floor entry, so image attachments were
+    // refused for a model that takes them. Strictly longer patterns route them
+    // here instead.
+    for (const id of ['deepseek-flash', 'DeepSeek-Flash', 'deepseek-v4.1-flash', 'deepseek-v4-1-flash', 'deepseek-flash-0731']) {
+      const s = suggestEfforts(id, {})
+      expect(s.entryId, id).toBe('deepseek-v4-1-flash')
+      expect(s.input, id).toEqual(['text', 'image'])
+      expect(s.inputSource, id).toBe('knowledge')
+    }
+    // A relay's own id lands here too, as long as its display name names the
+    // model -- that is the case a gateway-side listing cannot help with.
+    const renamed = suggestEfforts('my-relay-id', { displayName: 'DeepSeek V4.1 Flash' })
+    expect(renamed.entryId).toBe('deepseek-v4-1-flash')
+    expect(renamed.input).toEqual(['text', 'image'])
+    // The base stem keeps its text floor for its own members: pro, and the
+    // retired deepseek-v4-flash spelling this entry still owns.
+    expect(suggestEfforts('deepseek-v4-pro', {}).input).toEqual(['text'])
+    expect(suggestEfforts('deepseek-v4-flash', {}).input).toEqual(['text'])
   })
 
   it('an endpoint disclosure outranks the knowledge base and drops unmappable members', () => {

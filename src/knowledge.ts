@@ -239,31 +239,51 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     note: 'DeepSeek 视觉实验版 id（deepseek-v4-flash-vision-exp）。官方目录已标注该模型退役，名字仍被接受、由现行 deepseek-flash 提供服务——图片输入现已由 deepseek-flash 原生提供。',
   },
   {
+    id: 'deepseek-v4-1-flash',
+    // V4.1-Flash is DeepSeek's CURRENT flagship and it takes image input, which
+    // the shared `deepseek-v4` stem cannot express: that entry carries the text
+    // floor its pro/legacy siblings share, and one modal answer cannot be both.
+    // This entry keys every V4.1 spelling, and it must stay ahead of the base
+    // stem -- the longest-hit rule guarantees that, these patterns are strictly
+    // longer -- so an id, or a display name, that says "V4.1 Flash" declares
+    // images even when the relay invented the id itself.
+    // 'deepseek-flash' is the CURRENT official id (2026-09-10) and belongs
+    // here, not to the stem: the pricing page serves it as V4.1-Flash, and a
+    // third-party reseller exposing DeepSeek's own model under that name means
+    // the same model.
+    patterns: ['deepseek-v4.1-flash', 'deepseek-flash'],
+    efforts: { off: 'none', low: 'low', high: 'high', max: 'max' },
+    defaultEffort: 'high',
+    compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
+    input: ['text', 'image'],
+    contextWindow: 1_048_576,
+    maxTokens: 384_000,
+    note: 'DeepSeek-V4.1-Flash（2026-09-10 发布的现行官方模型，官方 id 为 deepseek-flash；25 万并发、**原生图片输入**）。V4.1 的各写法（deepseek-flash、deepseek-v4.1-flash、deepseek-v4-1-flash，以及带日期后缀的第三方变体）都归此条——纯文本的 deepseek-v4 主干不再吞掉它们。官方枚举同 V4 系：Off（thinking:"disabled"）/ Low / High / Max，默认 High；容量 1,048,576 上下文 / 最大输出 384K。',
+  },
+  {
     id: 'deepseek-v4',
-    // One pattern covers the family: every serving suffixes the base id
-    // (deepseek-v4-flash, deepseek-v4-pro, deepseek-v4-flash-free ...), so
-    // the shared stem keys them all -- including free/aggregator spellings
-    // the official catalog never lists. Closing thinking is the
-    // 'thinking: disabled' object, so the off spelling is a non-null
-    // placeholder that arms the deepseek format's disabled branch. The
-    // placeholder must stay 'none': pi-ai's deepseek completions branch only
-    // checks non-null (any string arms thinking:disabled), while the same map
-    // rides the Responses API as reasoning.effort, whose official DeepSeek
-    // values are none/low/high/max -- 'off' would be a 400 there.
-    // 'deepseek-flash' is the CURRENT official id (2026-09-10): the pricing
-    // page's compatibility note accepts the legacy deepseek-v4-flash /
-    // deepseek-v4-flash-vision-exp spellings but serves the same current
-    // model, so one declaration covers both. It also matches third-party
-    // resellers that expose DeepSeek's own model under that name, which is
-    // the AI's own least-surprising reading of the id.
-    patterns: ['deepseek-v4', 'deepseek-flash'],
+    // One pattern covers the family's TEXT-floor members: every serving
+    // suffixes the base id (deepseek-v4-flash, deepseek-v4-pro,
+    // deepseek-v4-flash-free ...), so the shared stem keys them all --
+    // including free/aggregator spellings the official catalog never lists.
+    // Closing thinking is the 'thinking: disabled' object, so the off spelling
+    // is a non-null placeholder that arms the deepseek format's disabled
+    // branch. The placeholder must stay 'none': pi-ai's deepseek completions
+    // branch only checks non-null (any string arms thinking:disabled), while
+    // the same map rides the Responses API as reasoning.effort, whose official
+    // DeepSeek values are none/low/high/max -- 'off' would be a 400 there.
+    // The stem deliberately stops at 'deepseek-v4': the image-capable V4.1
+    // generation keys its own strictly longer entry above, while this entry
+    // keeps the retired deepseek-v4-flash spelling and the text-only
+    // deepseek-v4-pro, whose declarations agree with its text floor.
+    patterns: ['deepseek-v4'],
     efforts: { off: 'none', low: 'low', high: 'high', max: 'max' },
     defaultEffort: 'high',
     compat: { thinkingFormat: 'deepseek', supportsReasoningEffort: true },
     input: ['text'],
     contextWindow: 1_048_576,
     maxTokens: 384_000,
-    note: 'DeepSeek 官方枚举 Low / High / Max（默认 High；minimal、medium、xhigh 兼容映射，ultra→max），Off 即 thinking:"disabled"（Responses API 下 off 以 reasoning.effort:"none" 表示）。官方模型现为 deepseek-flash（= DeepSeek-V4.1-Flash，2026-09-10 发布，25 万并发、原生图片输入）与 deepseek-v4-pro（= DeepSeek-V4-Pro-0813，2026-09-14 起请求全量路由到 V4.1-Flash、不支持图片）；deepseek-v4-flash 与 deepseek-v4-flash-vision-exp 是已退役模型的兼容别名。容量：1,048,576 上下文 / 最大输出 384K（393,216；默认非思考 8K、思考 64K、effort=max 时 128K）。',
+    note: 'DeepSeek 官方枚举 Low / High / Max（默认 High；minimal、medium、xhigh 兼容映射，ultra→max），Off 即 thinking:"disabled"（Responses API 下 off 以 reasoning.effort:"none" 表示）。本条目是 V4 家族的**纯文本**成员：deepseek-v4-pro（= DeepSeek-V4-Pro-0813，官方不支持图片）与已退役模型的兼容别名 deepseek-v4-flash（deepseek-v4-flash-vision-exp 另有视觉条目）。**收图的 V4.1-Flash（官方 id deepseek-flash）另有专门条目**，其 input 含 image。容量：1,048,576 上下文 / 最大输出 384K（393,216；默认非思考 8K、思考 64K、effort=max 时 128K）。',
   },
   {
     id: 'deepseek-v3',
