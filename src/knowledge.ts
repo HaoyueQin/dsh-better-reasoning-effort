@@ -1169,7 +1169,7 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
   },
   {
     id: 'mimo-v2-6',
-    // Xiaomi MiMo v2.6 (and the v2.5 generation it supersedes) takes a required
+    // Xiaomi MiMo v2.6 takes a required
     // thinking.type toggle (enabled/disabled, default enabled) plus a required
     // reasoning.effort. The official page lists the accepted effort values as
     // none/minimal/low/medium/high/xhigh/max/ultra and normalizes minimal to
@@ -1177,31 +1177,15 @@ export const KNOWLEDGE_BASE: readonly KnowledgeEntry[] = [
     // strength is not differentiated yet, so the ladder below is what the
     // endpoint ACCEPTS, not a set of levels that behave differently today.
     // xhigh/max are deliberately absent: the endpoint folds them into high.
-    // One entry covers both generations: the same models are documented under
-    // one contract, and the family's only text-only member (v2.5-pro) keys its
-    // own entry with a strictly longer pattern.
-    patterns: ['mimo-v2.6', 'mimo-v2.5'],
+    // Only the v2.6 generation is covered here: its three ids share one
+    // contract and are all multimodal.
+    patterns: ['mimo-v2.6'],
     efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high' },
     compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
     input: ['text', 'image'],
     contextWindow: 1_048_576,
     maxTokens: 131_072,
-    note: '小米 MiMo v2.6 系列（mimo-v2.6-pro / -flash / -pro-ultraspeed；1M 上下文 / 128K 最大输出、原生全模态）与其前代 mimo-v2.5。官方文档：thinking.type（enabled/disabled，默认 enabled）+ reasoning.effort（none 关闭；其余合法值均开启，且**现阶段暂未区分推理强度**——minimal 归一为 low、xhigh/max/ultra 归一为 high），因此这里声明的是端点**接受**的档位 Off / Low / Medium / High（xhigh、max 不声明，端点只会折叠为 high）。思考模式下 temperature / top_p 不可自定义（强制 1.0 / 0.95）；带工具调用的历史轮必须完整回传 reasoning_content，否则 400。mimo-v2.5 与 v2.5-pro 官方定于 2026-10-21 下线。',
-  },
-  {
-    id: 'mimo-v2-5-pro',
-    // The v2.5 flagship is the family's only text-only member -- the official
-    // capability table lists no multimodal understanding for it (models.dev
-    // agrees, attachment=false), while every v2.6 model and mimo-v2.5 do.
-    // Strictly longer pattern than the family entry's 'mimo-v2.5', so the
-    // longest-hit rule routes it here.
-    patterns: ['mimo-v2.5-pro'],
-    efforts: { off: 'none', low: 'low', medium: 'medium', high: 'high' },
-    compat: { thinkingFormat: 'openai', supportsReasoningEffort: true },
-    input: ['text'],
-    contextWindow: 1_048_576,
-    maxTokens: 131_072,
-    note: '小米 MiMo v2.5-Pro：该家族唯一的**纯文本**成员（官方能力表未列全模态理解），1M 上下文 / 128K 最大输出，推理契约与 v2.6 系列相同（thinking.type + reasoning.effort，none 关闭、其余档位暂不区分强度）。官方定于 2026-10-21 下线。',
+    note: '小米 MiMo v2.6 系列（mimo-v2.6-pro / -flash / -pro-ultraspeed；1M 上下文 / 128K 最大输出、原生全模态）。官方文档：thinking.type（enabled/disabled，默认 enabled）+ reasoning.effort（none 关闭；其余合法值均开启，且**现阶段暂未区分推理强度**——minimal 归一为 low、xhigh/max/ultra 归一为 high），因此这里声明的是端点**接受**的档位 Off / Low / Medium / High（xhigh、max 不声明，端点只会折叠为 high）。思考模式下 temperature / top_p 不可自定义（强制 1.0 / 0.95）；带工具调用的历史轮必须完整回传 reasoning_content，否则 400。',
   },
   {
     id: 'baidu-ernie',
