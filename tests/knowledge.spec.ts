@@ -121,6 +121,33 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('claude-mythos-5')?.id).toBe('anthropic-claude-5')
   })
 
+  it('matches the 2026-09 additions (Step 5, Grok 4.7, MiMo v2.6)', () => {
+    // StepFun's only Step-5 id is step-5-preview: the same three-step ladder
+    // as the 3.x line, thinking always on, and native image input.
+    const step5 = matchKnowledgeBase('step-5-preview')
+    expect(step5?.id).toBe('step-5-preview')
+    expect(step5?.efforts).toEqual({ low: 'low', medium: 'medium', high: 'high' })
+    expect(step5?.input).toEqual(['text', 'image'])
+    // grok-4.7 supersedes the earlier "does not exist upstream (404)" reading,
+    // and must not be swallowed by the generic `grok` entry.
+    expect(matchKnowledgeBase('grok-4.7')?.id).toBe('xai-grok-4-7')
+    expect(matchKnowledgeBase('grok-4.7')?.efforts).toEqual({ low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' })
+    expect(matchKnowledgeBase('grok-4.6')?.id).toBe('xai-grok-high')
+    // MiMo: one entry for the family, with v2.5-pro as the text-only exception.
+    for (const id of ['mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.6-pro-ultraspeed', 'mimo-v2.5']) {
+      expect(matchKnowledgeBase(id)?.id, id).toBe('mimo-v2-6')
+    }
+    expect(matchKnowledgeBase('mimo-v2.6-pro')?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('mimo-v2.5')?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('mimo-v2.5-pro')?.id).toBe('mimo-v2-5-pro')
+    expect(matchKnowledgeBase('mimo-v2.5-pro')?.input).toEqual(['text'])
+    // The accepted ladder: none closes reasoning, xhigh/max stay undeclared
+    // because the endpoint only folds them into high.
+    expect(matchKnowledgeBase('mimo-v2.6-pro')?.efforts).toEqual({ off: 'none', low: 'low', medium: 'medium', high: 'high' })
+    // The new families must not capture MiniMax's ids.
+    expect(matchKnowledgeBase('minimax-m3')?.id).toBe('minimax-m3')
+  })
+
   it('returns undefined for unknown models', () => {
     expect(matchKnowledgeBase('some-random-model')).toBeUndefined()
   })
@@ -128,8 +155,8 @@ describe('matchKnowledgeBase', () => {
   it('matches the 2026 families this update added', () => {
     expect(matchKnowledgeBase('gemini-3.7-flash')?.id).toBe('google-gemini')
     expect(matchKnowledgeBase('gemini-2.5-pro')?.id).toBe('google-gemini')
-    // grok-4.7 does not exist upstream (404, re-checked 2026-08-24) and
-    // was removed from the entry patterns.
+    // grok-4.7 shipped after that pass and now keys its own entry, so the
+    // generic `grok` pattern no longer answers for it.
     expect(matchKnowledgeBase('grok-4.6')?.id).toBe('xai-grok-high')
     expect(matchKnowledgeBase('grok-4.5')?.id).toBe('xai-grok-4-5')
     expect(matchKnowledgeBase('grok-4.3')?.id).toBe('xai-grok-4-3')
