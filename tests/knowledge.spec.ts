@@ -133,13 +133,14 @@ describe('matchKnowledgeBase', () => {
     expect(matchKnowledgeBase('grok-4.7')?.id).toBe('xai-grok-4-7')
     expect(matchKnowledgeBase('grok-4.7')?.efforts).toEqual({ low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh' })
     expect(matchKnowledgeBase('grok-4.6')?.id).toBe('xai-grok-high')
-    // MiMo v2.6: one entry for the three ids, all multimodal.
-    for (const id of ['mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.6-pro-ultraspeed']) {
+    // MiMo: one entry for the family, with v2.5-pro as the text-only exception.
+    for (const id of ['mimo-v2.6-pro', 'mimo-v2.6-flash', 'mimo-v2.6-pro-ultraspeed', 'mimo-v2.5']) {
       expect(matchKnowledgeBase(id)?.id, id).toBe('mimo-v2-6')
     }
     expect(matchKnowledgeBase('mimo-v2.6-pro')?.input).toEqual(['text', 'image'])
-    expect(matchKnowledgeBase('mimo-v2.6-flash')?.input).toEqual(['text', 'image'])
-    expect(matchKnowledgeBase('mimo-v2.6-pro-ultraspeed')?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('mimo-v2.5')?.input).toEqual(['text', 'image'])
+    expect(matchKnowledgeBase('mimo-v2.5-pro')?.id).toBe('mimo-v2-5-pro')
+    expect(matchKnowledgeBase('mimo-v2.5-pro')?.input).toEqual(['text'])
     // The accepted ladder: none closes reasoning, xhigh/max stay undeclared
     // because the endpoint only folds them into high.
     expect(matchKnowledgeBase('mimo-v2.6-pro')?.efforts).toEqual({ off: 'none', low: 'low', medium: 'medium', high: 'high' })
