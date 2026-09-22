@@ -194,9 +194,15 @@ function signalParts(entry: Record<string, unknown>): Pick<EndpointSignal, 'inpu
     // model listings carry `supports_images` and none of the spellings above),
     // so without it such an endpoint reads as silent and the knowledge layer
     // wins by default -- which under-declares modalities whenever the catalog
-    // entry it matched happens to be text-only.
-    else if (hasBoolean(entry, 'supports_images')) input = entry['supports_images'] === true ? ['image'] : []
-    else if (hasBoolean(entry, 'supportsImages')) input = entry['supportsImages'] === true ? ['image'] : []
+    // entry it matched happens to be text-only. The two spellings are read as
+    // ONE field, never as two answers: they are the same disclosure, and a
+    // gateway carrying the pair would otherwise let whichever arm this chain
+    // reaches first veto the other -- the snake_case arm always does. Only
+    // `true` declares image input; a pair refusing in both spellings still
+    // answers with the text floor below, exactly like the siblings above.
+    else if (hasBoolean(entry, 'supports_images') || hasBoolean(entry, 'supportsImages')) {
+      input = entry['supports_images'] === true || entry['supportsImages'] === true ? ['image'] : []
+    }
   }
   // An empty disclosure still ANSWERED: an explicit refusal (supports_vision:
   // false, supports_images: false, or a gateway declaring no members at all)

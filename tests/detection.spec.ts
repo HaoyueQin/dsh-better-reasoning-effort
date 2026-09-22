@@ -122,6 +122,12 @@ describe('modality + capacity disclosures', () => {
     // An explicit refusal answers with the text floor, like its siblings.
     expect(analyzeListingEntry({ supports_images: false }).input).toEqual(['text'])
     expect(analyzeListingEntry({ supportsImages: false }).input).toEqual(['text'])
+    // The pair is ONE field, not two answers: a listing carrying both spellings
+    // must not let the snake_case arm's refusal veto the camelCase arm's claim
+    // (the chain reaches `supports_images` first, so serial arms would).
+    expect(analyzeListingEntry({ supports_images: false, supportsImages: true }).input).toEqual(['image'])
+    expect(analyzeListingEntry({ supports_images: true, supportsImages: false }).input).toEqual(['image'])
+    expect(analyzeListingEntry({ supports_images: false, supportsImages: false }).input).toEqual(['text'])
   })
 
   it('prefers a list-shaped convention over the supports_images flag', () => {
