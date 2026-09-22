@@ -111,6 +111,35 @@ describe('modality + capacity disclosures', () => {
     expect(analyzeListingEntry({ supportsVision: true }).input).toEqual(['image'])
   })
 
+  it('maps the CodeBuddy-style supports_images flag', () => {
+    // CodeBuddy-derived gateways (self-hosted account-pool proxies) publish
+    // `supports_images` and none of the spellings above. Without it such an
+    // endpoint reads as SILENT, which hands the modality decision to the
+    // knowledge base -- and a matching text-only catalog entry then
+    // under-declares a model that does accept images.
+    expect(analyzeListingEntry({ supports_images: true }).input).toEqual(['image'])
+    expect(analyzeListingEntry({ supportsImages: true }).input).toEqual(['image'])
+    // An explicit refusal answers with the text floor, like its siblings.
+    expect(analyzeListingEntry({ supports_images: false }).input).toEqual(['text'])
+    expect(analyzeListingEntry({ supportsImages: false }).input).toEqual(['text'])
+    // The pair is ONE field, not two answers: a listing carrying both spellings
+    // must not let the snake_case arm's refusal veto the camelCase arm's claim
+    // (the chain reaches `supports_images` first, so serial arms would).
+    expect(analyzeListingEntry({ supports_images: false, supportsImages: true }).input).toEqual(['image'])
+    expect(analyzeListingEntry({ supports_images: true, supportsImages: false }).input).toEqual(['image'])
+    expect(analyzeListingEntry({ supports_images: false, supportsImages: false }).input).toEqual(['text'])
+  })
+
+  it('prefers a list-shaped convention over the supports_images flag', () => {
+    // The boolean is reached only when every richer field stayed absent.
+    expect(
+      analyzeListingEntry({ architecture: { input_modalities: ['text'] }, supports_images: true }).input,
+    ).toEqual(['text'])
+    expect(
+      analyzeListingEntry({ input_modalities: ['text', 'image'], supports_images: false }).input,
+    ).toEqual(['text', 'image'])
+  })
+
   it('reads the nested top_provider.context_length too', () => {
     expect(analyzeListingEntry({ top_provider: { context_length: 200000 } }).contextLength).toBe(200000)
   })

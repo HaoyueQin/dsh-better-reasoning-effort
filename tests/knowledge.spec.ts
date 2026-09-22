@@ -3,6 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
+import { detectModelSignal } from '../src/detection.js'
 import {
   GENERIC_OPENAI_EFFORTS,
   KNOWLEDGE_BASE,
@@ -476,6 +477,41 @@ describe('modality + capacity fusion', () => {
     const s = suggestEfforts('mystery-model', {}, { ...silent, input: ['audio'] })
     expect(s.input).toBeUndefined()
     expect(s.inputSource).toBeUndefined()
+  })
+
+  it('an endpoint speaking only supports_images flips a text-only catalog entry', () => {
+    // The regression this guards, end to end: a CodeBuddy-derived gateway
+    // publishes `supports_images` and nothing else modality-shaped. While that
+    // flag went unread the listing looked SILENT, the knowledge base's
+    // text-only `deepseek-v4` entry won the modality part, and image
+    // attachments were refused for a model that does accept them.
+    const { signal } = detectModelSignal(
+      [{ id: 'deepseek-v4-flash', supports_images: true }],
+      'deepseek-v4-flash',
+    )
+    expect(signal.input).toEqual(['image'])
+    const s = suggestEfforts('deepseek-v4-flash', {}, {
+      reasoning: signal.reasoning,
+      source: signal.source,
+      input: signal.input,
+    })
+    expect(s.input).toEqual(['text', 'image'])
+    expect(s.inputSource).toBe('endpoint')
+  })
+
+  it('an explicit supports_images refusal answers with the text floor', () => {
+    const { signal } = detectModelSignal(
+      [{ id: 'deepseek-v4-flash-vision-exp', supports_images: false }],
+      'deepseek-v4-flash-vision-exp',
+    )
+    expect(signal.input).toEqual(['text'])
+    const s = suggestEfforts('deepseek-v4-flash-vision-exp', {}, {
+      reasoning: signal.reasoning,
+      source: signal.source,
+      input: signal.input,
+    })
+    expect(s.input).toEqual(['text'])
+    expect(s.inputSource).toBe('endpoint')
   })
 
   it('a disclosed context length replaces the reference value', () => {
