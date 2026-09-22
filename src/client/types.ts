@@ -1,8 +1,8 @@
 /**
  * Wire-surface types the browser half consumes: the settings Remote faces and
  * the pure seam the effort editor needs. The compilation baseline is the
- * 0.1.6-alpha.2 kernel line (a downgrade retry for older kernels' narrower
- * compat schema is kept as a safety net):
+ * 0.1.7-alpha.1 kernel line; runtime probes retain the 0.1.5/0.1.6 settings
+ * scope and the older-kernel compat downgrade as fallbacks:
  * the browser talks to the generated Typert
  * `ctx.remote.settings` stub — `describe()` takes no argument, `mutate` takes
  * positional `(ns, ops, expectedRevision)`, and every answer is the envelope
@@ -54,11 +54,24 @@ export interface SettingsRemoteApi {
 }
 
 /**
- * `ctx.get('settingsScope')`, as the kernel's `ui-settings` plugin registers
- * it: a `SettingsScopeBinder`, NOT a scope. The binder only mints scopes via
- * {@link bind} (and offers a cross-namespace `describe()`); `getSnapshot()`
- * lives on the scope `bind` returns. Treating the binder as a scope makes
- * every read throw, so the plugin must bind its own namespace first.
+ * `ctx.get('configForms')`, as the 0.1.7+ `ui-settings` plugin registers it.
+ * The service owns one shared form per Host entry.
+ */
+export interface ConfigFormsLike {
+  /**
+   * Get the shared form values and write queue for one Host plugin entry.
+   * @param entryId - unique Host plugin entry id (`llm-pi-ai` by default).
+   * @returns the entry form whose snapshot this half reads.
+   */
+  get(entryId: string): SettingsScopeReadLike
+}
+
+/**
+ * `ctx.get('settingsScope')`, as 0.1.5 through 0.1.6 register it: a
+ * `SettingsScopeBinder`, NOT a scope. The binder only mints scopes via
+ * {@link bind}; `getSnapshot()` lives on the scope `bind` returns. Treating
+ * the binder as a scope makes every read throw, so the plugin must bind its
+ * own namespace first.
  */
 export interface SettingsScopeBinderLike {
   /**
@@ -70,11 +83,10 @@ export interface SettingsScopeBinderLike {
 }
 
 /**
- * The READ face of one BOUND official settings scope (the object
- * `SettingsScopeBinder.bind({ namespace })` returns). One shared describe
- * mirror backs every namespace scope in the browser, so reading through the
- * snapshot costs no wire round trip and always reports the revision the
- * settings surface itself is working from.
+ * The read face shared by 0.1.7+ `ConfigForms.get(entryId)` and the older
+ * `SettingsScopeBinder.bind({ namespace })`. One shared describe mirror backs
+ * every form, so reading through the snapshot costs no wire round trip and
+ * always reports the revision the settings surface itself is working from.
  *
  * Deliberately read-only: the scope's `mutate` settles `void`, which makes a
  * refused write indistinguishable from a committed one. The plugin's queues
@@ -102,11 +114,11 @@ export interface SettingsScopeReadLike {
 export interface RemoteApi {
   settings: SettingsRemoteApi
   /**
-   * The BOUND official settings scope (already `bind({ namespace })`-ed), when
-   * the shell provides one. Optional: an older kernel without `settingsScope`
-   * keeps the wire-describe path, and the plugin never declares the service in
-   * its `inject` (a hard dependency would refuse to activate the whole browser
-   * half on that kernel).
+   * The official settings read face, when the shell provides one. Optional:
+   * versions before 0.1.5 and deployments without `ui-settings` keep the
+   * wire-describe path, and the plugin never declares either optional service
+   * in its `inject` (a hard dependency would refuse to activate the browser
+   * half on a kernel that predates it).
    */
   scope?: SettingsScopeReadLike
 }

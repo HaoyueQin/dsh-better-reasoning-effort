@@ -37,7 +37,9 @@
  * @module dsh-better-reasoning-effort/client
  */
 
-import type { ClientContext, RemoteApi, SettingsScopeBinderLike, SettingsScopeReadLike } from './types.js'
+import type {
+  ClientContext, ConfigFormsLike, RemoteApi, SettingsScopeBinderLike, SettingsScopeReadLike,
+} from './types.js'
 // Type-only: pulls the shell's locale/remote context merges into this program.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -88,13 +90,22 @@ export function apply(ctx: ClientContext): void {
   // 'remote.settings' service, declared in the plugin's own inject above — so
   // the face is available before apply runs. No runtime seat probing remains.
   //
-  // The official settings scope is picked up on top of it when this shell
+  // The official settings form is picked up on top of it when this shell
   // provides one: reads then ride its shared describe mirror (no wire round
   // trip, and the revision the settings surface itself fences writes with).
-  // Deliberately NOT part of the plugin's `inject`: a kernel without the
-  // service must still activate the browser half, on the wire-describe path.
+  // Prefer 0.1.7's `configForms.get(entryId)` and retain the 0.1.5/0.1.6
+  // `settingsScope.bind({ namespace })` face for backward compatibility.
+  // Deliberately NOT part of the plugin's `inject`: an older kernel without
+  // either service must still activate on the wire-describe path.
   const settingsScope = ((): SettingsScopeReadLike | undefined => {
     try {
+      const forms = ctx.get?.('configForms') as ConfigFormsLike | undefined
+      try {
+        const current = forms?.get?.(PI_AI_NS)
+        if (current !== undefined) return current
+      } catch {
+        // A broken new service must not disable the legacy one.
+      }
       // `ctx.get('settingsScope')` yields the kernel's BINDER, not a scope:
       // only `bind({ namespace })` mints the read face (getSnapshot). Using
       // the binder directly made every describe throw a TypeError.

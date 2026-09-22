@@ -169,6 +169,62 @@ describe('client apply()', () => {
     }
   })
 
+  it('prefers the 0.1.7 configForms entry over the legacy settingsScope binder', async () => {
+    const providers = structuredClone(JOIN_FIXTURE)
+    const api = fakeApi(() => Promise.resolve(makeJoin(providers)))
+    const snapshot = {
+      status: 'ready' as const,
+      value: { providers },
+      user: { providers },
+      base: { providers },
+      revision: 7,
+      writable: true,
+    }
+    const get = vi.fn(() => ({ getSnapshot: () => snapshot }))
+    const bind = vi.fn(() => ({ getSnapshot: () => snapshot }))
+    const h = makeCtx(api, { services: { configForms: { get }, settingsScope: { bind } } })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      expect(get).toHaveBeenCalledWith(PI_AI_NS)
+      expect(bind).not.toHaveBeenCalled()
+      expect(api.describeSpy).not.toHaveBeenCalled()
+    } finally {
+      h.disposeAll()
+    }
+  })
+
+  it('falls back to settingsScope when configForms.get throws', async () => {
+    const providers = structuredClone(JOIN_FIXTURE)
+    const api = fakeApi(() => Promise.resolve(makeJoin(providers)))
+    const snapshot = {
+      status: 'ready' as const,
+      value: { providers },
+      user: { providers },
+      base: { providers },
+      revision: 7,
+      writable: true,
+    }
+    const get = vi.fn(() => {
+      throw new Error('config form unavailable')
+    })
+    const bind = vi.fn(() => ({ getSnapshot: () => snapshot }))
+    const h = makeCtx(api, { services: { configForms: { get }, settingsScope: { bind } } })
+    try {
+      buildModelsDom()
+      const { apply } = await import('../src/client/index.js')
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)
+      expect(get).toHaveBeenCalledWith(PI_AI_NS)
+      expect(bind).toHaveBeenCalledWith({ namespace: PI_AI_NS })
+      expect(api.describeSpy).not.toHaveBeenCalled()
+    } finally {
+      h.disposeAll()
+    }
+  })
+
   it('fills the models added mid-session on the idle pass, never while a card is open', async () => {
     // The running auto-fill complement the host no longer performs (issue #7):
     // a write the moment a commit lands rides the official card's frozen

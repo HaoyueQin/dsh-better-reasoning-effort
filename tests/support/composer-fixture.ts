@@ -18,6 +18,7 @@ export function makeJoin(providers: Record<string, unknown>, userProviders?: Rec
     // The SettingsNamespaceView pins value/user to JsonValue; the fixtures
     // are plain JSON shapes, so the view asserts once instead of per-field.
     namespace: {
+      autoGenerate: true,
       ns: PI_AI_NS,
       schema: {},
       value: { providers },

@@ -18,8 +18,8 @@ import type { Context } from '@deepseek-ai/cordis'
 // Type-only: pulls the webServer service merge into this program's Context.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 // Type-only: the `declare module '@deepseek-ai/cordis'` merge that types
-// `ctx.settings` as `SettingsProvider` (describe() returns one descriptor per
-// registered namespace — an ARRAY, not the wire `{namespaces}` envelope).
+// `ctx.settings` as the profile-form service. `describe()` returns one
+// descriptor per active entry: an ARRAY, not the wire `{namespaces}` envelope.
 // The kernel ships no `settingsNamespace` value export (it is a private parse
 // + a compile-time SettingsNamespaceInput); the brand is a compile-time
 // concept, so a typed constant is enough.
@@ -403,22 +403,43 @@ export function apply(ctx: Context, config: Config = {}): void {
   // declaration as the single source of truth.
   const settings = ctx.settings
 
-  // The probe route (registered below) reads the pi-ai section through this
-  // closure slot.
-  const piSection = (): unknown => settings.get(PI_NS)
+  // The guard and probe route read the pi-ai section through this cached
+  // closure slot. Describing every active form on every model call is both
+  // needless work and, on 0.1.7+, can publish revision invalidation; retain the
+  // last resolved section until the settings document reports that it moved.
+  let piSectionCache: unknown
+  let piSectionCached = false
+  const piSection = (): unknown => {
+    if (piSectionCached) return piSectionCache
+    let value: unknown
+    try {
+      value = settings.describe().find(entry => entry.ns === PI_NS)?.value
+    } catch {
+      // The guard and probe are advisory: an unavailable settings form must
+      // not turn a model call into a plugin failure.
+      return undefined
+    }
+    // A missing namespace is expected during boot and must be retried.
+    if (value === undefined) return undefined
+    piSectionCache = value
+    piSectionCached = true
+    return value
+  }
+  ctx.on('settings/document-updated', (ns) => {
+    if (ns === PI_NS) piSectionCached = false
+  })
 
   if (resolved.autofill) {
     /** One autofill pass; resolves false while the pi-ai namespace is unregistered. */
     const autofillOnce = async (): Promise<boolean> => {
-      const value = settings.get(PI_NS)
-      if (!isRecord(value)) return false
+      const descriptor = settings.describe().find(entry => entry.ns === PI_NS)
+      if (!isRecord(descriptor?.value)) return false
       // Build the patch from the RAW USER layer, never the resolved value:
       // the fill merges into the user document, and building from the
       // resolved view would materialize schema defaults / composition-base
       // models into it wholesale the moment pi-ai grows such layers for its
       // profile. A namespace whose user section holds no providers has
       // nothing this plugin may fill.
-      const descriptor = settings.describe().find(entry => entry.ns === PI_NS)
       const user = descriptor?.user
       const userProviders = isRecord(user) && isRecord(user['providers']) ? user['providers'] : undefined
       if (userProviders === undefined) return true
@@ -469,7 +490,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     }
     bootFill(0)
 
-    // Deliberately NOT re-run on `settings/updated`. The boot pass is safe
+    // Deliberately NOT re-run on `settings/document-updated`. The boot pass is safe
     // (no settings surface is open yet); a fill the moment a commit lands is
     // not: the official Models card freezes its own revision baseline while it
     // is open, so a background write there makes the user's very next save in

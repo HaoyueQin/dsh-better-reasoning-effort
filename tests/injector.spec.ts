@@ -71,6 +71,7 @@ const aliyunProviders: NonNullable<SettingsJoin['namespace']>['value'] = {
 
 const join: SettingsJoin = {
   namespace: {
+    autoGenerate: true,
     ns: 'llm-pi-ai',
     schema: {},
     value: { providers: aliyunProviders },
