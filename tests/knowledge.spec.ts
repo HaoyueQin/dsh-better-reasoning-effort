@@ -85,10 +85,12 @@ describe('matchKnowledgeBase', () => {
   })
 
   it('matches the 2026-09-10 knowledge refresh (DeepSeek V4.1, GPT-6, Claude 5.1)', () => {
-    // DeepSeek's current official id is 'deepseek-flash' (V4.1-Flash); the
-    // legacy deepseek-v4-flash / -vision-exp spellings are served by the same
-    // model, so both resolve to the family entry.
-    expect(matchKnowledgeBase('deepseek-flash')?.id).toBe('deepseek-v4')
+    // DeepSeek's current official id is 'deepseek-flash' (V4.1-Flash), and the
+    // image-capable V4.1 generation keys its own entry: the family stem carries
+    // the text floor its pro/legacy siblings share, so pinning the official id
+    // to the stem declared a model that takes images as text-only.
+    expect(matchKnowledgeBase('deepseek-flash')?.id).toBe('deepseek-v4-1-flash')
+    // The legacy deepseek-v4-flash spellings still resolve to the family entry.
     expect(matchKnowledgeBase('deepseek-v4-flash')?.id).toBe('deepseek-v4')
     expect(matchKnowledgeBase('deepseek-v4-flash-0731')?.id).toBe('deepseek-v4')
     // The retired vision-experiment id keeps the image claim; the plain family
