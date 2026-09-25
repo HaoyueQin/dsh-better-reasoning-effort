@@ -693,4 +693,217 @@ body:not([data-ds-dark-theme]) .bre-effort.is-dragging .bre-effort-knob {
   line-height: 20px;
   user-select: none;
 }
+
+/* ---- Request-header section (issue #12). Mounted through the official
+   settings.models.provider-card seat, so it sits in the card's own layout
+   rather than a disclosure grid.
+
+   Every value below was MEASURED off the official Models page's own controls
+   in DSH 0.1.7-rc.2 rather than guessed, and each is expressed through the same
+   --dsw-alias-* token the host paints with, so a theme switch (light/dark)
+   repaints this section along with the page:
+
+     provider card   radius 20px, 1px var(--dsw-alias-settings-card-stroke)
+     editor action   save = filled var(--dsw-alias-button-primary-fill), h36,
+                     radius 12px, 0 14px, 14px; cancel = 1px border, same box
+     row action      h28, radius 8px, 0 10px, 12px, 1px border
+     text link       h21, radius 4px, 2px 6px, 12px, link-blue label
+     text input      radius 12px, 0 10px, 1px var(--dsw-alias-border-l3)  ---- */
+/* The provider-card slot's wrapper.
+   The official slot mounts us inside a display:contents container, so our own
+   root IS a flex item of the card row — and the row lays its children out with
+   a 12px gap. A wrapper that stays in the flow while empty therefore adds one
+   phantom gap to EVERY card in the list, which is exactly the height regression
+   this rule exists to prevent. Collapsed, the wrapper leaves the flow entirely:
+   the card renders as it did before the plugin.
+   (Deliberately NOT display:contents here — that keeps it a gap-participating
+   item, which is the bug this rule fixes.)
+   Open, it becomes an ordinary block so the section below can lay itself out.
+   data-edit lives HERE — the occurrence component publishes the card's state
+   onto its own root, so keying the rule on .bre-headers[data-edit] instead
+   would silently never match. */
+.bre-headers-host {
+  display: none;
+}
+.bre-headers-host[data-edit="1"] {
+  display: block;
+}
+.bre-headers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* The card lays its own children out with a 12px gap and no dividers; this
+     section is an addition to that column, so it separates itself the same way
+     the host separates card sections — a hairline on the card's own stroke. */
+  border-top: 1px solid var(--dsw-alias-border-l2, #0000001a);
+  padding-top: 12px;
+
+  /* Present ONLY while the provider card is being edited.
+     The provider list is a list of providers: a request-header row parked in
+     every card, collapsed or not, is noise on a surface the user did not ask
+     to configure. The card reveals its editor when the user presses its own
+     Edit action, and that is the moment this section belongs on screen — the
+     same gesture that opens the model list opens this.
+
+     The visibility is decided by the component (which watches the card and
+     sets data-edit on the wrapper), not by a selector: the official editor is
+     NOT a sibling of this element — its container sits in the card row's own
+     children, after the row head and this section's own wrapper — so no
+     relative selector can reach it. The wrapper's data-edit is the one fact
+     CSS can act on.
+
+     Degradation is safe by construction: with no observer (no card ancestor to
+     watch) data-edit stays "0", the section is never revealed, and the
+     official page stays clean rather than leaking a row into every card. */
+  display: none;
+}
+.bre-headers-host[data-edit="1"] .bre-headers {
+  display: flex;
+}
+/* The collapsed heading is the section's identity while the card is being
+   edited: title, configured count, and the › that opens the details. */
+.bre-headers-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.bre-headers-disclosure:hover .bre-effort-title {
+  color: var(--dsw-alias-label-secondary, #61666b);
+}
+.bre-headers-chevron {
+  margin-left: auto;
+  padding-right: 2px;
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  font-size: 14px;
+  line-height: 1;
+  transition: transform 150ms ease;
+}
+.bre-headers[data-open="1"] .bre-headers-chevron { transform: rotate(90deg); }
+/* How many entries are configured — the one fact worth showing while closed. */
+.bre-headers-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover, #2631480f);
+  color: var(--dsw-alias-label-secondary, #61666b);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+}
+.bre-headers-edit, .bre-headers-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bre-headers-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bre-headers-name { flex: 1 1 40%; min-width: 0; }
+.bre-headers-value { flex: 1 1 60%; min-width: 0; }
+.bre-headers-rows .bre-headers-name {
+  color: var(--dsw-alias-label-secondary, #61666b);
+  font-size: 12px;
+  word-break: break-all;
+}
+.bre-headers-masked {
+  color: var(--dsw-alias-label-tertiary, #81858c);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 1px;
+}
+
+/* The section's commit/dismiss pair, matching the official editor's own
+   actions: a filled commit and a bordered dismiss, 36px tall at 14px. */
+.bre-headers-edit .bre-primary-button {
+  height: 36px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--dsw-radius-md, 12px);
+  background: var(--dsw-alias-button-primary-fill, #0f1115);
+  color: var(--dsw-alias-label-primary-foreground, #fff);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1;
+  cursor: pointer;
+}
+.bre-headers-edit .bre-primary-button:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover, #43454a);
+}
+.bre-headers-edit .bre-primary-button:disabled { opacity: 0.5; cursor: default; }
+.bre-headers-edit .bre-secondary-button {
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--dsw-alias-border-l3, #0000001f);
+  border-radius: var(--dsw-radius-md, 12px);
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #0f1115);
+  font-size: 14px;
+}
+.bre-headers-edit .bre-secondary-button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #2631480f);
+}
+
+/* The row actions and the section's Edit affordance: the official 28px
+   bordered small button, and the 21px blue text link the model rows use. */
+.bre-headers-row .bre-link-button {
+  height: 28px;
+  padding: 2px 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm, 8px);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #61666b);
+  font-size: 12px;
+  line-height: 1;
+}
+.bre-headers-row .bre-link-button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #2631480f);
+}
+.bre-headers .bre-effort-head > .bre-link-button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2, #0000001a);
+  border-radius: var(--dsw-radius-sm, 8px);
+  color: var(--dsw-alias-label-primary, #0f1115);
+  font-size: 12px;
+  text-decoration: none;
+}
+.bre-headers .bre-effort-head > .bre-link-button:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover, #2631480f);
+  text-decoration: none;
+}
+.bre-headers-edit .bre-link-button {
+  color: var(--dsw-alias-label-secondary, #61666b);
+  font-size: 12px;
+}
+
+/* The section's own fields, on the official input box. */
+.bre-headers-edit input.bre-text-input {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l3, #0000001f);
+  border-radius: var(--dsw-radius-md, 12px);
+  background: var(--dsw-alias-bg-layer-1, #fff);
+  color: var(--dsw-alias-label-primary, #0f1115);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.bre-headers-edit input.bre-text-input:focus {
+  border-color: var(--dsw-alias-label-tertiary, #81858c);
+  outline: none;
+}
+.bre-headers-edit input.bre-text-input:disabled { opacity: 0.6; cursor: default; }
+
+/* Status copy and the coexistence warnings, on the host's own state colours. */
+.bre-headers .bre-effort-note.bre-warn { color: var(--dsw-alias-state-warn-label, #dd8629); }
+.bre-headers .bre-effort-message.bre-success { color: var(--dsw-alias-state-success-primary, #22c55e); }
+.bre-headers .bre-effort-message.bre-error { color: var(--dsw-alias-state-error-primary, #ec1313); }
 `

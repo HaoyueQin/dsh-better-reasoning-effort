@@ -58,6 +58,7 @@ import { createIdleAutofill } from './injection/autofill-run.js'
 import { createModelsPage } from './injection/models-page.js'
 import { createSessionDirectoryTracker } from './injection/session-directory.js'
 import { modelMenuOf } from './injection/model-menu.js'
+import { registerProviderCardSlot } from './injection/provider-card-slot.js'
 import { registerSliderToggleSlot } from './injection/slider-toggle-slot.js'
 
 /** Stable plugin id, matching the cordis.patch.yml row and the bundle id. */
@@ -237,6 +238,15 @@ export function apply(ctx: ClientContext): void {
   }, 'dsh-better-reasoning-effort: slider preference')
 
   ctx.effect(() => registerSliderToggleSlot(ctx, t), 'dsh-better-reasoning-effort: footer slot activation')
+
+  // The request-header editor (issue #12) takes the OFFICIAL provider-card seat:
+  // keyed by the adapter family's settings namespace, it receives every
+  // llm-pi-ai card — shipped, added, and hand-declared alike — with no DOM
+  // anchor to maintain.
+  ctx.effect(
+    () => registerProviderCardSlot(ctx, settingsApi, t),
+    'dsh-better-reasoning-effort: provider-card slot activation',
+  )
 }
 
 export type { BreKey }

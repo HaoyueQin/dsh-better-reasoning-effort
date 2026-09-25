@@ -25,11 +25,14 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // concept, so a typed constant is enough.
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
-import { AUTOFILL_CONFIG_PATH, PI_AI_NS, PLUGIN_ID, PROBE_PATH } from './constants.js'
+import { AUTOFILL_CONFIG_PATH, HEADERS_CONFIG_PATH, PI_AI_NS, PLUGIN_ID, PROBE_PATH } from './constants.js'
 import { suggestEfforts } from './knowledge.js'
 import type { ReasoningEfforts } from './knowledge.js'
 import { resolveGuardEffort } from './guard.js'
 import { isRecord, looksLikeCompatRefusal, routeFactsOf } from './shared.js'
+import { buildUserAgentIndex, emptyIndex, type UserAgentIndex } from './headers-core.js'
+import { headerOverlayInstalled, installHeaderOverlay, type OverlaySource } from './headers-fetch.js'
+import { detectHeaderConflicts, type HeaderConflictReport } from './headers-conflict.js'
 // The knowledge-base patch builder lives in its own module: the browser half
 // builds the SAME patch from its own idle-time read, so one suggestion can
 // never produce two different documents.
@@ -85,6 +88,16 @@ export interface Config {
    * is rewritten (issue #2); everything else passes through byte-identical.
    */
   defaultGuard?: boolean
+  /**
+   * Take over `user-agent` at the fetch layer for every route whose `headers`
+   * declare one (default true). The official adapter drops a profile
+   * `user-agent` in favour of the harness attribution, so a gateway that
+   * fingerprints the client identity never sees the configured value; this
+   * overlay is the only seam that can send it (issue #12). Inert unless a route
+   * actually declares a `user-agent`; turn it off to leave the wire to another
+   * plugin that rewrites the same surface.
+   */
+  uaOverride?: boolean
 }
 
 /** Schemastery schema: Cordis validates the row config and fills defaults before apply(). */
@@ -94,6 +107,7 @@ export const Config: Schema<Config> = Schema.object({
   probeTimeoutMs: Schema.natural().min(1).default(PROBE_TIMEOUT_MS),
   bootRetryDelaysMs: Schema.array(Schema.natural().min(1)).default([...BOOT_RETRY_DELAYS_MS]),
   defaultGuard: Schema.boolean().default(true),
+  uaOverride: Schema.boolean().default(true),
 })
 
 interface CredentialsService {
@@ -396,6 +410,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     probeTimeoutMs: config.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
     bootRetryDelaysMs: config.bootRetryDelaysMs ?? [...BOOT_RETRY_DELAYS_MS],
     defaultGuard: config.defaultGuard !== false,
+    uaOverride: config.uaOverride !== false,
   }
 
   // Module-level `inject` already guarantees the settings service; using it
@@ -522,6 +537,41 @@ export function apply(ctx: Context, config: Config = {}): void {
       }, 'dsh-better-reasoning-effort: default-guard')
     })
   }
+
+  // user-agent takeover (issue #12): the official adapter drops a profile
+  // `user-agent` and merges the harness attribution over the route's own
+  // headers, so a fingerprinting gateway (agentrouter and claude-code-router
+  // style relays) never sees the identity the user configured. Nothing in the
+  // configuration layer can express that override, so the plugin performs it at
+  // the fetch layer — the only public seam below the adapter's header merge.
+  //
+  // The index is keyed by the endpoint's ORIGIN and rebuilt from the live
+  // settings section, so a route added, edited, or removed on the Models page
+  // reaches the next request with no reload. `uaOverride: false` empties the
+  // index instead of skipping the install: the wrapper stays in place (one
+  // seam, one owner) and simply stops matching anything.
+  /** Live index the overlay reads; never undefined once apply has run. */
+  const overlaySource: OverlaySource = { current: emptyIndex() }
+  const refreshHeaders = (): void => {
+    if (!resolved.uaOverride) {
+      overlaySource.current = emptyIndex()
+      return
+    }
+    const section = piSection()
+    const providers = isRecord(section) && isRecord(section['providers'])
+      ? (section['providers'] as Record<string, Record<string, unknown>>)
+      : {}
+    overlaySource.current = buildUserAgentIndex(providers)
+  }
+  refreshHeaders()
+  ctx.on('settings/document-updated', (ns) => {
+    if (ns === PI_NS) refreshHeaders()
+  })
+  const overlay = installHeaderOverlay(overlaySource)
+  ctx.effect(() => () => { overlay.dispose() }, 'dsh-better-reasoning-effort: fetch header overlay')
+  // Read once: what sits on disk changes only when the user installs or patches
+  // something, and a restart is the honest moment to re-read it.
+  const headerConflicts: HeaderConflictReport = detectHeaderConflicts()
 
   // Same-origin probe route: the browser half's Auto-adapt asks the endpoint's
   // RAW /models listing through here, because the sanctioned llm wire call
@@ -678,6 +728,53 @@ export function apply(ctx: Context, config: Config = {}): void {
           },
         }),
       'dsh-better-reasoning-effort: autofill config route',
+    )
+
+    // The request-header overlay's status, for the browser half. Same-origin
+    // and read-only, like the other two routes: the takeover lives host-side, so
+    // the page needs this to say which routes it is changing and to warn about
+    // another plugin rewriting the same surface.
+    ctx.effect(
+      () =>
+        webServerCtx.webServer.register({
+          kind: 'exact',
+          path: HEADERS_CONFIG_PATH,
+          handler: async (req, res) => {
+            if (!isTrustedRequest(req)) {
+              sendJson(res, 403, { ok: false, error: 'forbidden' })
+              return
+            }
+            if (req.method !== 'GET') {
+              sendJson(res, 405, { ok: false, error: 'method not allowed' })
+              return
+            }
+            const index = overlaySource.current
+            sendJson(res, 200, {
+              ok: true,
+              data: {
+                /** Whether the fetch-layer takeover is enabled in this deployment. */
+                enabled: resolved.uaOverride,
+                /** Whether this plugin's wrapper currently owns the global fetch. */
+                installed: headerOverlayInstalled(),
+                /** Routes whose `user-agent` the plugin is sending, by origin. */
+                overrides: [...index.byOrigin.values()].map(entry => ({
+                  origin: entry.origin,
+                  route: entry.route,
+                  userAgent: entry.userAgent,
+                })),
+                /**
+                 * Origins two routes claim with different values: the fetch seam
+                 * cannot tell their requests apart, so the first declaration is
+                 * the one sent.
+                 */
+                conflicts: index.conflicts,
+                /** What was found of the plugins that rewrite the same surface. */
+                environment: headerConflicts,
+              },
+            })
+          },
+        }),
+      'dsh-better-reasoning-effort: headers config route',
     )
   })
 }
