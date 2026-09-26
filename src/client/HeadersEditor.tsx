@@ -17,7 +17,7 @@
  * @module dsh-better-reasoning-effort/HeadersEditor
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { HEADERS_CONFIG_PATH, PLUGIN_ID } from '../constants.js'
 import { describeNamespace, providerHeadersOf, writeProviderHeaders, type ProviderHeadersReply } from './ops.js'
@@ -56,8 +56,6 @@ export interface HeaderEnvironment {
 export interface HeadersEditorProps {
   /** The provider route this card edits. */
   route: string
-  /** Route display name (for the section heading's aria labels). */
-  routeDisplayName: string
   /** The write seam. */
   api: RemoteApi
   /** Localized copy. */
@@ -111,6 +109,10 @@ export function headersFromDraft(draft: Draft): Record<string, string> {
  * @returns the section.
  */
 export function HeadersEditor({ route, api, t }: HeadersEditorProps): ReactNode {
+  // The UA presets' datalist id: one editor instance renders per provider card,
+  // so a literal id would repeat on the page the moment two cards disclose at
+  // once. useId gives each instance its own.
+  const uaListId = useId()
   const [stored, setStored] = useState<Record<string, string> | undefined>(undefined)
   const [draft, setDraft] = useState<Draft>({ rows: [], userAgent: '' })
   /** Whether the section's details are disclosed. Collapsed on mount. */
@@ -318,7 +320,7 @@ export function HeadersEditor({ route, api, t }: HeadersEditorProps): ReactNode 
                         className="bre-text-input bre-headers-value"
                         value={draft.userAgent}
                         disabled={disabled}
-                        list="bre-ua-presets"
+                        list={uaListId}
                         placeholder={t('headersUserAgentPlaceholder')}
                         aria-label={t('headersUserAgentTitle')}
                         onChange={(event) => {
@@ -339,7 +341,7 @@ export function HeadersEditor({ route, api, t }: HeadersEditorProps): ReactNode 
                           </button>
                         )}
                     </label>
-                    <datalist id="bre-ua-presets">
+                    <datalist id={uaListId}>
                       {USER_AGENT_PRESETS.map(preset => <option key={preset} value={preset} />)}
                     </datalist>
                     <p className="bre-effort-note">{t('headersUserAgentHint')}</p>

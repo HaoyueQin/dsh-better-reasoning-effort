@@ -60,6 +60,18 @@ export function ProviderCardSlot({ provider, api, t }: ProviderCardSlotProps): R
     const card = wrapper?.closest('li') ?? null
     if (wrapper === null || card === null) return
     const observed = card as unknown as Node
+    // The one edit-state signal the official row exposes. The section holds
+    // its editor target in component state (ui-settings-models
+    // ModelsSection's `editing`) and renders the editor with NO data
+    // attribute and NO aria-expanded on the row's Edit button — the CSS-module
+    // class of the mounted editor (word root `editor`, compiled to a
+    // `_editor*` hash) is the only thing that exists iff the card is open.
+    // This is a COUPLING, not a contract: if a future official build renames
+    // that class root, `data-edit` degrades to a constant 0 — the section
+    // stays hidden and the official page stays untouched, so the failure mode
+    // is "the feature is gone", never "the page is broken". The upgrade path
+    // is an official one: a data attribute on the editor or an `editing` field
+    // on the slot occurrence replaces this probe one-for-one.
     const openEditor = (): boolean => card.querySelector('[class*="_editor"]') !== null
     let pending = false
     const sync = (): void => {
@@ -92,7 +104,7 @@ export function ProviderCardSlot({ provider, api, t }: ProviderCardSlotProps): R
   return createElement(
     'div',
     { ref: host, className: 'bre-headers-host', 'data-edit': editing ? '1' : '0' },
-    createElement(HeadersEditor, { route, routeDisplayName: route, api, t }),
+    createElement(HeadersEditor, { route, api, t }),
   )
 }
 

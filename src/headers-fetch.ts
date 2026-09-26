@@ -13,8 +13,9 @@
  *
  * The wrapper is deliberately narrow: a request whose URL is not in the index
  * passes through with its ORIGINAL arguments (same object identity), so
- * unconfigured traffic pays nothing and cannot be altered by a bug in the
- * merge path.
+ * unconfigured traffic pays exactly one URL classification and one index
+ * lookup — no allocation beyond that, and no way for a bug in the merge path
+ * to alter a request that never matched.
  *
  * Why fetch rather than the pi-ai `transformHeaders` option, which would be
  * narrower: reaching that option means holding the adapter's private `models`

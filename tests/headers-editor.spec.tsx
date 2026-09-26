@@ -209,7 +209,7 @@ describe('HeadersEditor', () => {
     // The provider card lists providers: a section that rendered its rows,
     // its hint and its warnings in every card would bury that list.
     const api = fakeApi({ headers: { 'x-company': 'acme' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       const control = disclosure(editor.container)
       expect(control.getAttribute('aria-expanded')).toBe('false')
@@ -239,7 +239,7 @@ describe('HeadersEditor', () => {
 
   it('shows no count while nothing is configured', async () => {
     const api = fakeApi({})
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       expect(editor.container.querySelector('.bre-headers-count')).toBeNull()
       await expand(editor.container)
@@ -251,7 +251,7 @@ describe('HeadersEditor', () => {
 
   it('shows the stored headers with the value masked', async () => {
     const api = fakeApi({ headers: { 'x-company': 'acme', 'user-agent': 'claude-cli/2.1.161 (external, cli)' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       const rows = Array.from(editor.container.querySelectorAll('.bre-headers-row'))
@@ -271,7 +271,7 @@ describe('HeadersEditor', () => {
 
   it('offers no edit action when the document is not writable', async () => {
     const api = fakeApi({ headers: { a: '1' }, writable: false })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       // The section still REPORTS what is configured; it just offers no way to
@@ -286,7 +286,7 @@ describe('HeadersEditor', () => {
 
   it('saves the whole dict once, with the edited row and the user-agent', async () => {
     const api = fakeApi({ headers: { 'x-company': 'acme' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       await expand(editor.container)
@@ -323,7 +323,7 @@ describe('HeadersEditor', () => {
 
   it('adds a row and clears a row before saving', async () => {
     const api = fakeApi({ headers: { 'x-drop': 'me' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       await act(async () => { buttonByText(editor.container, en.headersEdit).click() })
@@ -351,7 +351,7 @@ describe('HeadersEditor', () => {
 
   it('stores an empty dict when the last header is cleared', async () => {
     const api = fakeApi({ headers: { 'x-company': 'acme' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       await act(async () => { buttonByText(editor.container, en.headersEdit).click() })
@@ -369,7 +369,7 @@ describe('HeadersEditor', () => {
 
   it('discards the draft on cancel without writing', async () => {
     const api = fakeApi({ headers: { 'x-company': 'acme' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       await act(async () => { buttonByText(editor.container, en.headersEdit).click() })
@@ -392,7 +392,7 @@ describe('HeadersEditor', () => {
       headers: { a: '1' },
       mutate: async () => ({ ok: false, error: { code: 'settings/rejected', message: 'nope' } }),
     })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       await act(async () => { buttonByText(editor.container, en.headersEdit).click() })
@@ -411,7 +411,7 @@ describe('HeadersEditor', () => {
       environment: { adapter: 'patched', siblings: [], preferOfficialLayer: true },
     })
     const api = fakeApi({ headers: { a: '1' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       expect(editor.container.textContent).toContain(en.headersConflictPatched)
@@ -431,7 +431,7 @@ describe('HeadersEditor', () => {
       },
     })
     const api = fakeApi({ headers: { a: '1' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       expect(editor.container.textContent).toContain(en.headersConflictOrigin)
@@ -444,12 +444,14 @@ describe('HeadersEditor', () => {
   it('renders without the coexistence route answering at all', async () => {
     ;(globalThis as Record<string, unknown>)['fetch'] = vi.fn(async () => { throw new Error('offline') })
     const api = fakeApi({ headers: { 'x-company': 'acme' } })
-    const editor = await renderEditor({ route: 'aliyun', routeDisplayName: 'Aliyun', api, t })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
     try {
       await expand(editor.container)
       // The section still works: the report is advisory, never a dependency.
       expect(editor.container.querySelectorAll('.bre-headers-row')).toHaveLength(1)
-      expect(editor.container.textContent).not.toContain(en.headersConflictUnavailable)
+      // And none of the coexistence warnings renders when nothing was read.
+      expect(editor.container.textContent).not.toContain(en.headersConflictPatched)
+      expect(editor.container.textContent).not.toContain(en.headersConflictSiblings)
     } finally {
       await editor.unmount()
     }
