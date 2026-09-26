@@ -71,6 +71,7 @@ function stateWith(
     ],
     failures: [],
     status: 'ready',
+    pending: null,
     error: null,
   }
 }

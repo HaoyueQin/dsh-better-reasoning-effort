@@ -365,6 +365,9 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
         groups: loaded.groups ?? state.groups,
         failures: (loaded.failures ?? state.failures) as ModelDirectoryStateLike['failures'],
         status: 'ready',
+        // 0.1.7-rc.2 made the in-flight selection a required state field; the
+        // slider never reads it, and a hand-built fresh snapshot carries none.
+        pending: null,
         error: null,
       }
       const freshLevels = sliderLevels(fresh)

@@ -680,6 +680,7 @@ describe('client apply()', () => {
         }],
         failures: [],
         status: 'ready',
+        pending: null,
         error: null,
       })
       await waitFor(() => originalSelect.mock.calls.length > 0)
@@ -740,6 +741,7 @@ describe('client apply()', () => {
         }],
         failures: [],
         status: 'ready',
+        pending: null,
         error: null,
       })
       await waitFor(() => originalSelect.mock.calls.length > 0)
@@ -847,6 +849,7 @@ describe('client apply()', () => {
         }],
         failures: [],
         status: 'ready',
+        pending: null,
         error: null,
       })
       await new Promise(resolve => setTimeout(resolve, 0))

@@ -81,6 +81,7 @@ export function directoryFixture(): ModelDirectoryLike & { update: (next: ModelD
     }],
     failures: [],
     status: 'ready',
+    pending: null,
     error: null,
   }
   const listeners = new Set<() => void>()
