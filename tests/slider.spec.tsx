@@ -65,13 +65,21 @@ function fixture(state?: Partial<ModelDirectoryStateLike>): {
 }
 
 async function mount(directory: ModelDirectoryLike): Promise<{ root: ReturnType<typeof createRoot>; container: HTMLElement }> {
+  return mountIn(directory)
+}
+
+/** Mount inside a fake official menu so the commit's focus handoff has a target. */
+async function mountIn(directory: ModelDirectoryLike): Promise<{ root: ReturnType<typeof createRoot>; container: HTMLElement; menu: HTMLElement }> {
+  const menu = document.createElement('div')
+  menu.setAttribute('role', 'menu')
+  document.body.appendChild(menu)
   const container = document.createElement('div')
-  document.body.appendChild(container)
+  menu.appendChild(container)
   const root = createRoot(container)
   root.render(createElement(ComposerSlider, { directory, t: (key: string) => key }))
   // createRoot renders are scheduled; give the initial commit a tick.
   await new Promise(resolve => setTimeout(resolve, 0))
-  return { root, container }
+  return { root, container, menu }
 }
 
 function pressKey(input: HTMLInputElement, key: string): void {
@@ -188,6 +196,56 @@ describe('ComposerSlider commit', () => {
       expect(container.querySelector('.bre-effort-sr')?.textContent).toContain('no such effort')
       expect(range.value).toBe('2')
     })
+    root.unmount()
+  })
+
+  it('hands focus to the menu before the busy state disables the input (issue #13)', async () => {
+    // The official shell closes the menu when a blur leaves the card: disabling
+    // the focused input at commit time dropped focus onto <body>. The commit
+    // must move focus onto the menu element itself first — the same handoff the
+    // pane switch performs — so the menu stays open for follow-up picks.
+    const { directory, selectSpy } = fixture()
+    const { root, container, menu } = await mountIn(directory)
+    const range = container.querySelector<HTMLInputElement>('input[type="range"]')!
+    await vi.waitFor(() => expect(range.value).toBe('2'))
+    pressKey(range, 'ArrowRight')
+    // Synchronous: the handoff runs in the commit's sync section, before the
+    // first await, so the disabled input never owns the focus.
+    expect(document.activeElement).toBe(menu)
+    expect(selectSpy).toHaveBeenCalled()
+    root.unmount()
+  })
+
+  it('commits against the live snapshot without re-loading the catalog', async () => {
+    // The old commit re-ran directory.load() to revalidate levels; on a cold
+    // third-party catalog that swings the shared catalog into its loading state
+    // and visually collapses the open menu. The live snapshot's levels are the
+    // same data the official reload refreshes on every menu open.
+    const { directory, selectSpy } = fixture()
+    const loadSpy = directory.load as ReturnType<typeof vi.fn>
+    const { root, container } = await mount(directory)
+    const range = container.querySelector<HTMLInputElement>('input[type="range"]')!
+    await vi.waitFor(() => expect(range.value).toBe('2'))
+    loadSpy.mockClear()
+    pressKey(range, 'ArrowRight')
+    await vi.waitFor(() => expect(selectSpy).toHaveBeenCalledWith({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'high' }))
+    expect(loadSpy).not.toHaveBeenCalled()
+    root.unmount()
+  })
+
+  it('follows the in-flight preview in the model row effort label', async () => {
+    const { directory, selectSpy } = fixture()
+    const { root, container } = await mount(directory)
+    const range = container.querySelector<HTMLInputElement>('input[type="range"]')!
+    await vi.waitFor(() => expect(range.value).toBe('2'))
+    const rowEffort = container.querySelector('.bre-model-row-effort')!
+    expect(rowEffort.textContent).toBe('Medium')
+    // ArrowRight commits 'high' optimistically: the row label follows the
+    // preview as soon as React flushes the optimistic snap, not only after
+    // the store settles.
+    pressKey(range, 'ArrowRight')
+    await vi.waitFor(() => expect(rowEffort.textContent).toBe('High'))
+    await vi.waitFor(() => expect(selectSpy).toHaveBeenCalled())
     root.unmount()
   })
 })
