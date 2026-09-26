@@ -38,3 +38,8 @@ docs/superpowers/
 # never released. Only the README's own SVG assets ship (see package.json
 # `files`), so this rule only ever catches prose.
 docs/*.md
+
+# The generated model-knowledge view and the compatibility records ARE
+# released with the repository — un-ignored below:
+!docs/supported-models.md
+!docs/compatibility-notes.md
