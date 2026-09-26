@@ -333,52 +333,37 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
     committingRef.current = true
     const previous = committedRef.current
 
+    // Hand focus to the menu BEFORE the busy state disables the input: a
+    // disabled focused input drops focus onto <body>, and the official shell
+    // closes the menu on a blur that leaves the card — the snap-shut every
+    // commit shipped with (issue #13). Same handoff as the pane switch.
+    const menu = inputRef.current?.closest<HTMLElement>('[role="menu"]')
+    if (menu !== null && menu !== undefined) {
+      menu.tabIndex = -1
+      menu.focus({ preventScroll: true })
+    }
+
     setDragging(false)
     setCommitting(true)
     setLocalError(null)
 
-    // Optimistic snap from the rendered levels keeps the thumb responsive
-    // while the directory round-trip revalidates against fresh data below.
+    // Optimistic snap from the rendered levels keeps the thumb responsive.
+    // The commit runs against the LIVE snapshot's levels on purpose: the old
+    // re-load here swung the shared catalog into its loading state on every
+    // pick (the open menu visually collapsed on slow third-party catalogs),
+    // and the official entry re-runs that load on every menu open anyway, so
+    // the levels this slider rendered are already the fresh ones.
     const clampIndex = (value: number, count: number): number => Math.max(0, Math.min(count - 1, Math.round(value)))
-    const optimisticIndex = clampIndex(raw, levels.length)
-    const optimistic = levels[optimisticIndex]?.id
-    if (optimistic !== undefined) {
-      previewRef.current = optimisticIndex
-      setPreview(optimisticIndex)
-      setEffort(optimistic)
-    }
+    const index = clampIndex(raw, levels.length)
+    const next = levels[index]?.id
+    if (next === undefined) throw new Error(t('sliderNoLevels'))
+
+    previewRef.current = index
+    setPreview(index)
+    setEffort(next)
 
     try {
-      const models = await directory.load()
-      // Upstream contract: the fresh directory is the load RETURNS (current /
-      // routable / groups / failures), not an ad-hoc store snapshot.
-      const loaded = models as {
-        current?: DirectoryCurrentLike | null
-        routable?: boolean | null
-        groups?: readonly DirectoryGroupLike[]
-        failures?: readonly unknown[]
-      }
-      const current = loaded.current ?? null
-      const fresh: ModelDirectoryStateLike = {
-        current,
-        routable: loaded.routable ?? state.routable,
-        groups: loaded.groups ?? state.groups,
-        failures: (loaded.failures ?? state.failures) as ModelDirectoryStateLike['failures'],
-        status: 'ready',
-        // 0.1.7-rc.2 made the in-flight selection a required state field; the
-        // slider never reads it, and a hand-built fresh snapshot carries none.
-        pending: null,
-        error: null,
-      }
-      const freshLevels = sliderLevels(fresh)
-      const index = clampIndex(raw, freshLevels.length)
-      const next = freshLevels[index]?.id
-      if (next === undefined) throw new Error(t('sliderNoLevels'))
-
-      previewRef.current = index
-      setPreview(index)
-      setEffort(next)
-
+      const current = state.current
       if (current === null) throw new Error(t('sliderNoCurrent'))
       const outcome = await directory.select({
         provider: current.provider,
@@ -392,9 +377,9 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
       if (refusal !== undefined) throw new Error(refusal)
 
       const snapshot = directory.store.getSnapshot()
-      const accepted = effortIndex(freshLevels, snapshot.current?.reasoningEffort)
+      const accepted = effortIndex(levels, snapshot.current?.reasoningEffort)
       const settled = accepted >= 0 ? accepted : index
-      const settledId = freshLevels[settled]?.id ?? next
+      const settledId = levels[settled]?.id ?? next
       committedRef.current = settledId
       previewRef.current = settled
       setEffort(settledId)
@@ -410,7 +395,7 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
       committingRef.current = false
       setCommitting(false)
     }
-  }, [directory, levels, state.groups])
+  }, [directory, levels, state.current])
 
   const rawFromPointer = (input: HTMLInputElement, clientX: number): number => {
     const bounds = input.getBoundingClientRect()
@@ -518,10 +503,11 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
   const group = state.groups.find(candidate => candidate.id === current?.provider)
   const model = group?.models.find(candidate => candidate.id === current?.model)
   // Labels follow the upstream row contract: the model text is the display
-  // name or the bare model id, and the effort text reads the STORE's settled
-  // value (an in-flight drag preview stays in the slider, not in the row).
+  // name or the bare model id, and the effort text follows the IN-FLIGHT
+  // preview so the row names the level the thumb is on while dragging — once
+  // the commit settles the preview rests on the store's value again.
   const modelLabel = model?.name ?? (current === null ? t('triggerFallback') : current.model)
-  const effortLabel = levels[effectiveEffortIndex(levels, state)]?.name ?? t('effortDefault')
+  const effortLabel = levels[Math.max(0, Math.min(levels.length - 1, Math.round(preview)))]?.name ?? t('effortDefault')
 
   if (!available) {
     return createElement('div', { className: 'bre-slider-body' },
