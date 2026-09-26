@@ -56,6 +56,9 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 - **Composer 模型搜索（无条件注入）**：官方模型菜单处于**模型列表**面板时，列表上方注入一个搜索框。它按供应商名、模型名与模型 ID 过滤官方行（空格分词、大小写不敏感），隐藏无命中的分组，无结果时显示空态提示。输入框内 `↓` 跳到第一个命中项，`Esc` 清空查询；查询生效期间方向键**只在可见行之间**移动（不会落到被隐藏的行上）。搜索框位于官方列表之上、官方加载提示条之下，且**不改动菜单自身的尺寸与滚动**。与滑块不同，它**不受设置页开关控制**：只要插件生效就会注入。
 - **每个模型的默认思考强度（issue #4）**：模型行编辑器新增「默认思考强度」选择器——每个新会话打开该模型时使用的档位。它存储在设置文档的模型行上（随部署走、跨设备一致、重启不丢），跨会话优先于记住的上次档位；会话内手动选择始终最高——你选过的档位（或显式的「跟随提供方默认」）不会被任何自动机制覆盖。选择器的候选就是该模型自己声明的档位；清除后回到记忆链，留空的模型文档上不写任何字段（无需标记——没有自动填充会去填它）。
 - **模型页开关**：「推理强度滑块」开关从通用设置移出，放到**「模型」**设置页“添加提供方 / 添加自定义提供方”的下方，置于一个带边框的容器内（设置项形式与上游插件一致）。该开关无条件占据官方 `settings.models.footer` slot。
+- **请求头与 User-Agent（issue #12，provider 卡片内）**：每张提供商卡片新增「请求头」区域，编辑的就是官方那个**只有 provider 级、且没有输入框**的 `llm-pi-ai.providers.<路由>.headers`——静态、每个请求都发。它占据官方扩展席位 keyed `settings.models.provider-card`（按适配器家族命名空间分发），所以与卡片自身的编辑流程天然同构，不需要任何 DOM 锚点。**只在编辑态出现，且不改变列表高度**：提供商列表上完全不显示这一行、也不留任何占位（官方 slot 把我们挂在 `display: contents` 容器里，我们的根节点就是卡片行的 flex 子项，而官方那张卡片用 `gap: 12px` 排布子项——所以折叠时包装层必须完全退出布局，否则**每张卡片**都会平白多 12px；实测卡片高度 54px → 66px 的回归即由此而来，现有测试钉住这条契约）。点卡片的「编辑」与模型列表一起展开时才出现；这是刻意的——列表是给用户挑提供商的，不是配置它的。展开后区域自身再折叠（标题 + 已配条数 + `›`），点开才见说明、明细与「编辑」；值**掩码显示**，写入走 `settings.mutate` 的路径合并（不会碰到同一 profile 的 `baseURL` / `models` / `compat`）。区域的显隐读取的是官方卡片的编辑态 DOM 信号：官方行上没有为编辑器提供 data 属性或 `aria-expanded`（打开态在 section 内部的 React state 里），已挂载编辑器的 CSS module 类名是唯一可观察的标记——官方若改名该类词根，本区域将保持隐藏，官方页不受影响（见已知限制）。
+- **`user-agent` 由插件在请求层接管**：官方适配器会丢弃配置的 `user-agent`——该名称保留给客户端归属身份，`requestHeaders()` 先把它滤掉、再把 harness 归属头合并进来，所以只写 `headers` 到不了线上。凡是会查验客户端身份的网关（agentrouter、claude-code-router 一类中转）因此永远看不到你配置的身份，插件改为在 **fetch 层**接管这一项。作用域按 profile 的 `baseURL` **origin 精确匹配**（不是子串匹配，`http://host` 不会命中 `http://host.evil`）；模型列表探测与官方发现走同一个 origin，因此一并被覆盖。同一 origin 上多个路由声明了不同 UA 时会**提示**而不猜（fetch 层无法区分两者的请求）；`uaOverride: false` 让该层停止匹配，便于让位给别的同类插件。
+- **共存检测**：读取三类信号——官方 `dsh-llm-pi-ai` 是否已被打过 user-agent 补丁（已打补丁的部署直接在上面填 `headers` 即可，无需本插件接管请求层）、已知同类插件（`dsh-client-masquerade` / `dsh-llm-headers` / `dsh-llm-pi-ai-headers` / `dsh-custom-provider-settings`）是否在可达的 `node_modules` 里，以及同 origin 的 UA 冲突。任何一项异常都在卡片上给出提示，绝不静默打架。
 - **防御式注入**：注入依赖官方页 DOM 结构（aria-label / class），一旦官方升级改变结构，注入器自动停用、官方页不受影响；结构恢复后下次扫描自动重新注入。
 - 双语文案（中文 / English）。
 
@@ -65,7 +68,7 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 > **还在用旧版 DeepSeek Harness？**本插件这条发布线面向 `0.1.5-alpha` 及后续——`0.1.2-rc` / `0.1.3-alpha` 线及更早版本**均不再受支持**。请升级 Harness，或安装与内核匹配的本插件旧版本（例如 `0.1.2-rc` / `0.1.3-alpha` 线请用 `dsh-better-reasoning-effort@0.3.7`）。
 
-以 `0.1.7-alpha.1` 为编译与门禁基线（typecheck / 测试套件 / 完整构建都跑在 `0.1.7-alpha.1` 的各官方包上）；最近一次**实机**运行时基线仍为 `0.1.5-rc.1`。
+以 `0.1.7-alpha.1` 为编译与门禁基线（typecheck / 测试套件 / 完整构建都跑在 `0.1.7-alpha.1` 的各官方包上）；最近一次**实机**运行时基线为 `0.1.7-rc.2`（请求头能力即在该版本上完成端到端验证，见下文实测记录），此前为 `0.1.5-rc.1`。
 
 `0.1.5-rc.2` → `0.1.6-alpha.1` 的逐接缝源码复核：settings 服务（`get` / `describe` / `update` 与 `settings/updated`）与生成的 Typert `ctx.remote.settings` 契约、`settings.models` 的两个 slot 席位、slots / locale 运行时、`connection` 服务与 `connection/reset` 事件、Models 页六个锚点 aria-label 与结构类名、composer 模型弹层（`aria-controls` → `role="menu"` → `menuitem` / `menuitemradio`）、`dsh.client` 装载规则与 `/plugins/<id>/client.js` 路由、`llm` 服务的 `prepareCall` / `stream` 包装、`webServer.register`，以及 pi-ai 的 `config.ts` / `catalog.ts`（compat 键、`reasoningEfforts`、`input`）——承载实现全部零改动。两处相邻改动不在本插件的注入路径上：`ui-settings-models` 为 deepseek 家族端点加了新占位与提示文案，`ui-input-trigger` 改了斜杠命令菜单行的显示形态（本插件注入的是 `ModelSelect` 弹层）。`0.1.5` 线的既有适配说明继续成立（源码级验证：settings Remote wire、Models 页锚点、模型目录类型、slots / locale 自 `0.1.2-rc.1` 起全部原样；仅 `llm-pi-ai` compat schema 增长——pi-ai 0.85.1 新增 `thinkingTokenBudgetField` / `vllmPriority` / `supportsMaxOutputTokens`，以及 composer 模型菜单改为 portal 到 `document.body`——滑块经触发钮 `aria-controls` 链接跟随，内联形态保留为兜底）。新 schema 键按协议取用，旧内核写拒绝时自动剥离重试，全程无版本嗅探。接缝明细：settings Remote 是生成的 Typert `ctx.remote.settings` stub（无参 `describe`、位置参数 `mutate(ns, ops, expectedRevision)`、`{ok, value | error}` 包络、`settings/conflict` / `settings/rejected` 拒绝码）；Models 页锚点（`Capacities`/容量、Model ID、Display name、Provider ID、Base URL、API protocol 与 `settings.models.footer` slot）全部原样；原始列表探测镜像内核自己的模型发现——同一协议集合（新含 **Anthropic Messages**，走原生 `/v1/models` 路由、`x-api-key` + `anthropic-version`）、同款 `data`/`models` 双形态解析、同款 4 MB 上限。client bundle 运行时不请求任何官方模块。
 
@@ -73,7 +76,9 @@ DeepSeek Harness 的 `llm-pi-ai` 适配器原生支持每个模型声明 `reason
 
 `0.1.7-alpha.1` 将 settings provider 的 `get` / `installSection` 形态替换为 `SettingsForms`。Host 半侧改为读取 `llm-pi-ai` descriptor 的 resolved `value`，并缓存到 `settings/document-updated` 失效为止；浏览器半侧优先使用 `ctx.configForms.get('llm-pi-ai')`，其次回退旧的 `ctx.settingsScope.bind({ namespace })`，最后回退 `remote.settings.describe()`。pi-ai 配置词汇（`providers`、`reasoningEfforts`、`input`）与逐模型 DOM 锚点（`modelAdvanced`、`modelInputTypes`）均未变化；Models 页仅重排了添加流程，不在逐行注入路径上。
 
-**模型行编辑器统一走 DOM bypass（不做版本号嗅探）：**注入器按官方折叠区的 `modelAdvanced` 字典值定位（`0.1.6-alpha.1` 线为 `Capacities`/`容量`，`0.1.6-alpha.2` 起为 `Model options`/`模型选项`），因此编辑器挂进每个展开的模型行下，就在*编辑 → 自定义设置*流程里，也覆盖未保存行（新建供应商卡片上的暂存、保存瞬间自动写入）。滑块开关占据官方 `settings.models.footer` slot，声明经插件自身的 `remote.settings` inject——与官方 Models 页消费的是同一服务契约。模型页余下的正规席位是 keyed `settings.models.provider-card`（按提供方卡片分发）——卡片级 UI 的迁移路径在它，但没有任何 slot 能触及单个模型行，这正是模型行编辑器保留 DOM bypass 的原因。
+**`0.1.7-rc.2` 实机复核（本插件的请求头能力即在该版本上端到端验证）：**三处与旧测试基线（`0.1.5-rc.2`）不同、会影响**手工/脚本验证**而非插件本身的事实，一并记录以免重复踩坑——(1) `settings.yaml` 已废弃：启动时被重命名为 `settings.yaml.imported`，其各 section 由内核导入 profile 的 patch 文件，即 `profiles/<name>/cordis.patch.yml`（settings 服务的 `documentPath`），所以要看"用户写了什么"应当读 patch 文件；(2) `settings/describe` 不再接受 `_request` 参数（传了会被判 `gateway/arguments-invalid`），`session/page` 一类仍是 `request`——逐方法不同，以实测为准；(3) 主题 token（`--dsw-alias-*`）挂在 `<body>` 上而非 `:root`，主题切换靠 `html[data-ds-theme-source]` 与 `color-scheme`，因此运行时读取 token 要从 `document.body` 取。本轮验证证据：provider 卡片内请求头区域渲染并随语言/主题正确着色，UI 保存后 patch 文件出现 `headers.x-company` 与 `headers.user-agent`，host 侧覆盖索引随即从空变为 `{origin: http://127.0.0.1:<port>, route, userAgent}`。
+
+**模型行编辑器统一走 DOM bypass（不做版本号嗅探）：**注入器按官方折叠区的 `modelAdvanced` 字典值定位（`0.1.6-alpha.1` 线为 `Capacities`/`容量`，`0.1.6-alpha.2` 起为 `Model options`/`模型选项`），因此编辑器挂进每个展开的模型行下，就在*编辑 → 自定义设置*流程里，也覆盖未保存行（新建供应商卡片上的暂存、保存瞬间自动写入）。滑块开关占据官方 `settings.models.footer` slot，声明经插件自身的 `remote.settings` inject——与官方 Models 页消费的是同一服务契约。模型页余下的正规席位是 keyed `settings.models.provider-card`（按提供方卡片分发）——本插件的**请求头编辑器就占据这个席位**（见特性一节），因为 `headers` 是 provider 级事实；而没有任何 slot 能触及单个模型行，这正是模型行编辑器保留 DOM bypass 的原因。
 
 ### 从 npm
 
@@ -184,6 +189,11 @@ npm run build       # lib/*.js + lib/client.js（模块加载器 bundle）
 - 名字启发式的模态建议（`*-vl*` / `*vision*` / `gpt-4o` 一类视觉味 id）刻意标注为低置信度——使用前请核对。
 - 自建中转：自动填充与自动适配会在无法归属官方的 `openai-completions` 路由上钉死 `supportsDeveloperRole: false`，系统提示保持 `system`（部分上游拒绝 `developer`，报角色信息不正确）。已有显式值永不覆盖——唯一的例外是端点兼容区那几个下拉框：把某一项选回"未设置"再保存卡片，就是要撤回那次设置，编辑器只会删除它自己展示过的字段。全部取消勾选 + 保存可清除声明回到裸请求（提供方默认），即中转兼容模式。
 - 强制思考模型（无 `off` 档的梯子，如 GLM-5.3）：提供商测试与 Default 调用原本会发送 `thinking: disabled` 而失败（如 1210）——host 侧会将其映射到梯子的厂商默认档。设 `defaultGuard: false` 可恢复旧行为。
+- **`headers` 里的凭据不脱敏**：官方文档自己就警告过 harness 的脱敏器扫不到 `headers` 里的值。本插件在只读态把值掩码显示（防止共享屏幕时被人看到），但设置文档里它仍然是明文——请像对待 API key 一样对待那份文件。
+- **请求头区域的编辑态检测读取的是非官方信号**：官方提供方行没有为编辑器提供 data 属性或 `aria-expanded`（打开态在 `ModelsSection` 组件内部），插件只能从已挂载编辑器的 CSS module 类名（`_editor*`）推断。官方若改名该类词根，本区域将不再出现——失败模式是"功能消失"，而不是"页面损坏"；官方页不受影响，升级路径是官方提供 data 属性或 slot occurrence 上的 `editing` 字段。
+- **同一层只应启用一种 `user-agent` 改写**：`dsh-llm-headers`、`dsh-llm-pi-ai-headers`、`dsh-client-masquerade`（直接改官方包文件）与本插件的 fetch 层会落在同一处，后写入者生效。插件已检测并在卡片上提示，但检测仅覆盖已知包名与官方包是否被补丁。
+- **agentrouter 一类网关可能还看请求体指纹**（Claude Code 的 system 块 / 工具名等）：只改 `user-agent` 仍可能被 429/503（表现得像排队）。这超出本插件范围。
+- **请求层接管依赖官方适配器每次请求新建 SDK 客户端**：实测于 `0.1.7-rc.2`（pi-ai 0.85.1 + `@anthropic-ai/sdk` 0.123.0，其 `getDefaultFetch()` 动态读取全局 `fetch`），端到端测试守住这条边界；若某个未来版本改为在构造期缓存 `fetch` 引用，该接管会失效——届时会由测试而不是静默失败来发现。
 
 ## 致谢
 

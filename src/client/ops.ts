@@ -515,6 +515,110 @@ function mergeRowIntent(
   return copy
 }
 
+/** One result of writing a provider's request headers. */
+export type ProviderHeadersReply = { ok: true } | { ok: false; error: string }
+
+/**
+ * The RAW layer's `headers` dict for one route, as the editor seeds its draft.
+ *
+ * Reads through {@link baselineModelsOf}'s rule (the user section when it
+ * declares one, else the composition base) for the same reason: the resolved
+ * `value` materializes schema defaults, and a draft seeded from it would write
+ * those defaults back on the first save. The run of the layers is "what the
+ * user sees is what the user edits", which is the inheritance the official
+ * ProviderEditor applies to its own fields.
+ * @param namespace - the namespace view carrying the layers.
+ * @param route - the provider route key.
+ * @returns the stored header pairs, or undefined when no layer declares any.
+ */
+export function providerHeadersOf(
+  namespace: SettingsNamespaceView | undefined,
+  route: string,
+): Record<string, string> | undefined {
+  for (const layer of [namespace?.user, namespace?.base]) {
+    const profile = providersOfLayer(layer)?.[route]
+    if (!isRecord(profile)) continue
+    const headers = profile['headers']
+    if (headers === undefined) continue
+    if (!isRecord(headers)) return undefined
+    const pairs: Record<string, string> = {}
+    for (const [name, value] of Object.entries(headers)) {
+      if (typeof value === 'string') pairs[name] = value
+    }
+    // An explicitly empty dict is the user's "send no extra headers": reported
+    // as an empty dict rather than absent, so the editor shows a cleared state
+    // instead of a field the next save would silently refill from below.
+    return pairs
+  }
+  return undefined
+}
+
+/**
+ * Write ONE route's request headers through the live settings seam.
+ *
+ * A whole-dict `set` on `providers.<route>.headers`, so a brother field of the
+ * profile (`baseURL`, `apiKeyEnv`, `models`, `compat`…) is never restated and
+ * cannot be lost to this write. The settings layer's path write merges into the
+ * existing profile, which is why the write does not have to read the profile
+ * back and rebuild it the way the models-array write must.
+ *
+ * The conflict discipline mirrors {@link writeModelRows}: one retry, re-read
+ * fresh. A concurrent writer (the official card's own Save, another tab) moving
+ * the namespace between the describe and the mutate is a race the user's edit
+ * must survive, so the second attempt fences on the NEW revision instead of
+ * failing.
+ * @param api - the settings Remote (plus the optional scope).
+ * @param route - the provider route key.
+ * @param headers - the complete header dict to store (`{}` = send none).
+ * @returns whether the write landed, and the refusal text when it did not.
+ */
+export async function writeProviderHeaders(
+  api: RemoteApi,
+  route: string,
+  headers: Record<string, string>,
+): Promise<ProviderHeadersReply> {
+  if (typeof route !== 'string' || route.length === 0) return { ok: false, error: 'no-route' }
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      // A conflict retry must NOT read the mirror: it folds a fresh view in
+      // asynchronously and would hand back the very revision the write failed
+      // against (the same trap writeModelRows documents).
+      const join = attempt === 0 ? await describeNamespace(api) : await describeNamespace(api, { fresh: true })
+      if (join.namespace === undefined) return { ok: false, error: 'no-namespace' }
+      if (join.writable !== true) return { ok: false, error: 'read-only' }
+      // The route must exist in the RAW layers: a `set` with an intermediate
+      // path that resolves nowhere would create a stray profile carrying only
+      // headers -- a route with no endpoint and no protocol, which the adapter
+      // would then refuse to build. The slot this editor renders in only
+      // dispatches for saved rows, so an absent route is a genuine race with a
+      // deletion rather than a normal state.
+      if (!routeIsDeclared(join.namespace, route)) return { ok: false, error: 'no-route' }
+      const response = await api.settings.mutate(
+        PI_AI_NS,
+        [{ op: 'set', path: ['providers', route, 'headers'], value: { ...headers } } as unknown as SettingsPathOpView],
+        join.namespace.revision,
+      )
+      if (!response.ok) {
+        if (attempt === 0 && response.error.code === 'settings/conflict') continue
+        return { ok: false, error: response.error.message }
+      }
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  }
+  return { ok: false, error: 'conflict' }
+}
+
+/** Whether either raw layer declares this route (own key, never a prototype name). */
+function routeIsDeclared(namespace: SettingsNamespaceView | undefined, route: string): boolean {
+  for (const layer of [namespace?.user, namespace?.base]) {
+    const providers = providersOfLayer(layer)
+    if (providers !== undefined && Object.prototype.hasOwnProperty.call(providers, route)) return true
+  }
+  return false
+}
+
 /**
  * Describe the pi-ai namespace plus writability.
  *

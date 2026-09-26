@@ -19,6 +19,15 @@ export const PROBE_PATH = '/dsh-better-reasoning-effort/raw-models'
  */
 export const AUTOFILL_CONFIG_PATH = '/dsh-better-reasoning-effort/autofill-config'
 
+/**
+ * Same-origin host route reporting the request-header overlay (issue #12): the
+ * routes whose `user-agent` the plugin is overriding, and what it found of the
+ * plugins that rewrite the same surface. The browser half renders the
+ * coexistence warning from here — the takeover lives host-side, so the page
+ * cannot observe it on its own.
+ */
+export const HEADERS_CONFIG_PATH = '/dsh-better-reasoning-effort/headers-config'
+
 /** The settings namespace this plugin edits: pi-ai custom provider routes. */
 export const PI_AI_NS = 'llm-pi-ai'
 
