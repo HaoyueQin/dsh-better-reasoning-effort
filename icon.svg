@@ -1,0 +1,14 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bre-bulb" x1="11" y1="7" x2="25" y2="23" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67AFF8"/>
+      <stop offset="1" stop-color="#0751AD"/>
+    </linearGradient>
+  </defs>
+  <path d="M18 2.6v3M5.3 15h2.9M27.8 15h2.9" stroke="#67AFF8" stroke-width="1.7" stroke-linecap="round"/>
+  <circle cx="18" cy="15.2" r="8.2" fill="url(#bre-bulb)"/>
+  <path d="M14.7 22.4h6.6l-1.3 3.1h-4z" fill="#0751AD"/>
+  <rect x="14.9" y="26.3" width="6.2" height="1.6" rx=".8" fill="#0751AD"/>
+  <rect x="15.5" y="28.9" width="5" height="1.5" rx=".75" fill="#0A63C6"/>
+  <rect x="16.3" y="31.3" width="3.4" height="1.4" rx=".7" fill="#0E74D8"/>
+</svg>

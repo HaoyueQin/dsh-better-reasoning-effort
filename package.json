@@ -35,6 +35,7 @@
       "default": "./lib/client.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "files": [
@@ -44,8 +45,11 @@
     "README.zh.md",
     "LICENSE",
     "assets/",
-    "docs/*.svg"
+    "docs/*.svg",
+    "icon.svg",
+    "locale/*.json"
   ],
+  "icon": "./icon.svg",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
