@@ -41,8 +41,10 @@ describe('plugin display metadata', () => {
   it('keeps both dictionaries non-empty and JSON-parseable', () => {
     for (const language of ['en', 'zh']) {
       const meta = (JSON.parse(read(`locale/${language}.json`)) as { meta?: Record<string, unknown> }).meta
-      // Language files are discovery entries: title and description both set.
-      expect(Object.keys(meta ?? {}).sort()).toEqual(['description', 'title'])
+      // The card title stays the raw package name on every locale: the
+      // dictionaries carry the description only, so the Host's title falls
+      // back to manifest.name (readPluginMeta's fallbackText chain).
+      expect(Object.keys(meta ?? {}).sort()).toEqual(['description'])
       for (const value of Object.values(meta ?? {})) {
         expect(typeof value).toBe('string')
         expect((value as string).trim()).not.toBe('')
