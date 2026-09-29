@@ -91,6 +91,12 @@ export interface EffortEditorProps {
    * have no such control and keep the section.
    */
   officialInputTypes?: boolean
+  /**
+   * Push a suggested modality set into the official Input-types control. The
+   * injector owns the DOM call; the editor only decides WHEN (an Auto-adapt
+   * that actually carried modalities, on a row the official editor owns).
+   */
+  syncOfficialInput?: (input: InputModalities) => void
   /** The write seam (settings.mutate plus the suggestion engine). */
   api: EffortEditorApi
   /** Read-only (settings document not writable). */
@@ -176,7 +182,7 @@ function sameModality(draft: DraftModality, stored: InputModalities | undefined)
  * checkboxes, the modality toggle, the auto-adapt action, and the
  * apply/reset actions that own both sections.
  */
-export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, defaultEffort: initialDefaultEffort, index, staged = false, officialInputTypes = false, api, readOnly, t }: EffortEditorProps): ReactNode {
+export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, defaultEffort: initialDefaultEffort, index, staged = false, officialInputTypes = false, syncOfficialInput, api, readOnly, t }: EffortEditorProps): ReactNode {
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [modality, setModality] = useState<DraftModality>(() => modalityFrom(initialInput))
   // The per-model default-effort pick (issue #4), as the level id or '' for
@@ -436,7 +442,14 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     setDraft(nextDraft)
     // The suggestion's own modality, when it carries one; else the draft's.
     const nextModality = parts.input === undefined ? modality : modalityFrom(parts.input)
-    if (parts.input !== undefined) setModality(nextModality)
+    if (parts.input !== undefined) {
+      setModality(nextModality)
+      // The official control is the ONLY modality surface on these rows, and
+      // the pending write below lands only on Save: without this the click
+      // would show the user nothing at all. Rows the plugin still owns keep
+      // their own section, where the change is already visible.
+      if (officialInputTypes) syncOfficialInput?.(parts.input)
+    }
     setSuggested(parts.efforts)
     setSuggestedSource(parts.source)
     setSuggestedConfidence(parts.confidence)

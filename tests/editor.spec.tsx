@@ -450,6 +450,58 @@ describe('EffortEditor modality', () => {
     expect(container.textContent).toContain(t('inputHintEndpoint'))
   })
 
+  it('auto-adapt drives the official input-types control when it owns modalities', async () => {
+    // The official control is the ONLY modality surface on these rows, and it
+    // is React state: the pending write below reaches the settings document
+    // only when the card is saved, so a click that only wrote the ledger left
+    // the user with nothing to see. The suggestion is therefore handed to the
+    // injector, which drives the official checkboxes the way a user would.
+    const api = baseApi()
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { high: 'high' },
+        matched: true,
+        source: 'demo',
+        confidence: 'high',
+        input: ['text', 'image'],
+        inputSource: 'knowledge',
+      },
+    } satisfies SuggestReply)
+    const syncOfficialInput = vi.fn()
+    const { container } = await renderEditor(baseProps({ api, officialInputTypes: true, syncOfficialInput }))
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+    expect(syncOfficialInput).toHaveBeenCalledWith(['text', 'image'])
+    // The ledger write is unchanged: both paths carry the same declaration.
+    expect(api.commit).toHaveBeenCalledWith(
+      'aliyun',
+      'qwen-max',
+      expect.objectContaining({ efforts: { high: 'high' }, input: ['text', 'image'] }),
+    )
+  })
+
+  it('never touches the official control when the plugin owns the modality section', async () => {
+    // Older kernels keep the plugin's own section, where the click IS visible;
+    // driving a control that does not own the field would be a stray edit.
+    const api = baseApi()
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { high: 'high' },
+        matched: true,
+        source: 'demo',
+        confidence: 'high',
+        input: ['text', 'image'],
+        inputSource: 'knowledge',
+      },
+    } satisfies SuggestReply)
+    const syncOfficialInput = vi.fn()
+    const { container } = await renderEditor(baseProps({ api, syncOfficialInput }))
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+    expect(syncOfficialInput).not.toHaveBeenCalled()
+    expect(checkboxes(container)[7]!.checked).toBe(true)
+  })
+
   it('an undeclared row stays untouched by an effort-only apply', async () => {
     const api = baseApi()
     const { container } = await renderEditor(baseProps({ api }))

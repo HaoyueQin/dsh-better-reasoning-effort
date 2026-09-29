@@ -7,7 +7,7 @@
 
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createScanState, effectiveStagedIntents, flushOnUnload, queueWriteInto, reconcile, stageEffortsInto, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injection/models-page-editor.js'
+import { createScanState, effectiveStagedIntents, flushOnUnload, queueWriteInto, reconcile, stageEffortsInto, syncOfficialInputTypes, type EditorMountProps, type InjectorDeps, type MountedEditor, type SettingsJoin } from '../src/client/injection/models-page-editor.js'
 import { suggestEfforts, type ReasoningEfforts } from '../src/knowledge.js'
 import type { RemoteApi } from '../src/client/types.js'
 
@@ -258,6 +258,55 @@ describe('reconcile', () => {
     const calls = vi.mocked(deps.mount).mock.calls
     expect((calls[0]![1] as EditorMountProps).officialInputTypes).toBe(true)
     expect((calls[1]![1] as EditorMountProps).officialInputTypes).toBe(false)
+  })
+
+  it('drives the official input-types checkboxes to a suggested declaration', () => {
+    // The official control carries no value/name to match on: it renders
+    // ['text', 'image'] in that order (ModelInputTypes.tsx:39), so the
+    // suggestion maps onto the boxes by position. Clicking them is the user's
+    // own path -- the official onChange updates the card.
+    const container = document.createElement('div')
+    container.innerHTML = `
+      <fieldset class="ModelsSection_modelInputTypes__hash" aria-label="Input types 1">
+        <label><input type="checkbox" checked /><span>Text</span></label>
+        <label><input type="checkbox" /><span>Image</span></label>
+      </fieldset>`
+    const boxes = Array.from(container.querySelectorAll<HTMLInputElement>('input[type=checkbox]'))
+    syncOfficialInputTypes(container, ['text', 'image'])
+    expect(boxes[0]!.checked).toBe(true)
+    expect(boxes[1]!.checked).toBe(true)
+    // A later suggestion that drops image unchecks it again.
+    syncOfficialInputTypes(container, ['text'])
+    expect(boxes[1]!.checked).toBe(false)
+  })
+
+  it('leaves the page alone when the official control is absent or unusable', () => {
+    // Best-effort by design: an official build that renames the class, ships a
+    // different box count or disables a box must not be poked at.
+    expect(() => { syncOfficialInputTypes(document.createElement('div'), ['text', 'image']) }).not.toThrow()
+    const stray = document.createElement('div')
+    stray.innerHTML = '<fieldset class="x_modelInputTypes_y"><input type="checkbox" /><span>Only</span></fieldset>'
+    expect(() => { syncOfficialInputTypes(stray, ['text', 'image']) }).not.toThrow()
+    expect(stray.querySelector<HTMLInputElement>('input')!.checked).toBe(false)
+  })
+
+  it('hands the editor a way to drive the official input-types control', async () => {
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    root.querySelectorAll('.modelAdvanced')[0]!.insertAdjacentHTML(
+      'beforeend',
+      `<fieldset class="ModelsSection_modelInputTypes__hash" aria-label="Input types 1">
+         <label><input type="checkbox" checked /><span>Text</span></label>
+         <label><input type="checkbox" /><span>Image</span></label>
+       </fieldset>`,
+    )
+    await settle(() => reconcile(root, deps, state), state)
+    const props = vi.mocked(deps.mount).mock.calls[0]![1] as EditorMountProps
+    expect(typeof props.syncOfficialInput).toBe('function')
+    props.syncOfficialInput!(['text', 'image'])
+    const boxes = Array.from(root.querySelectorAll<HTMLInputElement>('.modelAdvanced input[type=checkbox]'))
+    expect(boxes[1]!.checked).toBe(true)
   })
 
   it('is idempotent: a second scan does not double-mount', async () => {

@@ -175,6 +175,12 @@ export interface EditorMountProps {
    * DOM, never a kernel version.
    */
   officialInputTypes?: boolean
+  /**
+   * Hand a suggested modality set to the OFFICIAL Input-types control when it
+   * owns them: the pending write only reaches the settings document on Save,
+   * so Auto-adapt would otherwise leave the click with nothing to show.
+   */
+  syncOfficialInput?: (input: readonly string[]) => void
   api: EffortEditorApi
   readOnly: boolean
   t: (key: string, params?: Record<string, string | number>) => string
@@ -1035,6 +1041,34 @@ function officialInputTypesOf(container: HTMLElement): boolean {
   return container.querySelector('[class*="modelInputTypes"]') !== null
 }
 
+/**
+ * Drive the official per-row input-types control to a suggested declaration.
+ *
+ * Clicking an official checkbox is the path a user takes: its own onChange
+ * replaces the row's draft, so the card reads as modified and its Save carries
+ * the value. The alternative -- trusting the pending write to surface -- shows
+ * the user nothing until that Save, which is exactly the gap this closes.
+ *
+ * Deliberately best-effort: a missing control, an unexpected box count or a
+ * disabled box leaves the page exactly as it was.
+ * @param container - the row's disclosure (where the official control lives).
+ * @param input - the suggested modality set.
+ */
+export function syncOfficialInputTypes(container: HTMLElement, input: readonly string[]): void {
+  const control = container.querySelector<HTMLElement>('[class*="modelInputTypes"]')
+  if (control === null) return
+  // The official fieldset renders ['text', 'image'] in that order
+  // (ModelInputTypes.tsx:39) and carries no value/name to match on, so the
+  // suggestion maps onto the boxes by position.
+  const boxes = Array.from(control.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+  const wanted = [input.includes('text'), input.includes('image')]
+  if (boxes.length !== wanted.length) return
+  boxes.forEach((box, at) => {
+    if (box.disabled || box.checked === wanted[at]) return
+    box.click()
+  })
+}
+
 /** Whether an editor is already mounted in a container (idempotency guard). */
 function hasEditor(container: HTMLElement): boolean {
   return container.querySelector(`[data-plugin="${PLUGIN_ID}"]`) !== null
@@ -1442,6 +1476,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         index,
         staged,
         officialInputTypes: officialInputTypesOf(target.container),
+        syncOfficialInput: (input: readonly string[]) => { syncOfficialInputTypes(target.container, input) },
         api: createEditorApi(
           deps.api,
           undefined,
