@@ -1,19 +1,13 @@
 /**
- * The composer model menu injection: the reasoning-effort slider AND the model
- * search box, both mounted inside the OFFICIAL model menu opened from the
- * bottom-right seat. The seat's trigger is never touched — the official
- * "model · effort" display stays.
+ * The composer model menu injection: the reasoning-effort slider mounted
+ * inside the OFFICIAL model menu opened from the bottom-right seat. The seat's
+ * trigger is never touched — the official "model · effort" display stays.
  *
- * This module is the single place that decides which pane the menu is showing,
- * where each foreign body sits, and when each one retires. The two pane probes
- * look alike but answer different questions, and must NOT be merged:
- *
- *   - the slider's probe — `[role="menuitemradio"]` — asks "did the official
- *     drill-in replace my replica body?". The effort pane matches too, which
- *     is fine: our body belongs to the root pane either way.
- *   - the search's probe — `section[role="group"]` — asks "is there a
- *     filterable model list here?". The effort pane has no groups, so a
- *     role-based probe would mount a search box over a list it cannot filter.
+ * This module owns two decisions: where the slider's foreign body sits, and
+ * whether the official pane currently showing is a drill-in. The model list
+ * and the effort list both render `[role="menuitemradio"]` rows and both
+ * replace the root cells, so the replica retires while either is open and the
+ * official pane is the only content.
  *
  * @module dsh-better-reasoning-effort/client/injection/composer-menu
  */
@@ -24,7 +18,6 @@ import type { ReactNode } from 'react'
 import type { Translate } from '@deepseek-ai/dsh-client-ui-slots'
 import { PLUGIN_ID } from '../../constants.js'
 import { ComposerSlider } from '../ComposerSlider.js'
-import { ModelSearch, isModelPane } from '../ModelSearch.js'
 import type { ModelDirectoryLike } from '../types.js'
 import { EffortBoundary, mountReact, unmountReact, type ForeignMount } from './mount.js'
 
@@ -44,9 +37,9 @@ export interface ComposerMenuDeps {
 
 /** The composer injection's face: one reconcile per scan, one dispose per fiber. */
 export interface ComposerMenuInjection {
-  /** Mount/reposition/retire both foreign roots (idempotent, mutation-cheap). */
+  /** Mount/reposition/retire the foreign root (idempotent, mutation-cheap). */
   reconcile: () => void
-  /** Unmount both roots; the fiber is going away. */
+  /** Unmount the root; the fiber is going away. */
   dispose: () => void
 }
 
@@ -55,14 +48,13 @@ export interface ComposerMenuInjection {
  *
  * The card anchors itself in a layout effect (ModelSelect.tsx:163-188) that
  * runs BEFORE this module's MutationObserver injection, so its `top` is
- * computed from the PRE-injection height: the slider replica is still shown
- * and the search box not yet mounted, which floated the card ~56px above the
- * trigger. Both edits are done synchronously by the callers (the injected
- * roots commit inside `flushSync`, the replica is hidden inline), so this
- * flushSync-wrapped `resize` lets the official `place()` re-measure and commit
- * BEFORE the browser paints — no intermediate frame is ever shown. Waiting for
- * a later frame (the previous implementation) is exactly what made the menu
- * visibly jump.
+ * computed from the PRE-injection height: the slider replica is still shown,
+ * which floated the card ~56px above the trigger. The edit is done
+ * synchronously by the caller (the injected root commits inside `flushSync`,
+ * the replica is hidden inline), so this flushSync-wrapped `resize` lets the
+ * official `place()` re-measure and commit BEFORE the browser paints — no
+ * intermediate frame is ever shown. Waiting for a later frame (the previous
+ * implementation) is exactly what made the menu visibly jump.
  *
  * Only the official effect ever writes the card's position: this module still
  * adds no class and no inline style of its own.
@@ -87,62 +79,7 @@ const rePlaceInFrame = (): void => {
 export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjection {
   const { menuOf, t, refreshed, sliderEnabled, directory } = deps
   let sliderMount: ForeignMount | undefined
-  let searchMount: ForeignMount | undefined
-  let lastModelPane: boolean | undefined
-
-  const unmountSearch = (): void => {
-    unmountReact(searchMount)
-    searchMount = undefined
-  }
-
-  /**
-   * Reconcile the search box into the official model menu (idempotent).
-   *
-   * Deliberately NO class on the menu and NO width/height of our own: the
-   * official card measures itself in a layout effect whose deps
-   * ([open, pane, state], ModelSelect.tsx:163-188) a later injection cannot
-   * invalidate, so any resize from here would leave the card anchored to its
-   * pre-injection height (and no longer right-aligned with its trigger). The
-   * official box already caps itself (max-height) and scrolls its groups
-   * container, so it needs no help.
-   */
-  const reconcileSearch = (menu: HTMLElement): void => {
-    // Positioned from STRUCTURE, not class names: the group sections' parent
-    // IS the official scrolling container, while the `groups` class on it is a
-    // CSS-module hash (`Uc5hea_groups`) that a literal `.groups` selector never
-    // matches. Inserting before that container keeps the official load notices
-    // on top and leaves the slider wrapper as the menu's first child.
-    const group = menu.querySelector<HTMLElement>('section[role="group"]')
-    const container = group?.parentElement
-    const referenceNode = (container !== null && container !== undefined && container.parentElement === menu)
-      ? container
-      : group
-
-    if (searchMount === undefined) {
-      const wrapper = document.createElement('div')
-      wrapper.dataset['plugin'] = PLUGIN_ID
-      wrapper.dataset['breSearch'] = '1'
-      menu.insertBefore(wrapper, referenceNode)
-      searchMount = mountReact(
-        wrapper,
-        createElement(EffortBoundary, {
-          fallbackText: t('modelSearchFailed'),
-          children: refreshed(() => createElement(ModelSearch, { menu, t })),
-        }),
-        // Sync: the card is measured right after this, so the input must
-        // already contribute its height (see rePlaceInFrame).
-        { sync: true },
-      )
-      return
-    }
-    if (searchMount.wrapper.parentElement !== menu) {
-      menu.insertBefore(searchMount.wrapper, referenceNode)
-      return
-    }
-    if (referenceNode !== null && searchMount.wrapper.nextSibling !== referenceNode) {
-      menu.insertBefore(searchMount.wrapper, referenceNode)
-    }
-  }
+  let lastDrillIn: boolean | undefined
 
   /** Reconcile the slider into the official model menu (idempotent). */
   const reconcileSliderInto = (menu: HTMLElement): void => {
@@ -242,35 +179,29 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
     if (menu === undefined) {
       unmountReact(sliderMount)
       sliderMount = undefined
-      unmountSearch()
-      lastModelPane = undefined
+      lastDrillIn = undefined
       return
     }
-    // The search box is unconditional: it does not follow the slider
-    // preference (see the spec's "搜索恒开" decision).
-    const modelPane = isModelPane(menu)
-    if (modelPane) reconcileSearch(menu)
-    else unmountSearch()
 
     reconcileSliderInto(menu)
 
-    // A pane switch is exactly when this module rewrites the menu's contents
-    // (the slider replica hides, the search box mounts or unmounts), so the
-    // card's already-computed `top` is stale. Both edits above are synchronous
-    // (the roots commit inside flushSync, the replica toggles inline), so the
-    // official placement can be re-run in THIS frame — no jump is ever painted.
-    // Filtering and scrolling only toggle row visibility and never reach here.
-    if (modelPane !== lastModelPane) {
-      lastModelPane = modelPane
-      if (modelPane || sliderEnabled()) rePlaceInFrame()
+    // A drill-in pane is exactly when this module rewrites the menu's contents
+    // (the slider replica hides, or comes back), so the card's
+    // already-computed `top` is stale. That edit is synchronous (the replica
+    // toggles inline), so the official placement can be re-run in THIS frame —
+    // no jump is ever painted. A menu whose slider is off writes nothing, so
+    // it needs no re-place.
+    const drillIn = menu.querySelector('[role="menuitemradio"]') !== null
+    if (drillIn !== lastDrillIn) {
+      lastDrillIn = drillIn
+      if (sliderEnabled()) rePlaceInFrame()
     }
   }
 
   const dispose = (): void => {
     unmountReact(sliderMount)
     sliderMount = undefined
-    unmountSearch()
-    lastModelPane = undefined
+    lastDrillIn = undefined
   }
 
   return { reconcile, dispose }

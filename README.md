@@ -36,7 +36,6 @@ The `llm-pi-ai` adapter natively supports per-model `reasoningEfforts` and `inpu
 - **Auto-fill** — models without a declaration are filled at boot and when added mid-session (opt out via `autofill: false` / `modalityAutofill: false`); explicit declarations, `false` and deliberately-unset markers are never touched.
 - **Three intents** — all levels off = unset (back to inheritance); only `off` = disable reasoning; levels armed = write the declaration.
 - **Composer slider** — the official model menu's body is replaced by an upstream-style effort slider (drag / keyboard, optimistic commit with rollback), with one model row opening the official model list; the official trigger stays untouched, and model switches keep your level through a per-session memory chain (issue #4's per-model default effort outranks it across sessions).
-- **Composer model search** — a filter box above the official model list (provider / model / id tokens), always on.
 - **Per-model default effort** — a "Default effort" picker on each model row, stored in the settings document; every new session starts the model there.
 - **Request headers & `user-agent`** — a provider-card section edits the official `headers` field (masked, path-merged, Save-gated), and the plugin performs the `user-agent` override at the fetch layer per origin, because the official adapter reserves that name; same-origin `/models` probes are covered, conflicts are reported rather than guessed.
 - **Defensive injection** — everything keys off the official page's DOM; if an official upgrade changes the structure, injection simply pauses and the official page is unaffected.
@@ -106,7 +105,6 @@ Browser (lib/client.js)                  Host (lib/index.js)
 ├─ Composer injection
 │   MutationObserver on the document
 │   → ComposerSlider (root pane)
-│   → model search box (model-list pane)
 ├─ EffortEditor (React component)             (knowledge base + inference)
 │   level checkboxes / wire values /
 │   input-modality toggle /

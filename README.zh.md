@@ -36,7 +36,6 @@
 - **自动填充** — 未声明的模型在启动时补一份推荐声明，会话中新增的也会补写（`autofill: false` / `modalityAutofill: false` 可关）；已声明、显式 `false`、刻意撤销的标记一律不动。
 - **三种意图** — 全不勾 = 取消声明（回到继承）；只勾 off = 禁用推理；勾选档位 = 写入声明。
 - **Composer 思考强度滑块** — 官方模型菜单的弹出体被替换为上游风格的档位滑块（拖动 / 键盘，乐观提交、被拒回滚），附一行模型条目打开官方模型列表；右下角触发钮保持原样。切换模型会通过会话记忆链沿用你的档位（issue #4 的每模型默认档跨会话优先）。
-- **Composer 模型搜索** — 官方模型列表上方注入过滤框（供应商 / 模型 / ID 分词匹配），恒开。
 - **每模型默认思考强度** — 模型行上的「默认思考强度」选择器，存在设置文档里，每个新会话打开该模型即用它。
 - **请求头与 User-Agent** — 提供商卡片内编辑官方的 `headers` 字段（掩码显示、路径合并、随卡片保存），并在 fetch 层按 origin 精确接管 `user-agent` 的覆盖（官方适配器保留该名称）；同源 `/models` 探测一并覆盖，冲突时提示而不猜。
 - **防御式注入** — 一切锚定官方页 DOM；官方升级改变结构时注入自动暂停，官方页不受影响。
@@ -105,7 +104,6 @@ Browser (lib/client.js)                  Host (lib/index.js)
 ├─ Composer injection
 │   MutationObserver on the document
 │   → ComposerSlider (root pane)
-│   → model search box (model-list pane)
 ├─ EffortEditor (React component)             (knowledge base + inference)
 │   level checkboxes / wire values /
 │   input-modality toggle /

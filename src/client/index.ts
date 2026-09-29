@@ -8,7 +8,7 @@
  *
  *   models-page.ts          the Models-page DOM injection (observer + editors)
  *   models-page-editor.ts   the editor injector behind it (anchors, staging, flush)
- *   composer-menu.ts        the composer slider AND the model search box
+ *   composer-menu.ts        the composer slider
  *   session-directory.ts    the per-session directory + effort-memory wiretaps
  *   configured-efforts.ts   the settings document's per-model `defaultEffort` cache
  *   slider-toggle-slot.ts   the Models-page footer toggle
@@ -25,11 +25,9 @@
  *      `modelAdvanced` dictionary value — Capacities / 容量 through
  *      0.1.6-alpha.1, Model options / 模型选项 from 0.1.6-alpha.2), so the
  *      editor lives under each model row rather than on the provider card.
- *   2. The composer reasoning-effort slider AND the model search box, mounted
- *      inside the OFFICIAL model menu opened from the bottom-right seat. The
- *      seat's trigger is never touched — the official "model · effort" display
- *      stays. The search box is unconditional: it does not follow the slider
- *      preference.
+ *   2. The composer reasoning-effort slider, mounted inside the OFFICIAL model
+ *      menu opened from the bottom-right seat. The seat's trigger is never
+ *      touched — the official "model · effort" display stays.
  *   3. The Models-page slider toggle, taking the official
  *      'settings.models.footer' slot unconditionally at apply.
  *   4. The stylesheet and copy dictionaries.
