@@ -47,7 +47,7 @@
 
 ## 安装
 
-需要 DeepSeek Harness **`0.1.5-alpha.1` 或更高**（按行联合的 peer 范围；`0.1.2-rc` / `0.1.3-alpha` 线不再支持——请使用插件 `0.3.7`）。当前对照 `0.2.0-rc.1` 编译与门禁。逐内核 seam 核查记录见 [docs/compatibility-notes.md](docs/compatibility-notes.md)。
+需要 DeepSeek Harness **`0.1.5-alpha.1` 或更高**（按行联合的 peer 范围；`0.1.2-rc` / `0.1.3-alpha` 线不再支持——请使用插件 `0.3.7`）。当前对照 `0.2.0-rc.2` 编译与门禁。逐内核 seam 核查记录见 [docs/compatibility-notes.md](docs/compatibility-notes.md)。
 
 ```bash
 # npm 安装（dsh 的 web profile 下）
@@ -123,7 +123,7 @@ npm test            # vitest：知识库 / 推断 / 自动填充 / DOM 注入 / 
 npm run build       # lib/*.js + lib/client.js（module-loader bundle）
 ```
 
-对照 `0.2.0-rc.1` 官方包编译与门禁；逐内核记录见 [docs/compatibility-notes.md](docs/compatibility-notes.md)。
+对照 `0.2.0-rc.2` 官方包编译与门禁；逐内核记录见 [docs/compatibility-notes.md](docs/compatibility-notes.md)。
 
 ## 已知限制
 
