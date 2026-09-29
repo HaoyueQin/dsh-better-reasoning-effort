@@ -7,10 +7,16 @@
  *   - 0.1.5: the menu is portaled to document.body; the seat trigger keeps it
  *     linked via aria-controls="<menu id>".
  *
- * Both shapes keep aria-haspopup="menu" on the trigger and role="menu" + a
- * stable id on the menu, so the controls link is the primary route and the
- * sibling check stays as the fallback. Only 0.1.5+ is supported, but the
- * finder stays shape-tolerant so a host rendering either shape keeps working.
+ * Both shapes keep aria-haspopup="menu" on the trigger and a stable id on the
+ * popover, so the controls link is the primary route and the sibling check
+ * stays as the fallback. Only 0.1.5+ is supported, but the finder stays
+ * shape-tolerant so a host rendering either shape keeps working.
+ *
+ * 0.2.0-rc.2 additionally swaps the popover's role to `group` while the model
+ * list pane is open (ModelSelect.tsx:484 -- its own list box takes
+ * role="menu"), so a role-only probe would lose the menu for as long as the
+ * user browses models. The popover is therefore identified by its ROLE plus
+ * its menu rows.
  */
 
 // @vitest-environment jsdom
@@ -30,6 +36,22 @@ function menu(id: string): HTMLElement {
   const el = document.createElement('div')
   el.id = id
   el.setAttribute('role', 'menu')
+  return el
+}
+
+/** The drilled-in model list pane as 0.2.0-rc.2 renders it. */
+function modelPane(id: string): HTMLElement {
+  const el = document.createElement('div')
+  el.id = id
+  el.setAttribute('role', 'group')
+  el.innerHTML = `
+    <div class="searchRow"><input role="searchbox" /></div>
+    <div role="menu">
+      <section role="group" aria-labelledby="g-ds">
+        <div id="g-ds">DeepSeek</div>
+        <button role="menuitemradio" aria-checked="true">DeepSeek V4.1 Flash</button>
+      </section>
+    </div>`
   return el
 }
 
@@ -79,6 +101,43 @@ describe('findModelMenu', () => {
     document.body.appendChild(impostor)
 
     expect(findModelMenu()).toBeUndefined()
+  })
+
+  it('finds the 0.2.0-rc.2 model pane, whose popover carries role="group"', () => {
+    const card = document.createElement('div')
+    card.setAttribute('data-composer-card', '')
+    card.appendChild(trigger('tid-menu'))
+    document.body.appendChild(card)
+    const portaled = modelPane('tid-menu')
+    document.body.appendChild(portaled)
+
+    expect(findModelMenu()).toBe(portaled)
+  })
+
+  it('ignores a linked group that carries no menu rows', () => {
+    const card = document.createElement('div')
+    card.setAttribute('data-composer-card', '')
+    card.appendChild(trigger('grouped'))
+    document.body.appendChild(card)
+    const impostor = document.createElement('div')
+    impostor.id = 'grouped'
+    impostor.setAttribute('role', 'group')
+    impostor.innerHTML = '<div><button>Not a model row</button></div>'
+    document.body.appendChild(impostor)
+
+    expect(findModelMenu()).toBeUndefined()
+  })
+
+  it('finds the pre-portal inline model pane rendered as a group', () => {
+    const card = document.createElement('div')
+    card.setAttribute('data-composer-card', '')
+    const inline = modelPane('tid-menu')
+    // No aria-controls: this is the sibling-check route, not the controls link.
+    card.appendChild(trigger(null))
+    card.appendChild(inline)
+    document.body.appendChild(card)
+
+    expect(findModelMenu()).toBe(inline)
   })
 
   it('returns undefined when no menu is open', () => {
