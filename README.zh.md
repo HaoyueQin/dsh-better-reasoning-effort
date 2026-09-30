@@ -49,15 +49,34 @@
 
 需要 DeepSeek Harness **`0.1.5-alpha.1` 或更高**（按行联合的 peer 范围；`0.1.2-rc` / `0.1.3-alpha` 线不再支持——请使用插件 `0.3.7`）。当前对照 `0.2.0-rc.2` 编译与门禁。逐内核 seam 核查记录见 [docs/compatibility-notes.md](docs/compatibility-notes.md)。
 
+从 npm 安装（dsh 的 web profile 下）：
+
 ```bash
-# npm 安装（dsh 的 web profile 下）
 dsh plugin --profile web add dsh-better-reasoning-effort
+```
 
-# 或从 GitHub（源码安装；`lib/` 由 prepare 钩子构建——安装器会打印需要的
-# `allowBuilds` 键，照做后重新 add）
+DSH 内置的 pnpm 11.7.0 默认 `minimum-release-age` 为 24 小时：在某个版本发布后一天内发起的安装会解析到「足够旧的最新版」并安装它，而插件管理器显示的仍可能是更新的那一版。写明版本号即可立刻安装——pnpm 接受指定版本，并把它记入豁免：
+
+```bash
+dsh plugin --profile web add dsh-better-reasoning-effort@0.5.2
+```
+
+release 页面同时附带打包好的 tarball，这条路线跳过 registry 与发布冷静期。tarball 是成品，pnpm 不执行任何脚本，也不需要构建授权。URL 指向单一版本，升级时替换它即可：
+
+```bash
+dsh plugin --profile web add \
+  https://github.com/HaoyueQin/dsh-better-reasoning-effort/releases/download/v<version>/dsh-better-reasoning-effort-<version>.tgz
+```
+
+从 GitHub 源码安装，用于开发与审查而非日常安装。pnpm 要跑 `prepare` 钩子构建 `lib/`，且只在 `allowBuilds` 存在对应条目后才放行。安装器会打印确切的键，该键包含解析到的 commit：把它加进 profile 的 `pnpm-workspace.yaml` 后重新执行 add。新 commit 会改变这个键，因此每次发版都要重新授权；不含 commit 的键形式需要比内置的 11.7.0 更新的 pnpm：
+
+```bash
 dsh plugin --profile web add github:HaoyueQin/dsh-better-reasoning-effort
+```
 
-# 或链接本地检出做开发
+或链接本地检出做开发：
+
+```bash
 npm install && npm run build
 dsh plugin --profile web add link:D:/Project/dsh-better-reasoning-effort
 ```

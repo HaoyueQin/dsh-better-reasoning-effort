@@ -49,15 +49,34 @@ The auto-adapt knowledge base carries **65 curated entries across 15 vendors** (
 
 Requires DeepSeek Harness **`0.1.5-alpha.1` or later** (per-line peer ranges; the `0.1.2-rc` / `0.1.3-alpha` lines are no longer supported — use plugin `0.3.7` there). Compiled and gated against `0.2.0-rc.2`. The per-kernel seam re-checks behind this live in [docs/compatibility-notes.md](docs/compatibility-notes.md).
 
+From npm, under the dsh web profile:
+
 ```bash
-# from npm, under the dsh web profile
 dsh plugin --profile web add dsh-better-reasoning-effort
+```
 
-# or from GitHub (source install; `lib/` builds via the prepare hook — the
-# installer prints the `allowBuilds` key it needs, follow that and re-add)
+DSH bundles pnpm 11.7.0, whose default `minimum-release-age` is 24 hours: an install started within a day of a release resolves to the newest version old enough and installs that one, while the plugin manager may still display the newer release. Name the version to install it without waiting — pnpm accepts a named version and records it as an exemption:
+
+```bash
+dsh plugin --profile web add dsh-better-reasoning-effort@0.5.2
+```
+
+The release page also carries the packed tarball, which skips both the registry and the release-age wait. It is prebuilt, so pnpm executes nothing and asks for no build approval. The URL names one version, so an update replaces it:
+
+```bash
+dsh plugin --profile web add \
+  https://github.com/HaoyueQin/dsh-better-reasoning-effort/releases/download/v<version>/dsh-better-reasoning-effort-<version>.tgz
+```
+
+From GitHub source, for development and review rather than normal installs. pnpm runs the `prepare` hook to build `lib/`, and allows that only once an `allowBuilds` entry exists. The installer prints the exact key, which names the resolved commit: add it to the profile's `pnpm-workspace.yaml` and repeat the add. A new commit changes that key, so every release needs re-approval, and the commit-free key form needs a newer pnpm than the bundled 11.7.0:
+
+```bash
 dsh plugin --profile web add github:HaoyueQin/dsh-better-reasoning-effort
+```
 
-# or link a local checkout for development
+Or link a local checkout for development:
+
+```bash
 npm install && npm run build
 dsh plugin --profile web add link:D:/Project/dsh-better-reasoning-effort
 ```
