@@ -1,5 +1,7 @@
 # A pushed v* tag IS the release decision; this workflow only turns it into
-# the GitHub release page, so a tag can never again land without its release.
+# the GitHub release page — its notes plus the packed tarball that
+# `dsh plugin add <tarball URL>` installs — so a tag can never again land
+# without its release.
 # When a body file exists for the tag (.github/releases/<tag>.md) it becomes
 # the release notes verbatim; otherwise GitHub's generated notes apply.
 #
@@ -22,6 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      # `npm pack` runs the prepare hook, so it builds and packages in one step.
+      - run: npm ci
+      - run: npm pack
       - name: Create the GitHub release for the pushed tag
         env:
           GH_TOKEN: ${{ github.token }}
@@ -30,11 +39,13 @@ jobs:
           # Idempotence: a tag can be created out of band together with its
           # release (gh release create makes its own tag), which used to trip
           # this step with HTTP 422 "tag_name already exists". When the
-          # release already exists, leave its notes and assets untouched.
+          # release already exists, leave its notes untouched.
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "release $GITHUB_REF_NAME already exists; leaving its notes and assets untouched"
+            echo "release $GITHUB_REF_NAME already exists; leaving its notes untouched"
           elif [ -f "$BODY" ]; then
             gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file "$BODY"
           else
             gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
           fi
+          # The same name `npm pack` prints, so the README's URL template holds.
+          gh release upload "$GITHUB_REF_NAME" dsh-better-reasoning-effort-*.tgz --clobber
