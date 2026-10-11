@@ -25,12 +25,36 @@ export function looksLikeCompatRefusal(message: string): boolean {
     || msg.includes('supportsmaxoutput')
 }
 
+/**
+ * Whether a route profile's `models` value actually declares rows.
+ *
+ * An empty array is NOT a declaration. Schemastery materializes an absent,
+ * non-required array field with the array schema's `meta.default`, which is
+ * always `[]`, so every schema-resolved profile carries `models: []` for a
+ * route that declares none -- and the settings namespace's resolved `value`
+ * and its composition `base` are both schema-resolved. Testing merely
+ * `Array.isArray(models)` therefore reports "declared" for a route that
+ * declares only `modelOverrides`, which silently hides every catalog row.
+ */
+export function declaresModels(value: unknown): value is unknown[] {
+  return Array.isArray(value) && value.length > 0
+}
+
 /** The models array of one route in a providers dict, as records. */
 export function modelsOf(providers: unknown, route: string): Record<string, unknown>[] {
   if (!isRecord(providers)) return []
   const profile = providers[route]
-  if (!isRecord(profile) || !Array.isArray(profile['models'])) return []
-  return profile['models'].filter(isRecord)
+  if (!isRecord(profile)) return []
+  if (declaresModels(profile['models'])) return profile['models'].filter(isRecord)
+  // Installed catalog routes keep per-model customizations under the official
+  // `modelOverrides` map. Materialize the map key as the row id so the client
+  // editor can use the same pure row logic as an explicit `models` list.
+  if (isRecord(profile['modelOverrides'])) {
+    return Object.entries(profile['modelOverrides'])
+      .filter(([, value]) => isRecord(value))
+      .map(([id, value]) => ({ ...(value as Record<string, unknown>), id }))
+  }
+  return []
 }
 
 /** One provider profile's route facts, as suggestion inference reads them. */
