@@ -25,14 +25,8 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 // concept, so a typed constant is enough.
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
-import { AUTOFILL_CONFIG_PATH, HEADERS_CONFIG_PATH, PI_AI_NS, PLUGIN_ID, PROBE_PATH } from './constants.js'
-import { suggestEfforts } from './knowledge.js'
-import type { ReasoningEfforts } from './knowledge.js'
-import { resolveGuardEffort } from './guard.js'
-import { isRecord, looksLikeCompatRefusal, routeFactsOf } from './shared.js'
-import { buildUserAgentIndex, emptyIndex, type UserAgentIndex } from './headers-core.js'
-import { headerOverlayInstalled, installHeaderOverlay, type OverlaySource } from './headers-fetch.js'
-import { detectHeaderConflicts, type HeaderConflictReport } from './headers-conflict.js'
+import { AUTOFILL_CONFIG_PATH, PI_AI_NS, PLUGIN_ID, PROBE_PATH } from './constants.js'
+import { isRecord, looksLikeCompatRefusal } from './shared.js'
 // The knowledge-base patch builder lives in its own module: the browser half
 // builds the SAME patch from its own idle-time read, so one suggestion can
 // never produce two different documents.
@@ -81,23 +75,6 @@ export interface Config {
    * "try exactly once" (default [1000, 2000, 4000, 8000, 16000, 30000]).
    */
   bootRetryDelaysMs?: number[]
-  /**
-   * Rewrite effort-less calls to forced-thinking ladders into the ladder's
-   * vendor default (default true). Only the request class that today becomes
-   * `thinking: {type: disabled}` on a ladder that cannot switch thinking off
-   * is rewritten (issue #2); everything else passes through byte-identical.
-   */
-  defaultGuard?: boolean
-  /**
-   * Take over `user-agent` at the fetch layer for every route whose `headers`
-   * declare one (default true). The official adapter drops a profile
-   * `user-agent` in favour of the harness attribution, so a gateway that
-   * fingerprints the client identity never sees the configured value; this
-   * overlay is the only seam that can send it (issue #12). Inert unless a route
-   * actually declares a `user-agent`; turn it off to leave the wire to another
-   * plugin that rewrites the same surface.
-   */
-  uaOverride?: boolean
 }
 
 /** Schemastery schema: Cordis validates the row config and fills defaults before apply(). */
@@ -106,8 +83,6 @@ export const Config: Schema<Config> = Schema.object({
   modalityAutofill: Schema.boolean().default(true),
   probeTimeoutMs: Schema.natural().min(1).default(PROBE_TIMEOUT_MS),
   bootRetryDelaysMs: Schema.array(Schema.natural().min(1)).default([...BOOT_RETRY_DELAYS_MS]),
-  defaultGuard: Schema.boolean().default(true),
-  uaOverride: Schema.boolean().default(true),
 })
 
 interface CredentialsService {
@@ -350,54 +325,6 @@ function listingEntries(body: unknown): Record<string, unknown>[] | undefined {
 }
 
 /**
- * The llm-service surface the default-guard wraps: only the two dispatch
- * entries, typed structurally so no new dependency is needed.
- */
-interface LlmDispatchLike {
-  prepareCall(config: Record<string, unknown>, signal?: unknown): Promise<Record<string, unknown>>
-  stream(options: Record<string, unknown>): AsyncIterable<unknown>
-}
-
-/**
- * Fill one call config with the vendor default when it names no effort and
- * its declared ladder cannot switch thinking off (issue #2).
- *
- * Reads the resolved pi-ai section (never the user layer -- this only reads).
- * Fails open: any unreadable shape returns the config untouched, reproducing
- * today's behavior exactly.
- */
-function guardCallConfig(cfg: Record<string, unknown>, section: unknown): Record<string, unknown> {
-  try {
-    if (typeof cfg['reasoningEffort'] !== 'undefined') return cfg
-    const provider = cfg['provider']
-    const modelId = cfg['model']
-    if (typeof provider !== 'string' || typeof modelId !== 'string') return cfg
-    if (!isRecord(section)) return cfg
-    const providers = section['providers']
-    if (!isRecord(providers)) return cfg
-    const profile = providers[provider]
-    if (!isRecord(profile)) return cfg
-    const rawModels = profile['models']
-    if (!Array.isArray(rawModels)) return cfg
-    const row = rawModels.find((candidate): candidate is Record<string, unknown> =>
-      isRecord(candidate) && candidate['id'] === modelId)
-    if (row === undefined || !isRecord(row['reasoningEfforts'])) return cfg
-    const profileDefault = typeof profile['reasoning'] === 'string' ? profile['reasoning'] : undefined
-    const facts = routeFactsOf({ providers: { [provider]: profile } }, provider)
-    const suggestion = suggestEfforts(modelId, facts)
-    const level = resolveGuardEffort({
-      declared: row['reasoningEfforts'] as ReasoningEfforts,
-      vendorDefault: suggestion.defaultEffort,
-      profileDefault,
-      requested: undefined,
-    })
-    return level === undefined ? cfg : { ...cfg, reasoningEffort: level }
-  } catch {
-    return cfg
-  }
-}
-
-/**
  * Apply the plugin: autofill undeclared models on boot and after every commit
  * that touches the pi-ai namespace.
  * @param ctx - host context.
@@ -409,8 +336,6 @@ export function apply(ctx: Context, config: Config = {}): void {
     modalityAutofill: config.modalityAutofill !== false,
     probeTimeoutMs: config.probeTimeoutMs ?? PROBE_TIMEOUT_MS,
     bootRetryDelaysMs: config.bootRetryDelaysMs ?? [...BOOT_RETRY_DELAYS_MS],
-    defaultGuard: config.defaultGuard !== false,
-    uaOverride: config.uaOverride !== false,
   }
 
   // Module-level `inject` already guarantees the settings service; using it
@@ -418,7 +343,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   // declaration as the single source of truth.
   const settings = ctx.settings
 
-  // The guard and probe route read the pi-ai section through this cached
+  // The probe route reads the pi-ai section through this cached
   // closure slot. Describing every active form on every model call is both
   // needless work and, on 0.1.7+, can publish revision invalidation; retain the
   // last resolved section until the settings document reports that it moved.
@@ -430,8 +355,8 @@ export function apply(ctx: Context, config: Config = {}): void {
     try {
       value = settings.describe().find(entry => entry.ns === PI_NS)?.value
     } catch {
-      // The guard and probe are advisory: an unavailable settings form must
-      // not turn a model call into a plugin failure.
+      // The probe is advisory: an unavailable settings form must not turn a
+      // request into a plugin failure.
       return undefined
     }
     // A missing namespace is expected during boot and must be retried.
@@ -516,70 +441,13 @@ export function apply(ctx: Context, config: Config = {}): void {
     // browser half either -- boot covers it.
   }
 
-  // Default-guard (issue #2): wrap the llm dispatch entries so effort-less
-  // calls to forced-thinking ladders ride the ladder's vendor default instead
-  // of the wire's off-equivalent. Deferred inject: the wrap lands whenever
-  // the llm service registers, and ctx.effect restores the originals on
-  // dispose (disable/HMR leaves no trace).
-  if (resolved.defaultGuard) {
-    ctx.inject(['llm'], (llmCtx) => {
-      const llm = (llmCtx as unknown as { llm?: unknown }).llm as LlmDispatchLike | undefined
-      if (llm === undefined || typeof llm.prepareCall !== 'function' || typeof llm.stream !== 'function') return
-      // Unbound originals: restore assigns back the exact references, and
-      // dispatch keeps the service as receiver through .call.
-      const origPrepare = llm.prepareCall
-      const origStream = llm.stream
-      llm.prepareCall = (callConfig, signal) => origPrepare.call(llm, guardCallConfig(callConfig, piSection()), signal)
-      llm.stream = (options) => origStream.call(llm, guardCallConfig(options, piSection()))
-      ctx.effect(() => () => {
-        llm.prepareCall = origPrepare
-        llm.stream = origStream
-      }, 'dsh-better-reasoning-effort: default-guard')
-    })
-  }
-
-  // user-agent takeover (issue #12): the official adapter drops a profile
-  // `user-agent` and merges the harness attribution over the route's own
-  // headers, so a fingerprinting gateway (agentrouter and claude-code-router
-  // style relays) never sees the identity the user configured. Nothing in the
-  // configuration layer can express that override, so the plugin performs it at
-  // the fetch layer — the only public seam below the adapter's header merge.
-  //
-  // The index is keyed by the endpoint's ORIGIN and rebuilt from the live
-  // settings section, so a route added, edited, or removed on the Models page
-  // reaches the next request with no reload. `uaOverride: false` empties the
-  // index instead of skipping the install: the wrapper stays in place (one
-  // seam, one owner) and simply stops matching anything.
-  /** Live index the overlay reads; never undefined once apply has run. */
-  const overlaySource: OverlaySource = { current: emptyIndex() }
-  const refreshHeaders = (): void => {
-    if (!resolved.uaOverride) {
-      overlaySource.current = emptyIndex()
-      return
-    }
-    const section = piSection()
-    const providers = isRecord(section) && isRecord(section['providers'])
-      ? (section['providers'] as Record<string, Record<string, unknown>>)
-      : {}
-    overlaySource.current = buildUserAgentIndex(providers)
-  }
-  refreshHeaders()
-  ctx.on('settings/document-updated', (ns) => {
-    if (ns === PI_NS) refreshHeaders()
-  })
-  const overlay = installHeaderOverlay(overlaySource)
-  ctx.effect(() => () => { overlay.dispose() }, 'dsh-better-reasoning-effort: fetch header overlay')
-  // Read once: what sits on disk changes only when the user installs or patches
-  // something, and a restart is the honest moment to re-read it.
-  const headerConflicts: HeaderConflictReport = detectHeaderConflicts()
-
   // Same-origin probe route: the browser half's Auto-adapt asks the endpoint's
   // RAW /models listing through here, because the sanctioned llm wire call
   // strips reasoning signals host-side. The credential resolves server-side
   // and never echoes back; only routes the user's own settings name are
   // reachable, and the trust fence rejects cross-site callers.
   ctx.inject(['webServer'], (webServerCtx) => {
-    ctx.effect(
+    webServerCtx.effect(
       () =>
         webServerCtx.webServer.register({
           kind: 'exact',
@@ -707,7 +575,7 @@ export function apply(ctx: Context, config: Config = {}): void {
     // `dsh.client` declaration carries no plugin config, so without this route
     // a deployment configured `autofill: false` would still be written to from
     // the settings page.
-    ctx.effect(
+    webServerCtx.effect(
       () =>
         webServerCtx.webServer.register({
           kind: 'exact',
@@ -730,51 +598,5 @@ export function apply(ctx: Context, config: Config = {}): void {
       'dsh-better-reasoning-effort: autofill config route',
     )
 
-    // The request-header overlay's status, for the browser half. Same-origin
-    // and read-only, like the other two routes: the takeover lives host-side, so
-    // the page needs this to say which routes it is changing and to warn about
-    // another plugin rewriting the same surface.
-    ctx.effect(
-      () =>
-        webServerCtx.webServer.register({
-          kind: 'exact',
-          path: HEADERS_CONFIG_PATH,
-          handler: async (req, res) => {
-            if (!isTrustedRequest(req)) {
-              sendJson(res, 403, { ok: false, error: 'forbidden' })
-              return
-            }
-            if (req.method !== 'GET') {
-              sendJson(res, 405, { ok: false, error: 'method not allowed' })
-              return
-            }
-            const index = overlaySource.current
-            sendJson(res, 200, {
-              ok: true,
-              data: {
-                /** Whether the fetch-layer takeover is enabled in this deployment. */
-                enabled: resolved.uaOverride,
-                /** Whether this plugin's wrapper currently owns the global fetch. */
-                installed: headerOverlayInstalled(),
-                /** Routes whose `user-agent` the plugin is sending, by origin. */
-                overrides: [...index.byOrigin.values()].map(entry => ({
-                  origin: entry.origin,
-                  route: entry.route,
-                  userAgent: entry.userAgent,
-                })),
-                /**
-                 * Origins two routes claim with different values: the fetch seam
-                 * cannot tell their requests apart, so the first declaration is
-                 * the one sent.
-                 */
-                conflicts: index.conflicts,
-                /** What was found of the plugins that rewrite the same surface. */
-                environment: headerConflicts,
-              },
-            })
-          },
-        }),
-      'dsh-better-reasoning-effort: headers config route',
-    )
   })
 }
