@@ -144,6 +144,10 @@ describe('the replica across the official panes', () => {
       handlers.dispose()
       await new Promise(resolve => setTimeout(resolve, 0))
       expect(menu.querySelector('[data-bre-slider="1"]')).toBeNull()
+      // Disposing the plugin must restore the official menu's own DOM state;
+      // a later HMR/disable must not leave an empty shell or hidden controls.
+      expect(menu.classList.contains('bre-model-menu-host')).toBe(false)
+      for (const cell of rootCells(menu)) expect(cell.style.display).toBe('')
     })
   })
 })

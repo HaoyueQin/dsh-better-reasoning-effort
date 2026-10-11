@@ -252,7 +252,10 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
       // unwired directory behaved. A REFUSED pick is never recorded, whether
       // the kernel rejected by throwing (<= 0.1.6-alpha.1) or by resolving a
       // refusal result (0.1.6-alpha.2).
-      if (!isSelectRefusal(result) && sliderEnabled()) {
+      // An older async response must never overwrite a newer explicit pick's
+      // session sighting. The host may resolve selections out of order, so
+      // only the most recent wrapped utterance is allowed to update memory.
+      if (utterances === myUtterance && !isSelectRefusal(result) && sliderEnabled()) {
         sessionSightings.set(memoryKey(selection.provider, selection.model), selection.reasoningEffort)
         rememberEffort(selection.provider, selection.model, selection.reasoningEffort)
       }
@@ -269,8 +272,21 @@ export function wireEffortMemory(directory: ModelDirectoryLike, deps?: EffortMem
     if (!isModelSwitch(snapshot.current, selection)) {
       if (sliderEnabled()) {
         const key = memoryKey(selection.provider, selection.model)
+        const previous = sessionSightings.get(key)
         sessionSightings.delete(key)
         attemptedRestores.add(key)
+        try {
+          const result = await original.call(directory, selection)
+          if (isSelectRefusal(result)) {
+            if (previous !== undefined) sessionSightings.set(key, previous)
+            attemptedRestores.delete(key)
+          }
+          return result
+        } catch (error) {
+          if (previous !== undefined) sessionSightings.set(key, previous)
+          attemptedRestores.delete(key)
+          throw error
+        }
       }
       return original.call(directory, selection)
     }

@@ -331,6 +331,37 @@ export const STYLES = `
   background: linear-gradient(180deg, transparent, rgba(196,190,255,.84), transparent);
   box-shadow: 0 0 7px #9c7cff;
 }
+.bre-effort-markers {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+}
+.bre-effort-marker {
+  position: absolute;
+  top: 50%;
+  left: clamp(14px, var(--bre-marker-position), calc(100% - 14px));
+  width: 4px;
+  height: 4px;
+  border: 1px solid rgba(255,255,255,.28);
+  border-radius: 50%;
+  background: rgba(213,218,255,.62);
+  box-shadow: 0 0 5px rgba(154,139,255,.28);
+  transform: translate(-50%, -50%);
+  transition: width 120ms ease, height 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+.bre-effort-marker[data-active="true"] {
+  border-color: rgba(255,255,255,.62);
+  background: rgba(255,255,255,.84);
+  box-shadow: 0 0 7px rgba(167,143,255,.58);
+}
+.bre-effort-marker[data-current="true"] {
+  width: 6px;
+  height: 6px;
+  border-color: rgba(255,255,255,.92);
+  background: #fff;
+  box-shadow: 0 0 9px rgba(180,157,255,.85);
+}
 .bre-effort-knob {
   position: absolute;
   z-index: 4;
@@ -453,6 +484,21 @@ body:not([data-ds-dark-theme]) .bre-effort-flare::after {
   background: linear-gradient(180deg, transparent, rgba(255,255,255,.94), transparent);
   box-shadow: 0 0 7px rgba(64,137,224,.44);
 }
+body:not([data-ds-dark-theme]) .bre-effort-marker {
+  border-color: rgba(46,91,145,.18);
+  background: rgba(47,91,145,.42);
+  box-shadow: 0 0 5px rgba(45,104,184,.16);
+}
+body:not([data-ds-dark-theme]) .bre-effort-marker[data-active="true"] {
+  border-color: rgba(255,255,255,.7);
+  background: rgba(255,255,255,.9);
+  box-shadow: 0 0 7px rgba(40,111,208,.42);
+}
+body:not([data-ds-dark-theme]) .bre-effort-marker[data-current="true"] {
+  border-color: rgba(255,255,255,.98);
+  background: #fff;
+  box-shadow: 0 0 9px rgba(38,111,207,.58);
+}
 body:not([data-ds-dark-theme]) .bre-effort-knob {
   border-color: rgba(126,160,197,.32);
   box-shadow:
@@ -524,6 +570,7 @@ body:not([data-ds-dark-theme]) .bre-effort.is-dragging .bre-effort-knob {
   .bre-effort-slider[data-top] .bre-effort-track { animation: none; }
   .bre-effort-knob,
   .bre-effort-flare,
+  .bre-effort-marker,
   body:not([data-ds-dark-theme]) .bre-effort-track::before { transition: none; }
 }
 /* ---- Models-page slider toggle (boxed setting item) ----

@@ -317,6 +317,10 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
     return levels.findIndex((level) => level.id === id)
   }
 
+  /** Snap pointer/range coordinates to the advertised discrete effort stops. */
+  const snapIndex = (value: number, count: number): number =>
+    Math.max(0, Math.min(count - 1, Math.round(value)))
+
   const rollback = useCallback((): void => {
     const previous = committedRef.current
     previewRef.current = Math.max(0, effortIndex(levels, previous))
@@ -353,8 +357,7 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
     // pick (the open menu visually collapsed on slow third-party catalogs),
     // and the official entry re-runs that load on every menu open anyway, so
     // the levels this slider rendered are already the fresh ones.
-    const clampIndex = (value: number, count: number): number => Math.max(0, Math.min(count - 1, Math.round(value)))
-    const index = clampIndex(raw, levels.length)
+    const index = snapIndex(raw, levels.length)
     const next = levels[index]?.id
     if (next === undefined) throw new Error(t('sliderNoLevels'))
 
@@ -407,10 +410,12 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
   }
 
   const showPointerPreview = (raw: number): void => {
-    const clamp = (value: number, count: number): number => Math.max(0, Math.min(count - 1, Math.round(value)))
-    previewRef.current = raw
-    setPreview(raw)
-    setEffort(levels[clamp(raw, levels.length)]?.id ?? '')
+    const index = snapIndex(raw, levels.length)
+    const next = levels[index]?.id ?? ''
+    if (previewRef.current === index && effort === next) return
+    previewRef.current = index
+    setPreview(index)
+    setEffort(next)
   }
 
   const beginDragging = (input: HTMLInputElement, pointerId: number, clientX: number): void => {
@@ -558,13 +563,22 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
             createElement('canvas', { ref: canvasRef, className: 'bre-effort-canvas' }),
             createElement('span', { className: 'bre-effort-flare' }),
           ),
+          createElement('div', { className: 'bre-effort-markers', 'aria-hidden': true },
+            levels.map((level, index) => createElement('span', {
+              key: level.id,
+              className: 'bre-effort-marker',
+              'data-active': index <= preview ? 'true' : undefined,
+              'data-current': index === preview ? 'true' : undefined,
+              style: { '--bre-marker-position': String(index / (count - 1) * 100) + '%' } as CSSProperties,
+            })),
+          ),
           createElement('input', {
             ref: inputRef,
             type: 'range',
             className: 'bre-effort-input',
             min: 0,
             max: count - 1,
-            step: '0.01',
+            step: 1,
             value: preview,
             disabled: busy,
             'aria-label': t('sliderEffortAria'),

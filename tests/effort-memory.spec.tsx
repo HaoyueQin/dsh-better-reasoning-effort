@@ -176,6 +176,36 @@ describe('effort memory storage', () => {
 })
 
 describe('wireEffortMemory: model switches', () => {
+  it('does not let a late explicit response overwrite a newer pick', async () => {
+    // The host may resolve two selectModel calls out of order. The older
+    // response must not move the per-session sighting back to its stale level.
+    let state = stateWith({ provider: 'openai', model: 'gpt-5.6' })
+    const pending: Array<{ selection: Selection; resolve: (value: unknown) => void }> = []
+    const directory = {
+      store: {
+        getSnapshot: () => state,
+        subscribe: () => () => {},
+      },
+      load: async () => state,
+      select: (selection: Selection) => new Promise<unknown>(resolve => {
+        pending.push({ selection, resolve })
+      }),
+    } as unknown as ModelDirectoryLike
+    const restore = wireEffortMemory(directory)
+    try {
+      const older = directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'high' })
+      const newer = directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'low' })
+      expect(pending).toHaveLength(2)
+      pending[1]!.resolve(undefined)
+      await newer
+      pending[0]!.resolve(undefined)
+      await older
+      expect(rememberedEffort('openai', 'gpt-5.6')).toBe('low')
+    } finally {
+      restore()
+    }
+  })
+
   it('records an explicit level for its exact model and submits untouched', async () => {
     const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
     const restore = wireEffortMemory(fake.directory)
