@@ -434,9 +434,11 @@ describe('client apply()', () => {
   })
 
   it('keeps the per-row editors on the row DOM bypass under the footer-slot kernel', async () => {
-    // The footer is the sanctioned seat used by this plugin. The per-row
-    // editors still mount through the row DOM bypass, because no official seat
-    // reaches a single model row.
+    // The Models page ships two sanctioned seats and the plugin takes both: the
+    // footer (the slider toggle) and the provider card (the request-header
+    // editor, issue #12). The per-row editors are NOT one of them — they still
+    // mount through the row DOM bypass, because no official seat reaches a
+    // single model row.
     const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
     const h = makeCtx(api)
     try {
@@ -448,9 +450,11 @@ describe('client apply()', () => {
       expect(h.slotCalls.injected).toContain('settings.models.footer')
       expect(h.slotCalls.registered[0]).toMatchObject({ name: 'settings.models.footer', id: PLUGIN_ID + '-slider-toggle' })
 
-      // Request-header editing is outside this plugin's reasoning-effort
-      // boundary, so no provider-card slot is registered.
-      expect(h.slotCalls.registered.some(entry => entry['name'] === 'settings.models.provider-card')).toBe(false)
+      // The provider-card seat is taken under the adapter family's namespace —
+      // the keyed dispatch key that delivers every llm-pi-ai card.
+      const cardSeat = h.slotCalls.registered.find(entry => entry['name'] === 'settings.models.provider-card')
+      expect(cardSeat).toBeDefined()
+      expect(cardSeat?.['key']).toBe('llm-pi-ai')
 
       // …but the per-row editors still mount through the DOM bypass.
       await waitFor(() => document.querySelectorAll('.bre-effort-editor').length === 2)

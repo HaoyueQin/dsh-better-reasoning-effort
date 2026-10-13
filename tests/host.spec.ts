@@ -65,24 +65,10 @@ function fakeHost(
       if (deps.includes('settings')) injected['settings'] = settings
       if (deps.includes('llm') && options?.llm !== undefined) injected['llm'] = options.llm
       if (deps.includes('webServer')) {
-        injected['effect'] = (setup: () => () => void, _name?: string): void => {
-          const disposer = setup()
-          if (typeof disposer === 'function') {
-            hostCleanups.push(disposer)
-            disposers.push(disposer)
-          }
-        }
         injected['webServer'] = {
           register(route: { path: string; handler: (req: unknown, res: unknown) => Promise<void> }): () => void {
             routes.set(route.path, route.handler)
             return () => { routes.delete(route.path) }
-          },
-          effect(setup: () => () => void, _name?: string): void {
-            const disposer = setup()
-            if (typeof disposer === 'function') {
-              hostCleanups.push(disposer)
-              disposers.push(disposer)
-            }
           },
         }
       }
@@ -299,23 +285,6 @@ describe('apply() autofill', () => {
     expect(settings.updates).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(100)
     expect(settings.updates).toHaveLength(1)
-  })
-
-  it('does not install process-wide request or llm dispatch wrappers', async () => {
-    const settings = fakeSettings(PROVIDERS)
-    const llm = {
-      prepareCall: async (config: Record<string, unknown>) => config,
-      stream: (_options: Record<string, unknown>): AsyncIterable<unknown> => (async function* (): AsyncGenerator<unknown> {})(),
-    }
-    const originalFetch = globalThis.fetch
-    const originalPrepare = llm.prepareCall
-    const originalStream = llm.stream
-    const { ctx } = fakeHost(settings, { llm })
-    const { apply } = await import('../src/index.js')
-    apply(ctx, { autofill: false })
-    expect(globalThis.fetch).toBe(originalFetch)
-    expect(llm.prepareCall).toBe(originalPrepare)
-    expect(llm.stream).toBe(originalStream)
   })
 })
 
@@ -818,5 +787,156 @@ describe('apply() probe route', () => {
       // The marker survives: the absence stays a decision.
       expect(model.inputUnset).toBe(true)
     })
+  })
+})
+
+describe('apply() default-guard', () => {
+  const GUARD_PROVIDERS = {
+    suiyue: {
+      api: 'openai-completions',
+      baseURL: 'https://api.suiyue.site/v1',
+      models: [
+        { id: 'glm-5.3-flash', reasoningEfforts: { low: 'low', high: 'high', max: 'max' } },
+        { id: 'qwen3.8-flash', reasoningEfforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' } },
+      ],
+    },
+  }
+
+  function fakeLlm(): {
+    svc: {
+      prepareCall(config: Record<string, unknown>): Promise<Record<string, unknown>>
+      stream(options: Record<string, unknown>): AsyncIterable<unknown>
+    }
+    prepared: Array<Record<string, unknown>>
+    streamed: Array<Record<string, unknown>>
+  } {
+    const prepared: Array<Record<string, unknown>> = []
+    const streamed: Array<Record<string, unknown>> = []
+    return {
+      svc: {
+        async prepareCall(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+          prepared.push(config)
+          return { ...config }
+        },
+        stream(options: Record<string, unknown>): AsyncIterable<unknown> {
+          streamed.push(options)
+          return (async function* (): AsyncGenerator<unknown> {})()
+        },
+      },
+      prepared,
+      streamed,
+    }
+  }
+
+  it('injects the vendor default into effort-less calls on forced ladders', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    // The model-pro test shape: no effort named (issue #2).
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash', maxTokens: 16, temperature: 0 })
+    expect(llm.prepared[0]).toMatchObject({
+      provider: 'suiyue',
+      model: 'glm-5.3-flash',
+      maxTokens: 16,
+      temperature: 0,
+      reasoningEffort: 'max',
+    })
+    llm.svc.stream({ provider: 'suiyue', model: 'glm-5.3-flash', maxTokens: 16, messages: [] })
+    expect(llm.streamed[0]).toMatchObject({ reasoningEffort: 'max' })
+  })
+
+  it('reads SettingsForms once until a document update invalidates the cache', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const { ctx, emitUpdated } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { autofill: false })
+
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    expect(settings.describeCalls()).toBe(1)
+
+    emitUpdated('llm-pi-ai')
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    expect(settings.describeCalls()).toBe(2)
+  })
+
+  it('fails open when SettingsForms.describe throws', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    settings.describe = () => {
+      throw new Error('settings unavailable')
+    }
+    const llm = fakeLlm()
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { autofill: false })
+
+    await expect(llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })).resolves.toBeDefined()
+    expect('reasoningEffort' in llm.prepared[0]!).toBe(false)
+  })
+
+  it('leaves explicit selections and off-capable ladders alone', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash', reasoningEffort: 'low' })
+    expect(llm.prepared[0]).toMatchObject({ reasoningEffort: 'low' })
+    // Qwen carries off:null: Default must stay Default.
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'qwen3.8-flash' })
+    expect('reasoningEffort' in llm.prepared[1]).toBe(false)
+    // Unknown routes/models pass through (fail open).
+    await llm.svc.prepareCall({ provider: 'nope', model: 'glm-5.3-flash' })
+    expect('reasoningEffort' in llm.prepared[2]).toBe(false)
+  })
+
+  it('yields to a route-level reasoning default', async () => {
+    const settings = fakeSettings({
+      suiyue: {
+        api: 'openai-completions',
+        baseURL: 'https://api.suiyue.site/v1',
+        reasoning: 'low',
+        models: [{ id: 'glm-5.3-flash', reasoningEfforts: { low: 'low', high: 'high', max: 'max' } }],
+      },
+    })
+    const llm = fakeLlm()
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    // DSH core materializes profile.reasoning itself; the guard must not
+    // clobber the deployment's explicit choice with the vendor default.
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    expect('reasoningEffort' in llm.prepared[0]).toBe(false)
+  })
+
+  it('stays off the wire when defaultGuard is false', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const origPrepare = llm.svc.prepareCall
+    const origStream = llm.svc.stream
+    const { ctx } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { defaultGuard: false })
+    expect(llm.svc.prepareCall).toBe(origPrepare)
+    expect(llm.svc.stream).toBe(origStream)
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    expect('reasoningEffort' in llm.prepared[0]).toBe(false)
+  })
+
+  it('restores the originals on dispose (uninstall-clean)', async () => {
+    const settings = fakeSettings(GUARD_PROVIDERS)
+    const llm = fakeLlm()
+    const origPrepare = llm.svc.prepareCall
+    const origStream = llm.svc.stream
+    const { ctx, dispose } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx)
+    expect(llm.svc.prepareCall).not.toBe(origPrepare)
+    dispose()
+    expect(llm.svc.prepareCall).toBe(origPrepare)
+    expect(llm.svc.stream).toBe(origStream)
   })
 })

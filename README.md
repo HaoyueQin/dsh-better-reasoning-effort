@@ -38,6 +38,7 @@ The `llm-pi-ai` adapter natively supports per-model `reasoningEfforts` and `inpu
 - **Catalog-safe writes** — routes using DSH's official `modelOverrides` keep their installed catalog; only the edited model override is written.
 - **Composer slider** — the official model menu's body is replaced by an upstream-style effort slider (drag / keyboard, optimistic commit with rollback), with one model row opening the official model list; the official trigger stays untouched, and model switches keep your level through a per-session memory chain (issue #4's per-model default effort outranks it across sessions).
 - **Per-model default effort** — a "Default effort" picker on each model row, stored in the settings document; every new session starts the model there.
+- **Request headers & `user-agent`** — a provider-card section edits the official `headers` field (masked, path-merged, Save-gated), and the plugin performs the `user-agent` override at the fetch layer per origin, because the official adapter reserves that name; same-origin `/models` probes are covered, conflicts are reported rather than guessed.
 - **Defensive injection** — everything keys off the official page's DOM; if an official upgrade changes the structure, injection simply pauses and the official page is unaffected.
 - Bilingual copy (中文 / English).
 
@@ -109,6 +110,8 @@ Optional on the plugin's profile row (values shown are the defaults):
         modalityAutofill: true  # whether the boot fill also covers modalities
         probeTimeoutMs: 15000   # /models probe fetch timeout
         bootRetryDelaysMs: [1000, 2000, 4000, 8000, 16000, 30000]
+        defaultGuard: true      # map effort-less calls on forced-thinking
+                                # ladders to the vendor default
 ```
 
 ## How it works
@@ -152,6 +155,11 @@ Compiled and gated against the `0.2.0-rc.2` official packages; see [docs/compati
 - The modality vocabulary follows pi-ai's core (`text` / `image` today); wider gateway support (PDF, audio, video) is recorded per family until the core vocabulary grows.
 - Name-heuristic modality advice (vision-flavored ids) is deliberately low-confidence and labeled as such.
 - Self-hosted relays: auto-fill pins `supportsDeveloperRole: false` on routes no official host claims (some upstreams reject the `developer` role); explicit values are never overwritten.
+- Forced-thinking models (ladders without `off`, e.g. GLM-5.3): effort-less calls map to the vendor default instead of sending `thinking: disabled` — set `defaultGuard: false` to restore raw behavior.
+- **Credentials inside `headers` are not redacted on disk**: the read-only view masks them, but the settings document still holds them in clear text — treat it like an API key.
+- **The request-header section's edit-state detection reads an unofficial signal** (the official row exposes no data attribute for its editor state); if an official build renames that class root, the section stops appearing — never breaking the page.
+- **Only one `user-agent` rewrite should be active**: sibling header plugins land on the same layer; the plugin detects and reports known ones, but the last writer on the wire wins.
+- The request-layer takeover relies on the official adapter creating a fresh SDK client per request — guarded by an end-to-end test that fails loudly if that changes.
 
 ## Acknowledgements
 
