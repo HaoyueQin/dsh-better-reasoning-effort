@@ -302,6 +302,24 @@ describe('suggestEfforts', () => {
     expect(anthropic.compat).toBeUndefined()
   })
 
+  it('gives a known aggregator its own dialect instead of the family one', () => {
+    // OpenRouter normalizes reasoning for every provider it fronts -- pi-ai's
+    // openrouter branch speaks `reasoning.effort` -- so a DeepSeek model behind
+    // it must not go out with DeepSeek's own `thinking.type` dialect.
+    const openrouter = suggestEfforts('deepseek-chat', { api: 'openai-completions', baseURL: 'https://openrouter.ai/api/v1' })
+    expect(openrouter.compat?.thinkingFormat).toBe('openrouter')
+    const together = suggestEfforts('deepseek-chat', { api: 'openai-completions', baseURL: 'https://api.together.xyz/v1' })
+    expect(together.compat?.thinkingFormat).toBe('together')
+    const baseten = suggestEfforts('qwen3.8-flash', { api: 'openai-completions', baseURL: 'https://model-abc123.baseten.co/v1' })
+    expect(baseten.compat?.thinkingFormat).toBe('baseten')
+  })
+
+  it('keeps the family dialect on the vendor own endpoint', () => {
+    // The gateway rule must not leak onto first-party bases.
+    const official = suggestEfforts('deepseek-chat', { api: 'openai-completions', baseURL: 'https://api.deepseek.com/v1' })
+    expect(official.compat).toEqual({ thinkingFormat: 'deepseek', supportsReasoningEffort: true })
+  })
+
   it('pins supportsDeveloperRole:false on self-hosted relays (issue #2)', () => {
     // A self-hosted relay is not in pi-ai's provider/URL detection, so the
     // detected supportsDeveloperRole stays true and pi-ai rewrites the

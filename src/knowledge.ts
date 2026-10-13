@@ -1395,11 +1395,47 @@ export function sanitizeCompatForProtocol(compat: CompatSuggestion, api: string)
   return Object.keys(copy).length === 0 ? undefined : (copy as CompatSuggestion)
 }
 
+/**
+ * Aggregators that normalize reasoning for every provider they front, matched
+ * on the registrable domain like {@link NATIVE_DIALECT_DOMAINS}. Their dialect
+ * outranks the model family's: pi-ai implements one dispatch branch per
+ * format, and a DeepSeek model behind OpenRouter answers `reasoning.effort`,
+ * not DeepSeek's own `thinking.type`. Both supported kernel lines carry the
+ * gate entry and the pi-ai branch for these formats (0.2.0-rc.2 and
+ * 0.2.1-alpha.2 alike), so the suggestion is valid on either.
+ */
+const GATEWAY_THINKING_FORMATS: Readonly<Record<string, string>> = {
+  'openrouter.ai': 'openrouter',
+  'together.ai': 'together',
+  'together.xyz': 'together',
+  'baseten.co': 'baseten',
+}
+
+/** The thinkingFormat a known aggregator requires, or undefined for other hosts. */
+function gatewayThinkingFormat(baseURL: string | undefined): string | undefined {
+  if (baseURL === undefined || baseURL.length === 0) return undefined
+  let host = ''
+  try {
+    host = new URL(baseURL).hostname.toLowerCase()
+  } catch {
+    return undefined
+  }
+  const parts = host.split('.')
+  if (parts.length < 2) return undefined
+  return GATEWAY_THINKING_FORMATS[parts.slice(-2).join('.')]
+}
+
 /** Gate a compat block against the route's real protocol. */
 function compatForRoute(entry: KnowledgeEntry, route: RouteFacts): CompatSuggestion | undefined {
   const api = normalize(route.api)
   if (api === COMPAT_CAPABLE_PROTOCOL) {
-    let compat = entry.compat
+    // The aggregator's own dialect outranks the family's: it is what the
+    // gateway reads, whatever vendor the model came from. Every other
+    // compat key the entry declares still rides along.
+    const gateway = gatewayThinkingFormat(route.baseURL)
+    let compat = gateway === undefined
+      ? entry.compat
+      : { ...(entry.compat ?? {}), thinkingFormat: gateway }
     if (compat !== undefined) compat = sanitizeCompatForProtocol(compat, api) ?? undefined
     if (compat === undefined && !isSelfHostedEndpoint(route.baseURL)) return undefined
     if (compat === undefined) return { thinkingTokenBudgetField: 'thinking_token_budget' }
