@@ -48,7 +48,7 @@ The auto-adapt knowledge base carries **65 curated entries across 15 vendors** (
 
 ## Install
 
-Requires DeepSeek Harness **`0.1.5-alpha.1` or later** (per-line peer ranges; the `0.1.2-rc` / `0.1.3-alpha` lines are no longer supported — use plugin `0.3.7` there). Compiled and gated against `0.2.0-rc.2`. The per-kernel seam re-checks behind this live in [docs/compatibility-notes.md](docs/compatibility-notes.md).
+Requires DeepSeek Harness **`0.1.5-alpha.1` or later** (per-line peer ranges; the `0.1.2-rc` / `0.1.3-alpha` lines are no longer supported — use plugin `0.3.7` there). Compiled and gated against `0.2.0-rc.2` and the `0.2.1-alpha` line. The per-kernel seam re-checks behind this live in [docs/compatibility-notes.md](docs/compatibility-notes.md).
 
 From npm, under the dsh web profile:
 
@@ -144,7 +144,7 @@ npm test            # vitest: knowledge / inference / autofill / DOM injection /
 npm run build       # lib/*.js + lib/client.js (module-loader bundle)
 ```
 
-Compiled and gated against the `0.2.0-rc.2` official packages; see [docs/compatibility-notes.md](docs/compatibility-notes.md) for the per-kernel records.
+Compiled and gated against the `0.2.0-rc.2` and `0.2.1-alpha.2` official packages; see [docs/compatibility-notes.md](docs/compatibility-notes.md) for the per-kernel records.
 
 ## Known limitations
 
