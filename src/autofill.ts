@@ -89,7 +89,10 @@ export function buildAutofillPatch(
       const routeInfo = routeFactsOf(providers, route)
       const name = typeof model['name'] === 'string' ? model['name'] : undefined
       const suggestion = suggestEfforts(id, { ...routeInfo, displayName: name ?? routeInfo.displayName })
-      if (suggestion.efforts === undefined) {
+      // Boot/idle autofill is persistent configuration. Only a curated
+      // official model mapping is safe to write automatically; protocol and
+      // name heuristics remain available through the explicit Auto-adapt UI.
+      if (suggestion.efforts === undefined || suggestion.matched !== true) {
         nextModels.push(model)
         continue
       }

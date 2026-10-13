@@ -342,3 +342,52 @@ describe('effectiveStagedIntents provenance', () => {
     expect(out?.input).toEqual(['text', 'image'])
   })
 })
+
+describe('catalog route first override', () => {
+  it('lands the first override for a catalog model through the official Save', async () => {
+    const host = makeHost()
+    // The route the official Models page serves from the installed catalog: no
+    // `models` list, an empty override dict -- exactly what schemastery
+    // materializes for a route that declares only `modelOverrides`.
+    host.doc[ROUTE] = { displayName: 'Acme', api: 'openai-completions', models: [], modelOverrides: {} }
+    const deps = makeDeps(host)
+    const state = createScanState()
+    document.body.innerHTML = '<div class="section">' + cardDom('Acme', true) + '</div>'
+    await settle(() => reconcile(document.querySelector('.section') as HTMLElement, deps, state), state)
+
+    const editor = deps.editors.at(-1)?.props
+    expect(editor).toBeDefined()
+    // The insight under test: a catalog row is NOT a staged row. Its model is
+    // served by the installed catalog, so the edit is a queued write against a
+    // saved route -- not a create-card staging that waits for a row the
+    // document will never hold.
+    editor?.api.commit(ROUTE, MODEL, { efforts: { high: 'high' } })
+    expect(state.queued.get(ROUTE)?.get(MODEL)).toBeDefined()
+    expect(state.pending.get(ROUTE)).toBeUndefined()
+
+    await closeCard(deps, state)
+
+    const profile = host.doc[ROUTE] as { models?: unknown; modelOverrides?: Record<string, unknown> }
+    expect(profile.modelOverrides?.[MODEL]).toEqual({ reasoningEfforts: { high: 'high' } })
+    // The write must not synthesize a `models` list: that is the catalog
+    // replacement this feature exists to prevent.
+    expect(profile.models).toEqual([])
+  })
+
+  it('lands a create-card declaration on a route that serves the installed catalog', async () => {
+    const host = makeHost()
+    const deps = makeDeps(host)
+    const state = createScanState()
+    await stageOnCreateCard(deps, state, { high: 'high' }, [])
+    // The provider is committed as a catalog route: no `models` list, an empty
+    // override dict. The staged declaration has to land as its first override --
+    // waiting for a row the document will never hold is what stranded it.
+    host.doc[ROUTE] = { displayName: 'Acme', api: 'openai-completions', models: [], modelOverrides: {} }
+    await reopenEditCard(deps, state)
+
+    const profile = host.doc[ROUTE] as { models?: unknown; modelOverrides?: Record<string, unknown> }
+    expect(profile.modelOverrides?.[MODEL]).toEqual({ reasoningEfforts: { high: 'high' } })
+    expect(profile.models).toEqual([])
+    expect(state.pending.size).toBe(0)
+  })
+})

@@ -64,21 +64,27 @@ describe('buildAutofillPatch', () => {
 
   it('adds a compat block for openai-completions suggestions', () => {
     const patch = buildAutofillPatch({
-      route: { api: 'openai-completions', models: [{ id: 'mystery' }] },
+      route: { api: 'openai-completions', models: [{ id: 'qwen-max' }] },
     })
     const models = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).route.models
-    expect(models[0]['compat']).toEqual({ thinkingFormat: 'openai', supportsReasoningEffort: true })
+    expect(models[0]['compat']).toEqual({ thinkingFormat: 'qwen' })
   })
 
   it('withholds compat on protocols whose gate does not take it', () => {
     for (const api of ['openai-responses', 'anthropic-messages']) {
       const patch = buildAutofillPatch({
-        route: { api, models: [{ id: 'mystery' }, { id: 'claude-3-5-sonnet' }] },
+        route: { api, models: [{ id: 'qwen-max' }, { id: 'claude-3-5-sonnet' }] },
       })
       const models = (patch!.providers as Record<string, { models: Record<string, unknown>[] }>).route.models
       expect(models[0]['compat']).toBeUndefined()
       expect(models[1]['compat']).toBeUndefined()
     }
+  })
+
+  it('leaves unknown models unchanged instead of persisting protocol guesses', () => {
+    expect(buildAutofillPatch({
+      route: { api: 'openai-completions', models: [{ id: 'mystery' }] },
+    })).toBeUndefined()
   })
 
   it('backfills supportsDeveloperRole:false on declared relay models (issue #2)', () => {
@@ -150,7 +156,7 @@ describe('buildAutofillPatch', () => {
       route: {
         models: [
           { id: 'a', reasoningEffortsUnset: true },
-          { id: 'b' },
+          { id: 'qwen-max' },
         ],
       },
     }

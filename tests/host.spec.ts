@@ -940,3 +940,100 @@ describe('apply() default-guard', () => {
     expect(llm.svc.stream).toBe(origStream)
   })
 })
+
+describe('apply() guard report on the headers status route', () => {
+  const HEADERS_PATH = '/dsh-better-reasoning-effort/headers-config'
+  const PROVIDERS = {
+    suiyue: {
+      api: 'openai-completions',
+      baseURL: 'https://api.suiyue.site/v1',
+      models: [
+        { id: 'glm-5.3-flash', reasoningEfforts: { low: 'low', high: 'high', max: 'max' } },
+        { id: 'qwen3.8-flash', reasoningEfforts: { off: null, low: 'low', medium: 'medium', xhigh: 'xhigh' } },
+      ],
+    },
+  }
+
+  function fakeRes(): { res: unknown; out: () => { status: number; body: Record<string, unknown> } } {
+    let status = 0
+    let raw = ''
+    const res = {
+      set statusCode(value: number) { status = value },
+      get statusCode(): number { return status },
+      setHeader(_key: string, _value: string): void {},
+      end(body?: string): void { raw = body ?? '' },
+    }
+    return {
+      res,
+      out: () => ({ status, body: JSON.parse(raw.length > 0 ? raw : '{}') as Record<string, unknown> }),
+    }
+  }
+
+  function fakeLlm(): {
+    svc: {
+      prepareCall(config: Record<string, unknown>): Promise<Record<string, unknown>>
+      stream(options: Record<string, unknown>): AsyncIterable<unknown>
+    }
+  } {
+    return {
+      svc: {
+        async prepareCall(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+          return { ...config }
+        },
+        stream(_options: Record<string, unknown>): AsyncIterable<unknown> {
+          return (async function* (): AsyncGenerator<unknown> {})()
+        },
+      },
+    }
+  }
+
+  async function readStatus(routes: Map<string, (req: unknown, res: unknown) => Promise<void>>): Promise<Record<string, unknown>> {
+    const handler = routes.get(HEADERS_PATH)
+    expect(handler).toBeDefined()
+    const { res, out } = fakeRes()
+    await handler!({ method: 'GET', url: '/', headers: { host: '127.0.0.1:3080' } }, res)
+    const reply = out()
+    expect(reply.status).toBe(200)
+    return reply.body['data'] as Record<string, unknown>
+  }
+
+  it('reports what the guard inspected and rewrote', async () => {
+    // A process-wide wrap with no way to see whether it fires is the part of
+    // this feature that cannot be checked from the settings document: the
+    // report is what turns "it is installed" into "it rewrote N calls".
+    const settings = fakeSettings(PROVIDERS)
+    const llm = fakeLlm()
+    const { ctx, routes } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { autofill: false })
+
+    // One eligible call, then two the guard must leave alone: an explicit pick,
+    // and a ladder that can switch thinking off.
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash' })
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'glm-5.3-flash', reasoningEffort: 'low' })
+    await llm.svc.prepareCall({ provider: 'suiyue', model: 'qwen3.8-flash' })
+
+    const data = await readStatus(routes as Map<string, (req: unknown, res: unknown) => Promise<void>>)
+    const guard = data['guard'] as Record<string, unknown>
+    expect(guard['enabled']).toBe(true)
+    expect(guard['installed']).toBe(true)
+    // Only the effort-less calls naming a route and a model are inspected.
+    expect(guard['inspected']).toBe(2)
+    expect(guard['injected']).toBe(1)
+    expect(guard['lastInjection']).toEqual({ provider: 'suiyue', model: 'glm-5.3-flash', level: 'max' })
+  })
+
+  it('reports the guard as disabled and unwrapped when defaultGuard is false', async () => {
+    const settings = fakeSettings(PROVIDERS)
+    const llm = fakeLlm()
+    const { ctx, routes } = fakeHost(settings, { llm: llm.svc })
+    const { apply } = await import('../src/index.js')
+    apply(ctx, { autofill: false, defaultGuard: false })
+
+    const data = await readStatus(routes as Map<string, (req: unknown, res: unknown) => Promise<void>>)
+    const guard = data['guard'] as Record<string, unknown>
+    expect(guard['enabled']).toBe(false)
+    expect(guard['installed']).toBe(false)
+    expect(guard['injected']).toBe(0)
+  })
+})

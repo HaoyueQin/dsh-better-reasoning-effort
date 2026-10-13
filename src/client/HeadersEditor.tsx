@@ -34,6 +34,24 @@ const USER_AGENT_PRESETS: readonly string[] = [
   'Kilo-Code/1.0',
 ]
 
+/**
+ * What the default guard (issue #2) has done, as the host reports it. The
+ * guard wraps the process-wide dispatch entries, so this report is the only
+ * way the page can show that the fallback is installed AND firing.
+ */
+export interface GuardStatus {
+  /** Whether the wrap is enabled in this deployment. */
+  enabled: boolean
+  /** Whether the dispatch entries are currently wrapped. */
+  installed: boolean
+  /** Effort-less calls naming a route and a model that the guard examined. */
+  inspected: number
+  /** Calls it rewrote with the ladder's vendor default. */
+  injected: number
+  /** The most recent rewrite, when one has happened. */
+  lastInjection?: { provider: string; model: string; level: string }
+}
+
 /** The fixed fetch-layer report the host route serves. */
 export interface HeaderEnvironment {
   /** Whether the fetch-layer takeover is enabled in this deployment. */
@@ -50,6 +68,8 @@ export interface HeaderEnvironment {
     siblings: { name: string; path: string }[]
     preferOfficialLayer: boolean
   }
+  /** Absent on a host that predates the report. */
+  guard?: GuardStatus
 }
 
 /** Props of {@link HeadersEditor}. */
@@ -269,6 +289,21 @@ export function HeadersEditor({ route, api, t }: HeadersEditorProps): ReactNode 
                     : (
                       <p className="bre-effort-note bre-warn">
                         {t('headersConflictSiblings', { names: environment.environment.siblings.map(item => item.name).join(', ') })}
+                      </p>
+                    )}
+                  {/* The guard rewrites calls the card's own settings cannot
+                      describe, so without this line a deployment cannot tell
+                      an installed-but-idle fallback from one that is working. */}
+                  {environment.guard === undefined || !environment.guard.enabled
+                    ? null
+                    : (
+                      <p className="bre-effort-note" data-guard="1">
+                        {environment.guard.injected > 0
+                          ? t('headersGuardActive', {
+                            count: environment.guard.injected,
+                            model: environment.guard.lastInjection?.model ?? '',
+                          })
+                          : t('headersGuardIdle')}
                       </p>
                     )}
                 </>

@@ -2,13 +2,10 @@
  * Host half of dsh-better-reasoning-effort.
  *
  * One job: settings auto-adaptation. Whenever the `llm-pi-ai` section gains a
- * hand-declared model that carries no `reasoningEfforts`, fill one in from the
- * knowledge base + protocol inference (see {@link suggestEfforts}). The fill
- * is a *suggestion* written to the user layer — the user can still edit it on
- * the Models page — and a model that already declares efforts, or an explicit
- * `false`, is never touched. All interactive editing (per-model editors and
- * per-model auto-adapt) lives in the browser half, which reuses the same
- * knowledge base as a pure module.
+ * hand-declared model that carries no `reasoningEfforts`, fill one in only when
+ * the official model knowledge base has a verified entry. Unknown models stay
+ * untouched; interactive Auto-adapt remains a browser-side, user-confirmed
+ * path that may show protocol inference.
  *
  * @module dsh-better-reasoning-effort
  */
@@ -67,7 +64,7 @@ const PROBE_TIMEOUT_MS = 15_000
  * to set differently lives here rather than as a code constant.
  */
 export interface Config {
-  /** Auto-fill undeclared pi-ai models on boot and after settings updates (default true). */
+  /** Auto-fill undeclared models with a verified knowledge-base match (default true). */
   autofill?: boolean
   /**
    * Whether the auto-fill above also fills the input-modality declaration
@@ -359,19 +356,46 @@ interface LlmDispatchLike {
 }
 
 /**
+ * What the default guard has done in this process, for the status route.
+ *
+ * The wrap is process-wide and leaves no trace in the settings document, so
+ * "the feature is enabled" and "the feature ever fires" would otherwise be
+ * indistinguishable -- which is what made this takeover hard to keep honest.
+ */
+export interface GuardReport {
+  /** Whether the wrap is enabled by configuration. */
+  enabled: boolean
+  /** Whether the llm dispatch entries are currently wrapped. */
+  installed: boolean
+  /** Effort-less calls naming a route and a model that the guard examined. */
+  inspected: number
+  /** Calls it rewrote with the ladder's vendor default. */
+  injected: number
+  /** The most recent rewrite, so a reviewer can see that it fires at all. */
+  lastInjection?: { provider: string; model: string; level: string }
+}
+
+/**
  * Fill one call config with the vendor default when it names no effort and
  * its declared ladder cannot switch thinking off (issue #2).
  *
  * Reads the resolved pi-ai section (never the user layer -- this only reads).
  * Fails open: any unreadable shape returns the config untouched, reproducing
  * today's behavior exactly.
+ * @param report - the guard's running account of what it examined and rewrote.
  */
-function guardCallConfig(cfg: Record<string, unknown>, section: unknown): Record<string, unknown> {
+function guardCallConfig(cfg: Record<string, unknown>, section: unknown, report: GuardReport): Record<string, unknown> {
   try {
     if (typeof cfg['reasoningEffort'] !== 'undefined') return cfg
     const provider = cfg['provider']
     const modelId = cfg['model']
     if (typeof provider !== 'string' || typeof modelId !== 'string') return cfg
+    // Counted from here on: an effort-less call that names what it talks to is
+    // exactly the population this guard exists to judge. Every refusal below
+    // (an unreadable section, an unlisted model, a ladder that can switch
+    // thinking off) raises `inspected` without raising `injected`, so a
+    // deployment where the guard never fires is visible instead of silent.
+    report.inspected += 1
     if (!isRecord(section)) return cfg
     const providers = section['providers']
     if (!isRecord(providers)) return cfg
@@ -391,7 +415,10 @@ function guardCallConfig(cfg: Record<string, unknown>, section: unknown): Record
       profileDefault,
       requested: undefined,
     })
-    return level === undefined ? cfg : { ...cfg, reasoningEffort: level }
+    if (level === undefined) return cfg
+    report.injected += 1
+    report.lastInjection = { provider, model: modelId, level }
+    return { ...cfg, reasoningEffort: level }
   } catch {
     return cfg
   }
@@ -411,6 +438,16 @@ export function apply(ctx: Context, config: Config = {}): void {
     bootRetryDelaysMs: config.bootRetryDelaysMs ?? [...BOOT_RETRY_DELAYS_MS],
     defaultGuard: config.defaultGuard !== false,
     uaOverride: config.uaOverride !== false,
+  }
+
+  // The guard's own account of what it did. The wrap is process-wide, so this
+  // is the only place a deployment can tell "installed" from "ever fired"; the
+  // status route below serves it.
+  const guardReport: GuardReport = {
+    enabled: resolved.defaultGuard,
+    installed: false,
+    inspected: 0,
+    injected: 0,
   }
 
   // Module-level `inject` already guarantees the settings service; using it
@@ -529,11 +566,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       // dispatch keeps the service as receiver through .call.
       const origPrepare = llm.prepareCall
       const origStream = llm.stream
-      llm.prepareCall = (callConfig, signal) => origPrepare.call(llm, guardCallConfig(callConfig, piSection()), signal)
-      llm.stream = (options) => origStream.call(llm, guardCallConfig(options, piSection()))
+      llm.prepareCall = (callConfig, signal) => origPrepare.call(llm, guardCallConfig(callConfig, piSection(), guardReport), signal)
+      llm.stream = (options) => origStream.call(llm, guardCallConfig(options, piSection(), guardReport))
+      guardReport.installed = true
       ctx.effect(() => () => {
         llm.prepareCall = origPrepare
         llm.stream = origStream
+        guardReport.installed = false
       }, 'dsh-better-reasoning-effort: default-guard')
     })
   }
@@ -770,6 +809,21 @@ export function apply(ctx: Context, config: Config = {}): void {
                 conflicts: index.conflicts,
                 /** What was found of the plugins that rewrite the same surface. */
                 environment: headerConflicts,
+                /**
+                 * What the other process-wide takeover did (issue #2). It
+                 * reports HERE because both are this plugin's reach into the
+                 * request path: one status read has to answer "is anything of
+                 * mine rewriting requests, and did it ever fire".
+                 */
+                guard: {
+                  enabled: guardReport.enabled,
+                  installed: guardReport.installed,
+                  inspected: guardReport.inspected,
+                  injected: guardReport.injected,
+                  ...(guardReport.lastInjection === undefined
+                    ? {}
+                    : { lastInjection: { ...guardReport.lastInjection } }),
+                },
               },
             })
           },
