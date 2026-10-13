@@ -2,13 +2,10 @@
  * Host half of dsh-better-reasoning-effort.
  *
  * One job: settings auto-adaptation. Whenever the `llm-pi-ai` section gains a
- * hand-declared model that carries no `reasoningEfforts`, fill one in from the
- * knowledge base + protocol inference (see {@link suggestEfforts}). The fill
- * is a *suggestion* written to the user layer — the user can still edit it on
- * the Models page — and a model that already declares efforts, or an explicit
- * `false`, is never touched. All interactive editing (per-model editors and
- * per-model auto-adapt) lives in the browser half, which reuses the same
- * knowledge base as a pure module.
+ * hand-declared model that carries no `reasoningEfforts`, fill one in only when
+ * the official model knowledge base has a verified entry. Unknown models stay
+ * untouched; interactive Auto-adapt remains a browser-side, user-confirmed
+ * path that may show protocol inference.
  *
  * @module dsh-better-reasoning-effort
  */
@@ -61,7 +58,7 @@ const PROBE_TIMEOUT_MS = 15_000
  * to set differently lives here rather than as a code constant.
  */
 export interface Config {
-  /** Auto-fill undeclared pi-ai models on boot and after settings updates (default true). */
+  /** Auto-fill undeclared models with a verified knowledge-base match (default true). */
   autofill?: boolean
   /**
    * Whether the auto-fill above also fills the input-modality declaration

@@ -14,7 +14,7 @@ import {
 } from '../knowledge.js'
 import { AUTOFILL_MARKER, DEFAULT_EFFORT_FIELD, INPUT_UNSET_MARKER, PI_AI_NS, PROBE_PATH, UNSET_MARKER } from '../constants.js'
 import { detectModelSignal, type EndpointSignal } from '../detection.js'
-import { isRecord, looksLikeCompatRefusal, routeFactsOf } from '../shared.js'
+import { declaresModels, isRecord, looksLikeCompatRefusal, routeFactsOf } from '../shared.js'
 import type { SettingsPathOpView } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   DefaultEffortIntent,
@@ -46,10 +46,10 @@ function providersOfLayer(layer: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * The `models` value a write must be based on, read from the RAW layers: the
- * user section when it declares one, else the composition base. That is the
- * official card's own inheritance rule (`ProviderEditor` seeds its draft from
- * `namespace.user` and its fallback from `namespace.base`).
+ * The model rows a write must be based on, read from the RAW layers: the user
+ * section when it declares one, else the composition base. Explicit `models`
+ * rows are returned as-is; an official `modelOverrides` map is materialized
+ * with its map keys as row ids for the shared editor/read helpers.
  *
  * Never the resolved `value`: rebuilding from it materializes every schema
  * default -- `input: []`, an empty `compat`, an absent `models` -- into the
@@ -57,12 +57,45 @@ function providersOfLayer(layer: unknown): Record<string, unknown> | undefined {
  * schema change can no longer reach the row.
  * @param namespace - the namespace view carrying the layers.
  * @param route - the provider route key.
- * @returns the raw `models` value, or undefined when neither layer declares one.
+ * @returns model rows, or undefined when neither layer declares storage.
  */
 export function baselineModelsOf(namespace: SettingsNamespaceView | undefined, route: string): unknown {
+  const store = baselineModelStoreOf(namespace, route)
+  if (store === undefined) return undefined
+  if (store.kind === 'models') return store.models
+  return Object.entries(store.overrides).map(([id, value]) => ({
+    ...(isRecord(value) ? value : {}),
+    id,
+  }))
+}
+
+/** The raw model storage form the official settings document owns for a route. */
+export type BaselineModelStore =
+  | { kind: 'models'; models: unknown }
+  | { kind: 'modelOverrides'; overrides: Record<string, unknown> }
+
+/**
+ * Read the user layer's explicit model storage, falling back to the composition
+ * base. Catalog routes may keep only per-model overrides; those must be written
+ * back to the official `modelOverrides` field instead of replacing the catalog
+ * with a synthetic `models` array.
+ */
+export function baselineModelStoreOf(
+  namespace: SettingsNamespaceView | undefined,
+  route: string,
+): BaselineModelStore | undefined {
   for (const layer of [namespace?.user, namespace?.base]) {
     const profile = providersOfLayer(layer)?.[route]
-    if (isRecord(profile) && profile['models'] !== undefined) return profile['models']
+    if (!isRecord(profile)) continue
+    // `declaresModels`, not a bare presence test: the composition `base` is
+    // schema-resolved too, so it carries the materialized `models: []` beside a
+    // real override map. Taking that empty array as the store would rebuild a
+    // catalog route from a list that does not exist, and the write would land
+    // as `models` -- replacing the installed catalog.
+    if (declaresModels(profile['models'])) return { kind: 'models', models: profile['models'] }
+    if (isRecord(profile['modelOverrides'])) {
+      return { kind: 'modelOverrides', overrides: profile['modelOverrides'] }
+    }
   }
   return undefined
 }
@@ -379,26 +412,48 @@ export async function writeModelRows(
       // would hand back the very revision the write just failed against.
       const join = attempt === 0 ? await describe() : await describeNamespace(api, { fresh: true })
       if (join.namespace === undefined) return rows.map(() => ({ ok: false, error: 'no-namespace' }))
-      // The write rebuilds the models array verbatim, from the RAW layers (the
+      // The write rebuilds the model storage verbatim from the RAW layers (the
       // user section, else the composition base) -- never the resolved value.
-      // A row this code cannot represent must refuse the write rather than
-      // silently drop the row.
-      const rawModels = baselineModelsOf(join.namespace, route)
+      // Catalog routes use `modelOverrides`; explicit provider catalogs use the
+      // `models` array. A row this code cannot represent must refuse the write
+      // rather than silently drop it.
+      const store = baselineModelStoreOf(join.namespace, route)
+      if (store === undefined) return rows.map(() => ({ ok: false, modelNotFound: true }))
+      const rawModels = store.kind === 'models' ? store.models : Object.entries(store.overrides).map(([id, value]) => ({
+        ...(isRecord(value) ? value : {}),
+        id,
+      }))
       if (!Array.isArray(rawModels)) return rows.map(() => ({ ok: false, modelNotFound: true }))
       if (!rawModels.every(isRecord)) return rows.map(() => ({ ok: false, error: 'invalid-models' }))
       const models = rawModels as Record<string, unknown>[]
-      // Every row this write intends must still exist: a vanished row is
-      // dropped by the caller, and mixing it into a rebuild would rewrite the
-      // array around a gap.
       const nextModels = models.map(model => model)
+      const nextOverrides = store.kind === 'modelOverrides'
+        ? Object.fromEntries(Object.entries(store.overrides).map(([id, value]) => [id, isRecord(value) ? { ...value } : value]))
+        : undefined
       const missing: string[] = []
       for (const row of rows) {
         const index = nextModels.findIndex(model => model['id'] === row.modelId)
-        if (index < 0) {
+        // A catalog route's override dict starts empty, so the FIRST edit of any
+        // model the installed catalog serves is a new key: the rows live in the
+        // catalog, not in the document, so a missing entry is the normal case
+        // rather than a vanished row. Only an explicit `models` list can miss a
+        // row it should have held, and there the existing id has to be present
+        // -- resurrecting a deleted one would rewrite the catalog around a gap.
+        if (index < 0 && nextOverrides === undefined) {
           missing.push(row.modelId)
           continue
         }
-        nextModels[index] = mergeRowIntent(nextModels[index]!, row, downgraded ? undefined : row.compat)
+        const merged = mergeRowIntent(
+          index < 0 ? { id: row.modelId } : nextModels[index]!,
+          row,
+          downgraded ? undefined : row.compat,
+        )
+        if (nextOverrides !== undefined) {
+          const { id: _id, ...override } = merged
+          nextOverrides[row.modelId] = override
+        } else {
+          nextModels[index] = merged
+        }
       }
       if (missing.length > 0) {
         return rows.map(row => (missing.includes(row.modelId)
@@ -414,7 +469,11 @@ export async function writeModelRows(
         // The rebuilt models array is JSON-shaped by construction (a settings
         // document is JSON); the value is JsonValue on this baseline, so the
         // set op asserts once instead of rebuilding the row's type.
-        [{ op: 'set', path: ['providers', route, 'models'], value: nextModels } as unknown as SettingsPathOpView],
+        [{
+          op: 'set',
+          path: ['providers', route, store.kind === 'models' ? 'models' : 'modelOverrides'],
+          value: store.kind === 'models' ? nextModels : nextOverrides,
+        } as unknown as SettingsPathOpView],
         join.namespace.revision,
       )
       if (!response.ok) {
@@ -479,18 +538,18 @@ function mergeRowIntent(
       copy['reasoningEfforts'] = false
     } else {
       copy['reasoningEfforts'] = { ...efforts }
-      // The compat belongs to the declaration: merge it over the stored block so
-      // hand-tuned keys (incl. newer-only fields the suggestion never names)
-      // survive a declaration edit. Only the keys THIS edit owns and left empty
-      // are deleted -- clearing the UI's own picker has to mean unset, while a
-      // field the editor never showed stays untouched.
-      const stored = isRecord(model['compat']) ? (model['compat'] as Record<string, unknown>) : {}
-      const merged: Record<string, unknown> = { ...stored, ...(compat ?? {}) }
-      for (const key of row.clearCompatKeys ?? []) delete merged[key]
-      if (Object.keys(stored).length > 0 || Object.keys(merged).length > 0) {
-        if (Object.keys(merged).length === 0) delete copy['compat']
-        else copy['compat'] = merged
-      }
+    }
+  }
+  // Compat is an independent model-level declaration. It must still land for
+  // a `keep` or `false` ladder edit; the editor can change protocol switches
+  // without changing reasoningEfforts itself.
+  if (compat !== undefined || (row.clearCompatKeys?.length ?? 0) > 0) {
+    const stored = isRecord(model['compat']) ? (model['compat'] as Record<string, unknown>) : {}
+    const merged: Record<string, unknown> = { ...stored, ...(compat ?? {}) }
+    for (const key of row.clearCompatKeys ?? []) delete merged[key]
+    if (Object.keys(stored).length > 0 || Object.keys(merged).length > 0) {
+      if (Object.keys(merged).length === 0) delete copy['compat']
+      else copy['compat'] = merged
     }
   }
   // The modality part rides the same mutate. An omitted intent touches nothing

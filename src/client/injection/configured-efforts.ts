@@ -12,6 +12,7 @@
  */
 
 import { DEFAULT_EFFORT_FIELD } from '../../constants.js'
+import { modelsOf } from '../../shared.js'
 import { describeNamespace, providersOf } from '../ops.js'
 import type { RemoteApi } from '../types.js'
 
@@ -53,12 +54,15 @@ export function createConfiguredEfforts(deps: ConfiguredEffortsDeps): Configured
           return
         }
         const map = new Map<string, string>()
-        for (const [route, profile] of Object.entries(providersOf(join.namespace))) {
-          const rawModels = Array.isArray(profile['models']) ? profile['models'] : []
-          for (const model of rawModels) {
-            if (typeof model !== 'object' || model === null || Array.isArray(model)) continue
-            const id = (model as Record<string, unknown>)['id']
-            const effort = (model as Record<string, unknown>)[DEFAULT_EFFORT_FIELD]
+        const providers = providersOf(join.namespace)
+        for (const route of Object.keys(providers)) {
+          // Reuse the shared reader instead of re-deriving the storage shape:
+          // the resolved value materializes an empty `models` array for a
+          // catalog route, and a second copy of the precedence rule is a second
+          // place for that trap to reopen.
+          for (const model of modelsOf(providers, route)) {
+            const id = model['id']
+            const effort = model[DEFAULT_EFFORT_FIELD]
             if (typeof id === 'string' && typeof effort === 'string' && effort.length > 0) {
               map.set(`${route}/${id}`, effort)
             }
