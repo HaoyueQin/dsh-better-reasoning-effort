@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
+import Schema from '@deepseek-ai/schemastery'
 import { baselineModelsOf, createEditorApi, defaultEffortOf, describeNamespace, effortsOf, inputOf, providersOf } from '../src/client/ops.js'
 import { modelsOf } from '../src/shared.js'
 import { AUTOFILL_MARKER } from '../src/constants.js'
@@ -160,6 +161,161 @@ describe('providersOf / modelsOf / effortsOf', () => {
     expect(effortsOf(modelsOf(providers, 'r'), 'a')).toBe(false)
     expect(effortsOf(modelsOf(providers, 'r'), 'b')).toBeUndefined()
   })
+
+  it('reads a catalog route whose resolved value carries the materialized empty models default', () => {
+    // A route that declares only `modelOverrides` resolves through schemastery
+    // into a profile carrying BOTH the override map AND `models: []`: the
+    // array schema's `meta.default` is what an absent non-required field is
+    // materialized with. An empty array is therefore NOT a declaration and must
+    // not shadow the override map -- otherwise every resolved-value reader
+    // (the editor card, the staged flush, the configured-pick cache) sees a
+    // route with no models at all.
+    const catalog = {
+      ...ns,
+      value: {
+        providers: {
+          openrouter: {
+            api: 'openai-completions',
+            models: [],
+            modelOverrides: { 'qwen-max': { name: 'Qwen Max', contextWindow: 131072 } },
+          },
+        },
+      },
+      user: {
+        providers: {
+          openrouter: {
+            api: 'openai-completions',
+            modelOverrides: { 'qwen-max': { name: 'Qwen Max', contextWindow: 131072 } },
+          },
+        },
+      },
+    } as unknown as SettingsNamespaceView
+
+    const providers = providersOf(catalog)
+    expect(modelsOf(providers, 'openrouter')).toEqual([
+      { name: 'Qwen Max', contextWindow: 131072, id: 'qwen-max' },
+    ])
+    // The RAW user layer never carried the empty array, so the write path was
+    // already correct. The two readers must agree on the same route.
+    expect(baselineModelsOf(catalog, 'openrouter')).toEqual([
+      { name: 'Qwen Max', contextWindow: 131072, id: 'qwen-max' },
+    ])
+  })
+
+  it('falls back to a composition base that keeps overrides beside the empty models default', () => {
+    // `base` is schema-resolved too, so a route whose storage lives only in the
+    // composition base shows the very same `models: []` beside its overrides.
+    const composed = {
+      ...ns,
+      value: {
+        providers: {
+          openrouter: { models: [], modelOverrides: { 'qwen-max': { name: 'Qwen Max' } } },
+        },
+      },
+      user: { providers: { openrouter: { api: 'openai-completions' } } },
+      base: {
+        providers: {
+          openrouter: { models: [], modelOverrides: { 'qwen-max': { name: 'Qwen Max' } } },
+        },
+      },
+    } as unknown as SettingsNamespaceView
+
+    expect(baselineModelsOf(composed, 'openrouter')).toEqual([{ name: 'Qwen Max', id: 'qwen-max' }])
+  })
+
+  it('keeps a real models list ahead of any override map', () => {
+    const both = {
+      ...ns,
+      value: {
+        providers: {
+          r: {
+            models: [{ id: 'qwen-max', name: 'Qwen Max' }],
+            modelOverrides: { 'qwen-turbo': { name: 'Qwen Turbo' } },
+          },
+        },
+      },
+      user: {
+        providers: {
+          r: {
+            models: [{ id: 'qwen-max', name: 'Qwen Max' }],
+            modelOverrides: { 'qwen-turbo': { name: 'Qwen Turbo' } },
+          },
+        },
+      },
+    } as unknown as SettingsNamespaceView
+
+    expect(modelsOf(providersOf(both), 'r')).toEqual([{ id: 'qwen-max', name: 'Qwen Max' }])
+    expect(baselineModelsOf(both, 'r')).toEqual([{ id: 'qwen-max', name: 'Qwen Max' }])
+  })
+
+  it('reads a user-declared empty models list as no declaration (the official rule)', () => {
+    // resolveRouteModels treats an absent `models` key and an empty one as the
+    // same request, so a stored `models: []` does not declare a catalog: the
+    // write baseline must keep reading the override dict underneath it rather
+    // than take the empty list as the store.
+    const composed = {
+      ...ns,
+      value: {
+        providers: { r: { models: [], modelOverrides: { 'qwen-max': { name: 'Qwen Max' } } } },
+      },
+      user: { providers: { r: { models: [] } } },
+      base: {
+        providers: { r: { models: [], modelOverrides: { 'qwen-max': { name: 'Qwen Max' } } } },
+      },
+    } as unknown as SettingsNamespaceView
+
+    expect(baselineModelsOf(composed, 'r')).toEqual([{ name: 'Qwen Max', id: 'qwen-max' }])
+  })
+
+  it('survives the real schema resolution that materializes the empty models default', () => {
+    // The fixtures above hand-write `models: []`, which is what the trap LOOKS
+    // like. This one derives it from schemastery instead, so the regression
+    // stays pinned to the mechanism rather than to one hand-copied shape: a
+    // route declaring only `modelOverrides` is resolved through the very same
+    // array/object/dict schemas llm-pi-ai declares, and the resolved profile
+    // must still read as the catalog rows it describes.
+    const levels = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+    const modelFields = {
+      name: Schema.string(),
+      contextWindow: Schema.number().step(1).min(1),
+      input: Schema.array(Schema.union(['text', 'image'])),
+      reasoningEfforts: Schema.union([Schema.const(false), Schema.dict(Schema.union(levels))]),
+    }
+    const profile = Schema.object({
+      apiKeyEnv: Schema.string(),
+      api: Schema.union(['openai-completions', 'openai-responses']),
+      // No `.default(...)`: an absent non-required array still materializes as
+      // `[]` from the array schema's own `meta.default`.
+      models: Schema.array(Schema.object({ id: Schema.string().required(), ...modelFields })),
+      modelOverrides: Schema.dict(Schema.object(modelFields)),
+    })
+    const Config = Schema.object({ providers: Schema.dict(profile).default({}).volatile() })
+
+    const parsed = Config({
+      providers: {
+        openrouter: {
+          apiKeyEnv: 'OPENROUTER_API_KEY',
+          api: 'openai-completions',
+          modelOverrides: { 'qwen-max': { name: 'Qwen Max', contextWindow: 131072 } },
+        },
+      },
+    }) as { providers: { get: () => Record<string, Record<string, unknown>> } }
+    // `.volatile()` hands back a reference; the settings layer unwraps it with
+    // `plainConfig` before building the namespace's resolved `value`.
+    const resolved = parsed.providers.get()
+
+    // The premise: the resolved route really does carry the materialized `[]`.
+    expect(resolved.openrouter.models).toEqual([])
+    expect(resolved.openrouter.modelOverrides).toEqual({
+      'qwen-max': { name: 'Qwen Max', contextWindow: 131072, input: [] },
+    })
+
+    // And the readers must still see the override rows through it.
+    const providers = providersOf({ ...ns, value: { providers: resolved } } as unknown as SettingsNamespaceView)
+    expect(modelsOf(providers, 'openrouter')).toEqual([
+      { name: 'Qwen Max', contextWindow: 131072, input: [], id: 'qwen-max' },
+    ])
+  })
 })
 
 describe('createEditorApi', () => {
@@ -306,6 +462,40 @@ describe('createEditorApi', () => {
     expect(models[0].compat).toEqual({ thinkingFormat: 'qwen' })
   })
 
+  it('writes compat for a keep ladder without creating a reasoning declaration', async () => {
+    const preCompat = {
+      providers: {
+        aliyun: {
+          api: 'openai-completions',
+          models: [{ id: 'qwen-max', compat: { thinkingFormat: 'qwen' } }],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(preCompat)
+    const editor = createEditorApi(api)
+    expect(await editor.writeEfforts('aliyun', 'qwen-max', 'keep', { vllmPriority: 7 })).toEqual({ ok: true })
+    const model = (mutates[0].ops[0].value as Record<string, unknown>[])[0]!
+    expect(model.reasoningEfforts).toBeUndefined()
+    expect(model.compat).toEqual({ thinkingFormat: 'qwen', vllmPriority: 7 })
+  })
+
+  it('writes compat while preserving a false reasoning declaration', async () => {
+    const preCompat = {
+      providers: {
+        aliyun: {
+          api: 'openai-completions',
+          models: [{ id: 'qwen-max', reasoningEfforts: false }],
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(preCompat)
+    const editor = createEditorApi(api)
+    expect(await editor.writeEfforts('aliyun', 'qwen-max', false, { vllmPriority: 7 })).toEqual({ ok: true })
+    const model = (mutates[0].ops[0].value as Record<string, unknown>[])[0]!
+    expect(model.reasoningEfforts).toBe(false)
+    expect(model.compat).toEqual({ vllmPriority: 7 })
+  })
+
   it('leaves an existing compat untouched when the write carries none', async () => {
     const preCompat = {
       providers: {
@@ -339,6 +529,54 @@ describe('createEditorApi', () => {
     // The mutated value is visible to the next read.
     const after = await editor.suggest('aliyun', 'qwen-max')
     expect(after.ok).toBe(true)
+  })
+
+  it('writes catalog modelOverrides without replacing the installed model catalog', async () => {
+    const catalog = {
+      providers: {
+        openrouter: {
+          api: 'openai-completions',
+          modelOverrides: {
+            'qwen-max': { name: 'Qwen Max', contextWindow: 131072 },
+          },
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(catalog)
+    const editor = createEditorApi(api)
+    expect(await editor.writeEfforts('openrouter', 'qwen-max', { high: 'high' })).toEqual({ ok: true })
+    const op = mutates[0].ops[0]
+    expect(op.path).toEqual(['providers', 'openrouter', 'modelOverrides'])
+    expect(op.value).toEqual({
+      'qwen-max': { name: 'Qwen Max', contextWindow: 131072, reasoningEfforts: { high: 'high' } },
+    })
+  })
+
+  it('adds the first override for a catalog model the document does not override yet', async () => {
+    // A catalog route resolves to an EMPTY override dict beside the
+    // materialized `models: []`, so the first edit for any catalog model is a
+    // NEW key. Refusing it as model-not-found left every model of a catalog
+    // route uneditable: the row is served by the installed catalog, not by the
+    // document, so absence from the override dict is not absence of the model.
+    const catalog = {
+      providers: {
+        openrouter: {
+          api: 'openai-completions',
+          models: [],
+          modelOverrides: { 'qwen-turbo': { name: 'Qwen Turbo' } },
+        },
+      },
+    }
+    const { api, mutates } = fakeApi(catalog)
+    const editor = createEditorApi(api)
+    expect(await editor.writeEfforts('openrouter', 'qwen-max', { high: 'high' })).toEqual({ ok: true })
+    const op = mutates[0].ops[0]
+    expect(op.path).toEqual(['providers', 'openrouter', 'modelOverrides'])
+    // The sibling override survives; the new key carries only what was edited.
+    expect(op.value).toEqual({
+      'qwen-turbo': { name: 'Qwen Turbo' },
+      'qwen-max': { reasoningEfforts: { high: 'high' } },
+    })
   })
 
   it('rebuilds the models array from the USER layer, never the resolved value', async () => {
