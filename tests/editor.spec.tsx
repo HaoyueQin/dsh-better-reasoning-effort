@@ -644,6 +644,22 @@ describe('EffortEditor compat controls', () => {
     const write = (api.commit.mock.calls[0] as unknown[])[2] as Record<string, unknown>
     expect(write['compat']).toMatchObject({ thinkingTokenBudgetField: 'thinking_budget' })
   })
+
+  it('commits the just-selected compat value instead of the previous React state', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({
+      api,
+      routeApi: 'openai-completions',
+      efforts: { high: 'high' },
+    }))
+    const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('budgetFieldLabel')}"]`)!
+    await act(async () => {
+      select.value = 'thinking_token_budget'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    const writes = api.commit.mock.calls.map(call => call[2] as Record<string, unknown>)
+    expect(writes.some(write => (write.compat as Record<string, unknown> | undefined)?.thinkingTokenBudgetField === 'thinking_token_budget')).toBe(true)
+  })
 })
 
 describe('EffortEditor default-effort pick', () => {

@@ -80,21 +80,35 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
   const { menuOf, t, refreshed, sliderEnabled, directory } = deps
   let sliderMount: ForeignMount | undefined
   let lastDrillIn: boolean | undefined
+  // Reconcile temporarily hides the official root cells and adds a sizing
+  // class to the host menu. Keep the pre-injection values so a fiber dispose
+  // (or a menu replacement) leaves the official DOM exactly as it was.
+  let hostedMenu: HTMLElement | undefined
+  let hostClassWasPresent = false
+  const hiddenCellDisplays = new Map<HTMLButtonElement, string>()
+
+  const restoreOfficialMenu = (): void => {
+    if (hostedMenu !== undefined) {
+      if (!hostClassWasPresent) hostedMenu.classList.remove('bre-model-menu-host')
+      for (const [cell, display] of hiddenCellDisplays) cell.style.display = display
+    }
+    hiddenCellDisplays.clear()
+    hostedMenu = undefined
+    hostClassWasPresent = false
+  }
+
+  const unmount = (): void => {
+    restoreOfficialMenu()
+    unmountReact(sliderMount)
+    sliderMount = undefined
+  }
 
   /** Reconcile the slider into the official model menu (idempotent). */
   const reconcileSliderInto = (menu: HTMLElement): void => {
     if (!sliderEnabled()) {
-      unmountReact(sliderMount)
-      sliderMount = undefined
-      // The preference flipped off while the menu stayed open: the host menu
-      // must go back to the official content-sized box AND its root cells
-      // must become visible again (the active branch hides them inline).
-      menu.classList.remove('bre-model-menu-host')
-      for (const el of Array.from(menu.children)) {
-        if (el instanceof HTMLButtonElement && el.getAttribute('role') === 'menuitem') {
-          el.style.display = ''
-        }
-      }
+      // The preference flipped off while the menu stayed open: restore the
+      // exact class/style values captured before the active branch hid them.
+      unmount()
       return
     }
     const resolved = directory()
@@ -140,6 +154,11 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
     } else if (sliderMount.wrapper.parentElement !== menu || menu.firstChild !== sliderMount.wrapper) {
       menu.insertBefore(sliderMount.wrapper, menu.firstChild)
     }
+    if (hostedMenu !== menu) {
+      restoreOfficialMenu()
+      hostedMenu = menu
+      hostClassWasPresent = menu.classList.contains('bre-model-menu-host')
+    }
     // The replicated popover body takes the upstream .re-model-menu box.
     menu.classList.add('bre-model-menu-host')
     // Popover replication rules, mirroring upstream's pane behaviour:
@@ -170,15 +189,17 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
       sliderMount.wrapper.style.display = 'none'
     } else {
       sliderMount.wrapper.style.display = ''
-      for (const cell of cells) cell.style.display = 'none'
+      for (const cell of cells) {
+        if (!hiddenCellDisplays.has(cell)) hiddenCellDisplays.set(cell, cell.style.display)
+        cell.style.display = 'none'
+      }
     }
   }
 
   const reconcile = (): void => {
     const menu = menuOf()
     if (menu === undefined) {
-      unmountReact(sliderMount)
-      sliderMount = undefined
+      unmount()
       lastDrillIn = undefined
       return
     }
@@ -199,8 +220,7 @@ export function createComposerMenu(deps: ComposerMenuDeps): ComposerMenuInjectio
   }
 
   const dispose = (): void => {
-    unmountReact(sliderMount)
-    sliderMount = undefined
+    unmount()
     lastDrillIn = undefined
   }
 

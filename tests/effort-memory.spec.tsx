@@ -176,6 +176,36 @@ describe('effort memory storage', () => {
 })
 
 describe('wireEffortMemory: model switches', () => {
+  it('does not let a late explicit response overwrite a newer pick', async () => {
+    // The host may resolve two selectModel calls out of order. The older
+    // response must not move the per-session sighting back to its stale level.
+    let state = stateWith({ provider: 'openai', model: 'gpt-5.6' })
+    const pending: Array<{ selection: Selection; resolve: (value: unknown) => void }> = []
+    const directory = {
+      store: {
+        getSnapshot: () => state,
+        subscribe: () => () => {},
+      },
+      load: async () => state,
+      select: (selection: Selection) => new Promise<unknown>(resolve => {
+        pending.push({ selection, resolve })
+      }),
+    } as unknown as ModelDirectoryLike
+    const restore = wireEffortMemory(directory)
+    try {
+      const older = directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'high' })
+      const newer = directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'low' })
+      expect(pending).toHaveLength(2)
+      pending[1]!.resolve(undefined)
+      await newer
+      pending[0]!.resolve(undefined)
+      await older
+      expect(rememberedEffort('openai', 'gpt-5.6')).toBe('low')
+    } finally {
+      restore()
+    }
+  })
+
   it('records an explicit level for its exact model and submits untouched', async () => {
     const fake = fakeDirectory(stateWith({ provider: 'openai', model: 'gpt-5.6' }))
     const restore = wireEffortMemory(fake.directory)
@@ -552,6 +582,66 @@ describe('wireEffortMemory: configured per-model pick', () => {
     const restore = wireEffortMemory(fake.directory)
     try {
       await vi.waitFor(() => expect(fake.submitted).toEqual([{ provider: 'moonshot', model: 'kimi-k3', reasoningEffort: 'low' }]))
+    } finally {
+      restore()
+    }
+  })
+
+  it('keeps the session sighting when a follow-the-default restore is refused', async () => {
+    // A same-model level-less selection hands the model back to its default and
+    // spends the session sighting meanwhile. A refusal must give that sighting
+    // back: the durable memory can hold a different level, and only the session
+    // sighting answers with the level this session actually picked.
+    let state = stateWith({ provider: 'openai', model: 'gpt-5.6' })
+    let refuseNext = false
+    const submitted: Selection[] = []
+    const listeners = new Set<() => void>()
+    const notify = (): void => { for (const listener of [...listeners]) listener() }
+    const directory = {
+      store: {
+        getSnapshot: () => state,
+        subscribe: (listener: () => void): (() => void) => {
+          listeners.add(listener)
+          return () => { listeners.delete(listener) }
+        },
+      },
+      load: async () => state,
+      select: async (selection: Selection): Promise<unknown> => {
+        if (refuseNext) {
+          refuseNext = false
+          state = { ...state, status: 'error', error: 'session/invalid: no such effort' }
+          notify()
+          return { ok: false, error: { code: 'session/invalid', message: 'no such effort' } }
+        }
+        submitted.push(selection)
+        state = {
+          ...state,
+          current: {
+            provider: selection.provider,
+            model: selection.model,
+            ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
+          },
+        }
+        notify()
+        return undefined
+      },
+    } as unknown as ModelDirectoryLike
+    const restore = wireEffortMemory(directory)
+    try {
+      // The session's own pick for this model.
+      await directory.select({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'xhigh' })
+      // The durable memory answers differently (another session, or the
+      // configured layer): only the session sighting can say "xhigh".
+      rememberEffort('openai', 'gpt-5.6', 'low')
+      // Follow-the-default for the SAME model; the host refuses it.
+      refuseNext = true
+      await directory.select({ provider: 'openai', model: 'gpt-5.6' })
+      // A level-less projection arrives: the retry has to speak the session's
+      // xhigh, not the durable low.
+      state = stateWith({ provider: 'openai', model: 'gpt-5.6' }, { restore: true })
+      notify()
+      await vi.waitFor(() => expect(submitted).toHaveLength(2))
+      expect(submitted[1]).toEqual({ provider: 'openai', model: 'gpt-5.6', reasoningEffort: 'xhigh' })
     } finally {
       restore()
     }

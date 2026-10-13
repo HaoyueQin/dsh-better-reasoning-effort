@@ -144,7 +144,45 @@ describe('the replica across the official panes', () => {
       handlers.dispose()
       await new Promise(resolve => setTimeout(resolve, 0))
       expect(menu.querySelector('[data-bre-slider="1"]')).toBeNull()
+      // Disposing the plugin must restore the official menu's own DOM state;
+      // a later HMR/disable must not leave an empty shell or hidden controls.
+      expect(menu.classList.contains('bre-model-menu-host')).toBe(false)
+      for (const cell of rootCells(menu)) expect(cell.style.display).toBe('')
     })
+  })
+
+  it('puts back the values the official menu already carried', async () => {
+    // The host's own state is captured BEFORE the plugin touches the menu (a
+    // class the host set itself, an inline display it chose); a disposal that
+    // clears them unconditionally discards values this plugin never wrote.
+    const { apply } = await import('../src/client/index.js')
+    const api = fakeApi(() => Promise.resolve(makeJoin(structuredClone(JOIN_FIXTURE))))
+    const h = makeCtx(api, {
+      services: {
+        sessions: { list: { getSnapshot: () => ({ current: 's1' }) } },
+        modelDirectories: { directoryFor: () => directoryFixture() },
+      },
+    })
+    try {
+      const menu = buildMenu('root')
+      menu.classList.add('bre-model-menu-host')
+      for (const cell of rootCells(menu)) cell.style.display = 'flex'
+
+      apply(h.ctx as unknown as Ctx)
+      await waitFor(() => menu.querySelector('[data-bre-slider="1"]') !== null)
+      // The replica takes the menu over, hiding the official cells meanwhile.
+      for (const cell of rootCells(menu)) expect(cell.style.display).toBe('none')
+
+      h.disposeAll()
+      await new Promise(resolve => setTimeout(resolve, 0))
+      expect(menu.querySelector('[data-bre-slider="1"]')).toBeNull()
+      // Exactly what was there before, not a blank.
+      expect(menu.classList.contains('bre-model-menu-host')).toBe(true)
+      for (const cell of rootCells(menu)) expect(cell.style.display).toBe('flex')
+    } finally {
+      h.disposeAll()
+      document.body.innerHTML = ''
+    }
   })
 })
 

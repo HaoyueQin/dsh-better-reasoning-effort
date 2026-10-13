@@ -249,13 +249,26 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     // later unrelated Apply writes the stale pick back over the document.
   }, [initialEfforts, initialInput, initialCompat, initialDefaultEffort])
 
-  const compatDraft = (): CompatSuggestion | undefined => {
+  /**
+   * Build the compat bytes from the current draft, optionally replacing one
+   * field with the value that a just-fired controlled input is about to set.
+   * React batches state updates, so event handlers must pass their next value
+   * explicitly instead of asking this function to read the still-old state.
+   */
+  const compatDraft = (override?: {
+    budgetField?: string
+    priorityText?: string
+    maxOutput?: string
+  }): CompatSuggestion | undefined => {
     const out: CompatSuggestion = {}
-    if (budgetField !== '') out.thinkingTokenBudgetField = budgetField as CompatSuggestion['thinkingTokenBudgetField']
-    const pruned = priorityText.trim()
+    const nextBudgetField = override?.budgetField ?? budgetField
+    const nextPriorityText = override?.priorityText ?? priorityText
+    const nextMaxOutput = override?.maxOutput ?? maxOutput
+    if (nextBudgetField !== '') out.thinkingTokenBudgetField = nextBudgetField as CompatSuggestion['thinkingTokenBudgetField']
+    const pruned = nextPriorityText.trim()
     if (pruned !== '' && /^-?\d+$/.test(pruned)) out.vllmPriority = Number.parseInt(pruned, 10)
-    if (maxOutput === 'true') out.supportsMaxOutputTokens = true
-    else if (maxOutput === 'false') out.supportsMaxOutputTokens = false
+    if (nextMaxOutput === 'true') out.supportsMaxOutputTokens = true
+    else if (nextMaxOutput === 'false') out.supportsMaxOutputTokens = false
     return Object.keys(out).length === 0 ? undefined : out
   }
   const compatChanged = (): boolean => {
@@ -319,6 +332,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     nextDraft: DraftLevels,
     nextModality: DraftModality,
     nextDefaultEffort: string,
+    compatOverride?: Parameters<typeof compatDraft>[0],
   ): void => {
     const next = buildIntent(nextDraft)
     const effortsIntent = next === undefined && initialEfforts === undefined ? 'keep' as const : next
@@ -326,7 +340,7 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     // untouched row must omit the intent entirely -- a null would stamp the
     // durable inputUnset marker onto modalities the user never decided about.
     const nextInput = sameModality(nextModality, initialInput) ? undefined : buildModalityIntent(nextModality)
-    const manualCompat = compatDraft()
+    const manualCompat = compatDraft(compatOverride)
     const baseCompat = appliedCompatRef.current
     let writeCompat = baseCompat !== undefined ? { ...baseCompat, ...(manualCompat ?? {}) } : manualCompat
     if (initialCompat?.supportsThinkingTokenBudget === true && initialCompat?.thinkingTokenBudgetField === undefined && writeCompat?.thinkingTokenBudgetField === undefined && (routeApi ?? '').toLowerCase() === 'openai-completions') {
@@ -400,21 +414,21 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
   const patchBudgetField = (value: string): void => {
     markDirty()
     setBudgetField(value)
-    commitPending(draft, modality, defaultEffort)
+    commitPending(draft, modality, defaultEffort, { budgetField: value })
     setMessage(undefined)
   }
 
   const patchPriority = (value: string): void => {
     markDirty()
     setPriorityText(value)
-    commitPending(draft, modality, defaultEffort)
+    commitPending(draft, modality, defaultEffort, { priorityText: value })
     setMessage(undefined)
   }
 
   const patchMaxOutput = (value: string): void => {
     markDirty()
     setMaxOutput(value)
-    commitPending(draft, modality, defaultEffort)
+    commitPending(draft, modality, defaultEffort, { maxOutput: value })
     setMessage(undefined)
   }
 
