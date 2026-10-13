@@ -40,6 +40,25 @@ export function declaresModels(value: unknown): value is unknown[] {
   return Array.isArray(value) && value.length > 0
 }
 
+/**
+ * Whether one route's profile stores its models through the official
+ * `modelOverrides` map rather than an explicit `models` list.
+ *
+ * A route that declares no `models` rows serves the installed catalog, and
+ * everything it customizes lives in the override dict -- which starts empty, so
+ * the document holds nothing for the models it serves. The row still exists on
+ * the official page, because the catalog serves it: absence from the override
+ * dict is not absence of the model. Callers use this to tell "the document has
+ * no entry for this row yet" (writable, as a new override) apart from "this row
+ * was never declared" (only ever true of an explicit `models` list).
+ */
+export function usesModelOverrides(providers: unknown, route: string): boolean {
+  if (!isRecord(providers)) return false
+  const profile = providers[route]
+  if (!isRecord(profile)) return false
+  return !declaresModels(profile['models']) && isRecord(profile['modelOverrides'])
+}
+
 /** The models array of one route in a providers dict, as records. */
 export function modelsOf(providers: unknown, route: string): Record<string, unknown>[] {
   if (!isRecord(providers)) return []

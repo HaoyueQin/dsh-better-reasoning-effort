@@ -433,11 +433,21 @@ export async function writeModelRows(
       const missing: string[] = []
       for (const row of rows) {
         const index = nextModels.findIndex(model => model['id'] === row.modelId)
-        if (index < 0) {
+        // A catalog route's override dict starts empty, so the FIRST edit of any
+        // model the installed catalog serves is a new key: the rows live in the
+        // catalog, not in the document, so a missing entry is the normal case
+        // rather than a vanished row. Only an explicit `models` list can miss a
+        // row it should have held, and there the existing id has to be present
+        // -- resurrecting a deleted one would rewrite the catalog around a gap.
+        if (index < 0 && nextOverrides === undefined) {
           missing.push(row.modelId)
           continue
         }
-        const merged = mergeRowIntent(nextModels[index]!, row, downgraded ? undefined : row.compat)
+        const merged = mergeRowIntent(
+          index < 0 ? { id: row.modelId } : nextModels[index]!,
+          row,
+          downgraded ? undefined : row.compat,
+        )
         if (nextOverrides !== undefined) {
           const { id: _id, ...override } = merged
           nextOverrides[row.modelId] = override
