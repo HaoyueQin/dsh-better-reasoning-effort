@@ -563,15 +563,6 @@ export function ComposerSlider(props: ComposerSliderProps): ReactNode {
             createElement('canvas', { ref: canvasRef, className: 'bre-effort-canvas' }),
             createElement('span', { className: 'bre-effort-flare' }),
           ),
-          createElement('div', { className: 'bre-effort-markers', 'aria-hidden': true },
-            levels.map((level, index) => createElement('span', {
-              key: level.id,
-              className: 'bre-effort-marker',
-              'data-active': index <= preview ? 'true' : undefined,
-              'data-current': index === preview ? 'true' : undefined,
-              style: { '--bre-marker-position': String(index / (count - 1) * 100) + '%' } as CSSProperties,
-            })),
-          ),
           createElement('input', {
             ref: inputRef,
             type: 'range',

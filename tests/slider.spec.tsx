@@ -121,16 +121,12 @@ describe('ComposerSlider commit', () => {
     expect(knob).not.toBeNull()
     const range = container.querySelector<HTMLInputElement>('input[type="range"]')!
     // The rest position lands in the mount-sync effect (passive effects flush
-    // asynchronously); wait for it before checking the active marker.
+    // asynchronously); wait for it before checking the rest state.
     await vi.waitFor(() => expect(range.value).toBe('2'))
-    const markers = [...container.querySelectorAll<HTMLElement>('.bre-effort-marker')]
-    expect(markers).toHaveLength(5)
-    expect(markers.map(marker => marker.style.getPropertyValue('--bre-marker-position'))).toEqual([
-      '0%', '25%', '50%', '75%', '100%',
-    ])
-    expect(markers.filter(marker => marker.dataset['current'] === 'true')).toHaveLength(1)
-    expect(markers[2]?.dataset['current']).toBe('true')
-    expect(markers.filter(marker => marker.dataset['active'] === 'true')).toHaveLength(3)
+    // The stops are felt while dragging, never drawn: no locator dots.
+    expect(container.querySelector('.bre-effort-markers')).toBeNull()
+    expect(container.querySelectorAll('.bre-effort-marker')).toHaveLength(0)
+    // The snap behind that feel: the range runs on whole stops.
     expect(range.step).toBe('1')
     // The popover body replicates upstream: separator + model row after the slider.
     expect(container.querySelector('.bre-menu-separator')).not.toBeNull()
@@ -154,11 +150,6 @@ describe('ComposerSlider commit', () => {
     // Arrow keys move one step per press: 2 (medium) → 3 (high) → 4 (max).
     pressKey(range, 'ArrowRight')
     await vi.waitFor(() => expect(selectSpy).toHaveBeenCalledWith({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'high' }))
-    await vi.waitFor(() => {
-      const markers = [...container.querySelectorAll<HTMLElement>('.bre-effort-marker')]
-      expect(markers[3]?.dataset['current']).toBe('true')
-      expect(markers.filter(marker => marker.dataset['active'] === 'true')).toHaveLength(4)
-    })
     pressKey(range, 'ArrowRight')
     await vi.waitFor(() => expect(selectSpy).toHaveBeenCalledWith({ provider: 'aliyun', model: 'qwen-max', reasoningEffort: 'max' }))
     root.unmount()
