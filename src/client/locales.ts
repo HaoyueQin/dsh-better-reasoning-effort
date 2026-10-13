@@ -91,6 +91,8 @@ export const en = {
   headersConflictOrigin: 'Routes sharing one endpoint declare different User-Agents: only the first one is sent.',
   headersConflictPatched: 'The installed dsh-llm-pi-ai already carries a user-agent patch: enter the value in the headers above and this plugin need not take the request layer over.',
   headersConflictSiblings: 'A plugin rewriting the same layer is installed: {names}. Only one user-agent rewrite should be active at a time, or the last writer on the wire wins.',
+  headersGuardActive: 'Vendor-default fallback: rewrote {count} effort-less call(s), most recently "{model}".',
+  headersGuardIdle: 'Vendor-default fallback: enabled; no effort-less call has needed it yet.',
   headersError: 'Save failed: {error}',
   headersNoRoute: 'This route is no longer in the settings document — save the official card once first.',
 }
@@ -189,6 +191,8 @@ export const zh: { [Key in keyof typeof en]: string } = {
   headersConflictOrigin: '同一个 endpoint 上有多个路由配置了不同的 User-Agent：只有第一个会生效。',
   headersConflictPatched: '检测到官方 dsh-llm-pi-ai 已被打过 user-agent 补丁：这种部署直接在上面填写请求头即可，不需要本插件接管请求层。',
   headersConflictSiblings: '检测到会改写同一层的同类插件：{names}。同一时间只应启用一种 user-agent 改写，否则线上生效的是最后写入者。',
+  headersGuardActive: '默认档兜底：已改写 {count} 次无档位调用，最近一次是「{model}」。',
+  headersGuardIdle: '默认档兜底：已启用，尚无无档位调用需要它。',
   headersError: '保存失败：{error}',
   headersNoRoute: '该路由已不在设置文档中——请先保存一次官方卡片。',
 }

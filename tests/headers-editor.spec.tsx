@@ -457,3 +457,65 @@ describe('HeadersEditor', () => {
     }
   })
 })
+
+describe('the guard report', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.restoreAllMocks()
+  })
+
+  it('shows how many effort-less calls the vendor-default fallback rewrote', async () => {
+    stubEnvironment({
+      ...CLEAN_ENVIRONMENT,
+      guard: {
+        enabled: true,
+        installed: true,
+        inspected: 3,
+        injected: 2,
+        lastInjection: { provider: 'suiyue', model: 'glm-5.3-flash', level: 'max' },
+      },
+    })
+    const api = fakeApi({ headers: { 'x-company': 'acme' } })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
+    try {
+      await expand(editor.container)
+      const line = editor.container.querySelector('[data-guard]')
+      expect(line).not.toBeNull()
+      expect(line!.textContent).toContain('2')
+      expect(line!.textContent).toContain('glm-5.3-flash')
+    } finally {
+      await editor.unmount()
+    }
+  })
+
+  it('reports the fallback as enabled before any call has needed it', async () => {
+    stubEnvironment({
+      ...CLEAN_ENVIRONMENT,
+      guard: { enabled: true, installed: true, inspected: 0, injected: 0 },
+    })
+    const api = fakeApi({ headers: { 'x-company': 'acme' } })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
+    try {
+      await expand(editor.container)
+      const line = editor.container.querySelector('[data-guard]')
+      expect(line).not.toBeNull()
+      expect(line!.textContent).toBe(en.headersGuardIdle)
+    } finally {
+      await editor.unmount()
+    }
+  })
+
+  it('renders no guard line when the host does not report one', async () => {
+    // A host that predates the report, or one whose guard is switched off:
+    // the coexistence block must not invent a status it was never given.
+    stubEnvironment(CLEAN_ENVIRONMENT)
+    const api = fakeApi({ headers: { 'x-company': 'acme' } })
+    const editor = await renderEditor({ route: 'aliyun', api, t })
+    try {
+      await expand(editor.container)
+      expect(editor.container.querySelector('[data-guard]')).toBeNull()
+    } finally {
+      await editor.unmount()
+    }
+  })
+})
