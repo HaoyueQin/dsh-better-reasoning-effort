@@ -154,7 +154,8 @@ npm run build       # lib/*.js + lib/client.js（module-loader bundle）
 - 模态词汇跟随 pi-ai 核心（当前 `text` / `image`）；更宽的网关支持（PDF / 音频 / 视频）按家族记录在案，核心词汇扩充前声明不了是设计使然。
 - 命名启发式的模态建议（视觉风味 id）刻意标注低置信度，使用前请核对。
 - 自建中转：对没有官方 host 认领的路由，自动填充会钉 `supportsDeveloperRole: false`（部分上游拒绝 `developer` 角色）；显式值永不被覆盖。
-- 强制思考模型（无 `off` 的梯子，如 GLM-5.3）：无档位调用自动落厂商默认档而不是发 `thinking: disabled`——设 `defaultGuard: false` 可恢复原行为。
+- 强制思考模型（无 `off` 的梯子，如 GLM-5.3）：无档位调用自动落厂商默认档而不是发 `thinking: disabled`——设 `defaultGuard: false` 可恢复原行为。路由级 `reasoning` 默认档可用官方式覆盖同一批调用、无需 guard：适配器取 `options.reasoningEffort ?? profile.reasoning`，配了默认档的路由不会走到关闭档（guard 也会为它让路）。
+- guard 的活动情况在请求头区域内报告（已改写 N 次无档位调用、最近一次是哪个模型），因此「已安装但闲置」与「正在工作」可以区分；同一份报告也由 `/dsh-better-reasoning-effort/headers-config` 提供。
 - **`headers` 中的凭据在磁盘上不脱敏**：只读视图会掩码，但设置文档仍明文保存——请当 API key 对待。
 - **请求头区域的编辑态检测读取非官方信号**（官方行没有编辑器状态的 data 属性）；官方若改名该类词根，区域会停止出现——绝不弄坏页面。
 - **同一时间只应有一个 `user-agent` 改写器**：同类 header 插件落在同一层，后写者赢；插件会检测并提示已知同类，但不覆盖未知情况。
