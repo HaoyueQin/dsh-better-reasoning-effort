@@ -260,6 +260,23 @@ describe('reconcile', () => {
     expect((calls[1]![1] as EditorMountProps).officialInputTypes).toBe(false)
   })
 
+  it('sniffs the official reasoning-levels capability per row from the disclosure DOM', async () => {
+    // 0.2.1-alpha.4 renders its own Reasoning levels editor on custom model
+    // API routes. That DOM fact (never a version number) is the capability the
+    // plugin stands its own ladder down for.
+    const deps = makeDeps()
+    const state = createScanState()
+    const root = buildModelsDom()
+    root.querySelectorAll('.modelAdvanced')[0]!.insertAdjacentHTML(
+      'beforeend',
+      '<div class="ModelsSection_modelReasoning__hash" role="group" aria-label="Reasoning levels 1"></div>',
+    )
+    await settle(() => reconcile(root, deps, state), state)
+    const calls = vi.mocked(deps.mount).mock.calls
+    expect((calls[0]![1] as EditorMountProps).officialReasoning).toBe(true)
+    expect((calls[1]![1] as EditorMountProps).officialReasoning).toBe(false)
+  })
+
   it('drives the official input-types checkboxes to a suggested declaration', () => {
     // The official control carries no value/name to match on: it renders
     // ['text', 'image'] in that order (ModelInputTypes.tsx:39), so the

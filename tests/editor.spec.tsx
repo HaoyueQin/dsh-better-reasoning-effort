@@ -760,3 +760,59 @@ describe('EffortEditor default-effort pick', () => {
     expect(select.value).toBe('high')
   })
 })
+
+describe('EffortEditor with the official reasoning-levels block', () => {
+  it('hides the level grid and keeps the default pick with a pointer to the official control', async () => {
+    // 0.2.1-alpha.4 ships a per-row Reasoning levels editor on custom model API
+    // routes. The plugin sniffs that CAPABILITY and stands its own ladder down
+    // on exactly those rows; the default pick and compat stay.
+    const { container } = await renderEditor(baseProps({
+      efforts: { off: null, high: 'high' },
+      officialReasoning: true,
+    }))
+    expect(container.querySelector(`input[aria-label^="${t('level_off')}"]`)).toBeNull()
+    // Only the image-input toggle is left among the checkboxes.
+    expect(checkboxes(container)).toHaveLength(1)
+    expect(container.textContent).toContain(t('officialLevelsNote'))
+    const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)
+    expect(select).not.toBeNull()
+  })
+
+  it('keeps the ladder out of default-effort writes while the official block owns it', async () => {
+    const api = baseApi()
+    const { container } = await renderEditor(baseProps({
+      api,
+      efforts: { off: null, high: 'high' },
+      officialReasoning: true,
+    }))
+    const select = container.querySelector<HTMLSelectElement>(`select[aria-label^="${t('defaultEffortLabel')}"]`)!
+    await act(async () => {
+      select.value = 'high'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    expect(api.commit).toHaveBeenCalledWith('aliyun', 'qwen-max', { efforts: 'keep', defaultEffort: 'high' })
+  })
+
+  it('auto-adapt applies only what the plugin still owns and reports the suggested levels', async () => {
+    const api = baseApi()
+    api.suggest.mockResolvedValue({
+      ok: true,
+      suggestion: {
+        efforts: { off: null, high: 'high' },
+        matched: true,
+        source: 'demo',
+        confidence: 'high',
+        compat: { thinkingFormat: 'deepseek' },
+        input: ['text', 'image'],
+        inputSource: 'knowledge',
+      },
+    } satisfies SuggestReply)
+    const { container } = await renderEditor(baseProps({ api, officialReasoning: true }))
+    await act(async () => { buttonByText(container, t('autoAdapt')).click() })
+    const write = (api.commit.mock.calls.at(-1) as unknown[])[2] as Record<string, unknown>
+    expect(write['efforts']).toBe('keep')
+    expect(write['compat']).toMatchObject({ thinkingFormat: 'deepseek' })
+    expect(write['input']).toEqual(['text', 'image'])
+    expect(container.textContent).toContain(t('officialLevelsSuggest', { levels: 'off, high' }))
+  })
+})

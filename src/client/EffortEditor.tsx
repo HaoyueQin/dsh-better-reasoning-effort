@@ -97,6 +97,15 @@ export interface EffortEditorProps {
    * that actually carried modalities, on a row the official editor owns).
    */
   syncOfficialInput?: (input: InputModalities) => void
+  /**
+   * Whether the official Models page owns reasoning levels for this row (the
+   * 0.2.1-alpha.4 `ModelReasoningEfforts` block was sniffed in the disclosure).
+   * True hides the ladder controls and keeps `reasoningEfforts` out of every
+   * write: the official editor is the single ladder surface, while this editor
+   * still sets the default level, endpoint compatibility and Auto-adapt's
+   * non-ladder parts.
+   */
+  officialReasoning?: boolean
   /** The write seam (settings.mutate plus the suggestion engine). */
   api: EffortEditorApi
   /** Read-only (settings document not writable). */
@@ -178,11 +187,24 @@ function sameModality(draft: DraftModality, stored: InputModalities | undefined)
 }
 
 /**
+ * The suggested ladder as one line: a bare level sends nothing, a level whose
+ * wire spelling differs reads `level=wire`. Used where the plugin cannot write
+ * the ladder and can only report it.
+ */
+function effortSummary(efforts: ReasoningEfforts | false): string {
+  if (efforts === false) return 'false'
+  const entries = Object.entries(efforts)
+  return entries.length === 0
+    ? '—'
+    : entries.map(([level, wire]) => (wire === null || wire === level ? level : `${level}=${wire}`)).join(', ')
+}
+
+/**
  * Render one model's thinking-effort + input-modality editor: the level
  * checkboxes, the modality toggle, the auto-adapt action, and the
  * apply/reset actions that own both sections.
  */
-export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, defaultEffort: initialDefaultEffort, index, staged = false, officialInputTypes = false, syncOfficialInput, api, readOnly, t }: EffortEditorProps): ReactNode {
+export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName, efforts: initialEfforts, input: initialInput, compat: initialCompat, defaultEffort: initialDefaultEffort, index, staged = false, officialInputTypes = false, officialReasoning = false, syncOfficialInput, api, readOnly, t }: EffortEditorProps): ReactNode {
   const [draft, setDraft] = useState<DraftLevels>(() => draftFrom(initialEfforts))
   const [modality, setModality] = useState<DraftModality>(() => modalityFrom(initialInput))
   // The per-model default-effort pick (issue #4), as the level id or '' for
@@ -285,7 +307,9 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     ? undefined
     : defaultEffort === '' ? null : defaultEffort
 
-  const changed = !sameEfforts(buildIntent(draft), initialEfforts)
+  // The ladder is not this editor's to change when the official block owns it,
+  // so a ladder difference must not make the row read as modified.
+  const changed = (!officialReasoning && !sameEfforts(buildIntent(draft), initialEfforts))
     || !sameModality(modality, initialInput)
     || compatChanged()
     || defaultEffortIntent !== undefined
@@ -335,7 +359,12 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     compatOverride?: Parameters<typeof compatDraft>[0],
   ): void => {
     const next = buildIntent(nextDraft)
-    const effortsIntent = next === undefined && initialEfforts === undefined ? 'keep' as const : next
+    // The official reasoning block owns the ladder when it is present: every
+    // write this editor makes then carries 'keep' for it, so a compat, modality
+    // or default-effort edit can never overwrite the official declaration.
+    const effortsIntent = officialReasoning
+      ? 'keep' as const
+      : next === undefined && initialEfforts === undefined ? 'keep' as const : next
     // The modality part travels ONLY when this edit actually changed it: an
     // untouched row must omit the intent entirely -- a null would stamp the
     // durable inputUnset marker onto modalities the user never decided about.
@@ -453,7 +482,10 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
   ): void => {
     markDirty()
     const nextDraft = draftFrom(parts.efforts)
-    setDraft(nextDraft)
+    // The official block owns the ladder here: the stored draft stays put, so
+    // the default pick keeps naming the stored levels, and the suggestion is
+    // reported instead of written (commitPending forces 'keep').
+    if (!officialReasoning) setDraft(nextDraft)
     // The suggestion's own modality, when it carries one; else the draft's.
     const nextModality = parts.input === undefined ? modality : modalityFrom(parts.input)
     if (parts.input !== undefined) {
@@ -471,13 +503,19 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     setSuggestedInputSource(parts.inputSource)
     setReferenceContext(parts.contextWindow)
     setReferenceMaxTokens(parts.maxTokens)
-    setMessage({
-      kind: 'info',
-      text: t('appliedHint', { source: parts.source, confidence: t('confidence_' + parts.confidence) }),
-    })
+    if (!officialReasoning) {
+      setMessage({
+        kind: 'info',
+        text: t('appliedHint', { source: parts.source, confidence: t('confidence_' + parts.confidence) }),
+      })
+    }
     // One commit for the whole suggestion, so the ledger never holds the
-    // ladder without the compat block that makes its wire spellings work.
-    commitPending(nextDraft, nextModality, defaultEffort)
+    // ladder without the compat block that makes its wire spellings work. A
+    // row the official block owns commits only the parts this plugin still
+    // holds (compat / modalities); with neither, there is nothing to write.
+    if (!officialReasoning || parts.compat !== undefined || parts.input !== undefined) {
+      commitPending(officialReasoning ? draft : nextDraft, nextModality, defaultEffort)
+    }
   }
 
   const autoAdapt = async (): Promise<void> => {
@@ -553,40 +591,45 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
           {t('autoAdapt')}
         </button>
       </div>
-      <div className="bre-effort-grid">
-        {LEVEL_ORDER.map(level => {
-          const cell = draft[level]
-          return (
-            <label key={level} className="bre-effort-row">
-              <input
-                type="checkbox"
-                checked={cell.on}
-                disabled={disabled}
-                aria-label={t('level_' + level) + ' ' + String(index + 1)}
-                onChange={(event) => { patchLevel(level, event.target.checked) }}
-              />
-              <span className="bre-effort-level">{t('level_' + level)}</span>
-              {/* Every armed level takes a wire input, off included: a
-                  non-null off spelling is what some formats send to close
-                  thinking (OpenAI's none spelling, or the deepseek/zai
-                  explicit disabled object); an empty one sends nothing. */}
-              {cell.on
-                ? (
+      {officialReasoning ? <p className="bre-effort-note">{t('officialLevelsNote')}</p> : null}
+      {officialReasoning
+        ? null
+        : (
+          <div className="bre-effort-grid">
+            {LEVEL_ORDER.map(level => {
+              const cell = draft[level]
+              return (
+                <label key={level} className="bre-effort-row">
                   <input
-                    type="text"
-                    className="bre-effort-wire"
-                    value={cell.wire}
+                    type="checkbox"
+                    checked={cell.on}
                     disabled={disabled}
-                    placeholder={t('wirePlaceholder')}
-                    aria-label={t('level_' + level) + ' ' + t('wireValue')}
-                    onChange={(event) => { patchWire(level, event.target.value) }}
+                    aria-label={t('level_' + level) + ' ' + String(index + 1)}
+                    onChange={(event) => { patchLevel(level, event.target.checked) }}
                   />
-                )
-                : <span className="bre-effort-empty" />}
-            </label>
-          )
-        })}
-      </div>
+                  <span className="bre-effort-level">{t('level_' + level)}</span>
+                  {/* Every armed level takes a wire input, off included: a
+                      non-null off spelling is what some formats send to close
+                      thinking (OpenAI's none spelling, or the deepseek/zai
+                      explicit disabled object); an empty one sends nothing. */}
+                  {cell.on
+                    ? (
+                      <input
+                        type="text"
+                        className="bre-effort-wire"
+                        value={cell.wire}
+                        disabled={disabled}
+                        placeholder={t('wirePlaceholder')}
+                        aria-label={t('level_' + level) + ' ' + t('wireValue')}
+                        onChange={(event) => { patchWire(level, event.target.value) }}
+                      />
+                    )
+                    : <span className="bre-effort-empty" />}
+                </label>
+              )
+            })}
+          </div>
+        )}
       {armedLevels.length > 0 ? (
         <div className="bre-modality">
           <span className="bre-effort-title">{t('defaultEffortLabel')}</span>
@@ -725,12 +768,14 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
           marker, i.e. bare provider-default requests (the relay-compat
           mode of issue #2). Never-declared rows map to keep, so the hint
           stays hidden there exactly as the write does. */}
-      {buildIntent(draft) === undefined && initialEfforts !== undefined
+      {!officialReasoning && buildIntent(draft) === undefined && initialEfforts !== undefined
         ? <p className="bre-effort-note">{t('bareHint')}</p> : null}
       {suggested !== undefined ? (
         <div className="bre-suggestion">
           <p className="bre-effort-note">
-            {t('appliedHint', { source: suggestedSource, confidence: t('confidence_' + suggestedConfidence) })}
+            {officialReasoning
+              ? t('officialLevelsSuggest', { levels: effortSummary(suggested) })
+              : t('appliedHint', { source: suggestedSource, confidence: t('confidence_' + suggestedConfidence) })}
           </p>
           {suggestedInputSource === undefined
             ? null

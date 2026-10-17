@@ -176,6 +176,15 @@ export interface EditorMountProps {
    */
   officialInputTypes?: boolean
   /**
+   * Whether the official Models page owns reasoning levels for this row:
+   * 0.2.1-alpha.4 renders its own Reasoning levels editor inside the
+   * disclosure. When true, the editor hides its ladder controls and never
+   * writes `reasoningEfforts`; the default pick, endpoint compatibility and
+   * Auto-adapt's non-ladder parts stay — again a CAPABILITY sniffed from the
+   * row DOM, never a kernel version.
+   */
+  officialReasoning?: boolean
+  /**
    * Hand a suggested modality set to the OFFICIAL Input-types control when it
    * owns them: the pending write only reaches the settings document on Save,
    * so Auto-adapt would otherwise leave the click with nothing to show.
@@ -1046,6 +1055,17 @@ function officialInputTypesOf(container: HTMLElement): boolean {
 }
 
 /**
+ * Whether the official page ships its own reasoning-levels editor inside this
+ * row's disclosure (0.2.1-alpha.4's `ModelReasoningEfforts`). The same
+ * capability rule as {@link officialInputTypesOf}: a DOM class-name stem
+ * sniffed per row, so the plugin's ladder stands down exactly where the
+ * official control already owns the declaration.
+ */
+function officialReasoningOf(container: HTMLElement): boolean {
+  return container.querySelector('[class*="modelReasoning"]') !== null
+}
+
+/**
  * Drive the official per-row input-types control to a suggested declaration.
  *
  * Clicking an official checkbox is the path a user takes: its own onChange
@@ -1101,6 +1121,9 @@ function sameProps(a: EditorMountProps, b: EditorMountProps): boolean {
     // The official capability can appear/disappear across an HMR or host
     // update; the modality section must follow it.
     && a.officialInputTypes === b.officialInputTypes
+    // Same for the official reasoning-levels block: the ladder section must
+    // stand down (or come back) with it.
+    && a.officialReasoning === b.officialReasoning
     && sameEfforts(a.efforts, b.efforts)
     && sameInput(a.input, b.input)
     && sameCompat(a.compat, b.compat)
@@ -1480,6 +1503,7 @@ export function reconcile(root: HTMLElement, deps: InjectorDeps, state: ScanStat
         index,
         staged,
         officialInputTypes: officialInputTypesOf(target.container),
+        officialReasoning: officialReasoningOf(target.container),
         syncOfficialInput: (input: readonly string[]) => { syncOfficialInputTypes(target.container, input) },
         api: createEditorApi(
           deps.api,
