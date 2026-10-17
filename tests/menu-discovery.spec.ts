@@ -150,4 +150,28 @@ describe('findModelMenu', () => {
 
     expect(findModelMenu()).toBeUndefined()
   })
+
+  it('returns undefined on a settings-only surface with no composer card (issue #24)', () => {
+    // A settings page/window renders no composer card. Its own header dropdown
+    // (a restart menu) is a linked role="menu" trigger; the finder must not
+    // treat it as the composer seat and let the slider replace its body.
+    const toolbar = document.createElement('div')
+    toolbar.appendChild(trigger('restart-menu'))
+    document.body.appendChild(toolbar)
+    const restartMenu = menu('restart-menu')
+    restartMenu.innerHTML = '<button role="menuitem">Restart</button>'
+    document.body.appendChild(restartMenu)
+
+    expect(findModelMenu()).toBeUndefined()
+  })
+
+  it('returns undefined for the sibling shape outside a composer card too', () => {
+    const toolbar = document.createElement('div')
+    toolbar.appendChild(trigger(null))
+    const restartMenu = menu('restart-menu-2')
+    toolbar.appendChild(restartMenu)
+    document.body.appendChild(toolbar)
+
+    expect(findModelMenu()).toBeUndefined()
+  })
 })
