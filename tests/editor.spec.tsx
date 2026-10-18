@@ -606,6 +606,19 @@ describe('EffortEditor compat controls', () => {
     }))
     expect(container.textContent).toContain(t('aliasMigrated'))
   })
+  it('does not read the official empty compat envelope as a pending edit', async () => {
+    // 0.2.1-rc.2 rewrites a saved custom model with
+    // `compat: { chatTemplateKwargs: {}, chatTemplateArgs: {} }`. Neither key is
+    // this editor's: comparing the whole object kept every such row pending.
+    const { container } = await renderEditor(baseProps({
+      routeApi: 'openai-completions',
+      efforts: { off: null, high: 'high' },
+      compat: { chatTemplateKwargs: {}, chatTemplateArgs: {} } as unknown as EffortEditorProps['compat'],
+    }))
+    expect(container.textContent).not.toContain(t('pendingSave'))
+    expect(container.querySelector('.bre-effort-message')).toBeNull()
+    expect(buttonByText(container, t('reset')).disabled).toBe(true)
+  })
   it('clearing the responses picker asks the seam to clear the key it owns', async () => {
     // A controlled <select> whose value React tracks does not dispatch onChange
     // for a synthetic change in this environment (the tracker is updated by the

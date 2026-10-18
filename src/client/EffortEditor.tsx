@@ -145,6 +145,15 @@ export const OWNED_COMPAT_KEYS: Readonly<Record<string, readonly string[]>> = {
   'openai-responses': ['supportsMaxOutputTokens'],
 }
 
+/**
+ * The compat fields the EDITOR renders a control for, i.e. what a user can
+ * change. `supportsThinkingTokenBudget` is a knowledge-base inference the commit
+ * adds on migration, never a draft the UI shows, so it does not participate in
+ * the modified flag. Listed for both protocols on purpose: a protocol flip
+ * keeps a stale pick visible instead of silently marking the row edited.
+ */
+const COMPARED_COMPAT_KEYS = ['thinkingTokenBudgetField', 'vllmPriority', 'supportsMaxOutputTokens'] as const
+
 /** The compat fields clearable on one protocol (empty = this edit owns none). */
 export function ownedCompatKeys(routeApi: string | undefined): readonly string[] {
   return OWNED_COMPAT_KEYS[(routeApi ?? '').toLowerCase()] ?? []
@@ -294,12 +303,19 @@ export function EffortEditor({ route, routeApi, routeBaseURL, modelId, modelName
     return Object.keys(out).length === 0 ? undefined : out
   }
   const compatChanged = (): boolean => {
-    const draftOut = compatDraft()
-    return JSON.stringify(draftOut ?? null) !== JSON.stringify({
-      ...(initialCompat?.thinkingTokenBudgetField === undefined ? {} : { thinkingTokenBudgetField: initialCompat.thinkingTokenBudgetField }),
-      ...(initialCompat?.vllmPriority === undefined ? {} : { vllmPriority: initialCompat.vllmPriority }),
-      ...(initialCompat?.supportsMaxOutputTokens === undefined ? {} : { supportsMaxOutputTokens: initialCompat.supportsMaxOutputTokens }),
-    })
+    // The official page materializes a `compat` object with unrelated keys
+    // (chatTemplateKwargs / chatTemplateArgs) as soon as a custom model is
+    // saved. Only the fields this editor renders are its business: comparing
+    // the whole object reads that empty envelope as a user edit and keeps the
+    // row pending forever.
+    const pick = (source: CompatSuggestion | undefined): Record<string, unknown> => {
+      const record = (source ?? {}) as Record<string, unknown>
+      const entries: Array<[string, unknown]> = COMPARED_COMPAT_KEYS
+        .filter(key => record[key] !== undefined)
+        .map(key => [key, record[key]])
+      return Object.fromEntries(entries)
+    }
+    return JSON.stringify(pick(compatDraft())) !== JSON.stringify(pick(initialCompat))
   }
   // The declared levels of this draft: the pick's value domain.
   const armedLevels = LEVEL_ORDER.filter(level => draft[level].on)
